@@ -14,6 +14,9 @@ namespace Gtamp.Server.Persistence
     /// </summary>
     public sealed class SqlitePersistenceStore : IPersistenceStore
     {
+        /// <summary>Schema this build writes and understands.</summary>
+        public const int CurrentSchemaVersion = 2;
+
         private readonly string _path;
         private SqliteConnection? _connection;
 
@@ -42,6 +45,8 @@ namespace Gtamp.Server.Persistence
 
             Execute("PRAGMA journal_mode=WAL;");
             Execute("PRAGMA synchronous=NORMAL;");
+
+            Execute("CREATE TABLE IF NOT EXISTS schema_version (version INTEGER NOT NULL);");
 
             Execute(@"
 CREATE TABLE IF NOT EXISTS players (
@@ -82,6 +87,88 @@ CREATE TABLE IF NOT EXISTS entities (
             Execute("CREATE TABLE IF NOT EXISTS mod_state (mod_id TEXT NOT NULL, key TEXT NOT NULL, value TEXT NOT NULL, PRIMARY KEY (mod_id, key));");
             Execute("CREATE TABLE IF NOT EXISTS permissions (identity_token TEXT NOT NULL, permission TEXT NOT NULL, PRIMARY KEY (identity_token, permission));");
             Execute("CREATE TABLE IF NOT EXISTS server_settings (key TEXT PRIMARY KEY, value TEXT NOT NULL);");
+
+            RunMigrations();
+        }
+
+        /// <summary>
+        /// Brings an existing database up to <see cref="CurrentSchemaVersion"/>.
+        /// <para>
+        /// Migrations run in order and each is responsible for being safe to apply to
+        /// the version before it. The version is stored in the database rather than
+        /// inferred from which tables exist: inferring works until two changes touch the
+        /// same table, and then it silently does the wrong thing.
+        /// </para>
+        /// </summary>
+        private void RunMigrations()
+        {
+            int version = ReadSchemaVersion();
+
+            if (version > CurrentSchemaVersion)
+            {
+                throw new InvalidOperationException(
+                    $"The database is at schema version {version} but this build understands {CurrentSchemaVersion}. " +
+                    "It was written by a newer server; downgrading would lose data, so it is refused.");
+            }
+
+            while (version < CurrentSchemaVersion)
+            {
+                version++;
+                ApplyMigration(version);
+                WriteSchemaVersion(version);
+            }
+        }
+
+        private void ApplyMigration(int version)
+        {
+            switch (version)
+            {
+                case 1:
+                    // The initial schema, created above by the CREATE TABLE IF NOT EXISTS
+                    // statements. Recorded so later migrations have a floor to build on.
+                    break;
+
+                case 2:
+                    // Entity blobs gained a dimension so a persisted entity comes back
+                    // into the instance it belonged to.
+                    AddColumnIfMissing("entities", "dimension", "INTEGER NOT NULL DEFAULT 0");
+                    break;
+
+                default:
+                    throw new InvalidOperationException($"No migration is defined for schema version {version}.");
+            }
+        }
+
+        private int ReadSchemaVersion()
+        {
+            using SqliteCommand command = CreateCommand("SELECT version FROM schema_version LIMIT 1;");
+            using SqliteDataReader reader = command.ExecuteReader();
+            return reader.Read() ? reader.GetInt32(0) : 0;
+        }
+
+        private void WriteSchemaVersion(int version)
+        {
+            Execute("DELETE FROM schema_version;");
+            using SqliteCommand command = CreateCommand("INSERT INTO schema_version (version) VALUES ($version);");
+            command.Parameters.AddWithValue("$version", version);
+            command.ExecuteNonQuery();
+        }
+
+        private void AddColumnIfMissing(string table, string column, string definition)
+        {
+            using (SqliteCommand check = CreateCommand($"PRAGMA table_info({table});"))
+            using (SqliteDataReader reader = check.ExecuteReader())
+            {
+                while (reader.Read())
+                {
+                    if (string.Equals(reader.GetString(1), column, StringComparison.OrdinalIgnoreCase))
+                    {
+                        return;
+                    }
+                }
+            }
+
+            Execute($"ALTER TABLE {table} ADD COLUMN {column} {definition};");
         }
 
         public void SavePlayer(PersistedPlayer player)
@@ -216,10 +303,12 @@ ON CONFLICT(id) DO UPDATE SET
             {
                 using SqliteCommand insert = Connection.CreateCommand();
                 insert.Transaction = transaction;
-                insert.CommandText = "INSERT INTO entities (entity_id, type_id, state) VALUES ($id, $type, $state);";
+                insert.CommandText =
+                    "INSERT INTO entities (entity_id, type_id, state, dimension) VALUES ($id, $type, $state, $dimension);";
                 insert.Parameters.AddWithValue("$id", entity.EntityId);
                 insert.Parameters.AddWithValue("$type", entity.TypeId);
                 insert.Parameters.AddWithValue("$state", entity.State);
+                insert.Parameters.AddWithValue("$dimension", entity.Dimension);
                 insert.ExecuteNonQuery();
             }
 
@@ -229,7 +318,9 @@ ON CONFLICT(id) DO UPDATE SET
         public IReadOnlyList<PersistedEntity> LoadEntities()
         {
             var results = new List<PersistedEntity>();
-            using SqliteCommand command = CreateCommand("SELECT entity_id, type_id, state FROM entities ORDER BY entity_id;");
+            using SqliteCommand command = CreateCommand(
+                "SELECT entity_id, type_id, state, dimension FROM entities ORDER BY entity_id;");
+
             using SqliteDataReader reader = command.ExecuteReader();
             while (reader.Read())
             {
@@ -238,6 +329,7 @@ ON CONFLICT(id) DO UPDATE SET
                     EntityId = (uint)reader.GetInt64(0),
                     TypeId = (byte)reader.GetInt32(1),
                     State = (byte[])reader.GetValue(2),
+                    Dimension = (uint)reader.GetInt64(3),
                 });
             }
 

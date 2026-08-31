@@ -81,7 +81,7 @@ namespace Gtamp.Server
             }
 
             IPersistenceStore persistence = config.PersistenceEnabled
-                ? new SqlitePersistenceStore(config.DatabasePath)
+                ? new BackgroundPersistenceStore(new SqlitePersistenceStore(config.DatabasePath), log)
                 : new NullPersistenceStore();
 
             using var server = new GameServer(config, log, transport, persistence);

@@ -91,12 +91,45 @@ health, armour and the world clock all came back.
 Every call becomes a no-op and the world is fresh on each start. Useful for test
 servers; the code path is identical, so nothing else changes.
 
+## Writes happen off the tick thread
+
+`BackgroundPersistenceStore` wraps the real store and queues writes to a worker.
+A save is a disk write, and a disk write on the simulation thread is a stall every
+player feels — especially now that entities are persisted too, which makes a save
+a transaction over every object in the world.
+
+Queued writes are **coalesced**: only the newest state for each player, for the
+world, and for the entity set is kept. A slow disk therefore costs freshness,
+never an unbounded queue — an unbounded queue is what turns a slow disk into an
+out-of-memory crash.
+
+Two details that matter:
+
+- **Reads see queued writes.** A player who reconnects immediately gets their own
+  last save even if it is still in the queue, rather than the older copy on disk.
+- **Shutdown drains the queue.** A shutdown that dropped the last save is how a
+  clean restart still loses a session's worth of progress.
+
+Reads themselves stay synchronous. They happen at startup and on join, both rare
+enough that a few milliseconds does not matter, and an asynchronous read would
+mean a join could not be answered in the tick that received it.
+
+## Migrations
+
+The schema version lives in the database, in a `schema_version` table, and
+migrations run in order on open.
+
+The version is stored rather than inferred from which tables exist. Inferring
+works until two changes touch the same table, and then it silently does the wrong
+thing.
+
+Opening a database written by a **newer** build is refused rather than attempted:
+downgrading would lose the columns the newer build added.
+
 ## Known limits
 
-- **Saves are synchronous**, on the tick thread. At Phase 1 scale (a few dozen
-  players, one table write each) this is microseconds. It will need to move to a
-  background writer before the entity count reaches the thousands — Phase 12.
-- **No migrations yet.** The schema is additive so far and the hash check catches
-  incompatibility, but there is no version-stamped migration runner. Phase 5.
 - **No backups.** Copy `data/world.db` yourself. Because WAL mode is on, copy
   `-wal` and `-shm` alongside it, or stop the server first.
+- **No PostgreSQL driver yet.** The SQL is already portable — no SQLite-specific
+  types, every statement parameterised — so this is a driver swap, not a
+  redesign.

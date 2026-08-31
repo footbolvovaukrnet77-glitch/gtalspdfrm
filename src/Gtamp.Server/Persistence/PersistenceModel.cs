@@ -71,6 +71,8 @@ namespace Gtamp.Server.Persistence
         public byte TypeId { get; set; }
 
         public byte[] State { get; set; } = Array.Empty<byte>();
+
+        public uint Dimension { get; set; }
     }
 
     /// <summary>

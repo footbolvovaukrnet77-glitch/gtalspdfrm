@@ -1145,6 +1145,8 @@ namespace Gtamp.Server.Core
                     }
                 }
 
+                SaveEntities();
+
                 _persistence.SaveWorld(new PersistedWorld
                 {
                     TimeOfDaySeconds = World.State.Environment.TimeOfDaySeconds,
@@ -1163,6 +1165,100 @@ namespace Gtamp.Server.Core
             catch (Exception exception)
             {
                 Log.Error(LogCategory.Persistence, "World save failed.", exception);
+            }
+        }
+
+        /// <summary>
+        /// Writes every non-player entity as its own serializer's full-state blob.
+        /// <para>
+        /// The blob is opaque to the persistence layer, which is what lets a
+        /// mod-defined entity survive a restart on a server with no compiled knowledge
+        /// of that mod: the bytes go in and come back out, and the serializer that
+        /// understands them is supplied by the mod at load time.
+        /// </para>
+        /// </summary>
+        private void SaveEntities()
+        {
+            var blobs = new List<PersistedEntity>();
+
+            foreach (NetEntity entity in World.State.Entities)
+            {
+                // Players are stored by identity token, not by entity id: their entity
+                // is recreated on reconnect and its id will be different.
+                if (entity.Type == EntityType.Player)
+                {
+                    continue;
+                }
+
+                if (!Registry.TryGet((byte)entity.Type, out INetEntitySerializer serializer))
+                {
+                    continue;
+                }
+
+                var writer = new NetWriter(512);
+                serializer.WriteFull(writer, entity);
+
+                blobs.Add(new PersistedEntity
+                {
+                    EntityId = entity.Id.Value,
+                    TypeId = (byte)entity.Type,
+                    State = writer.ToArray(),
+                    Dimension = entity.Dimension,
+                });
+            }
+
+            _persistence.SaveEntities(blobs);
+        }
+
+        /// <summary>Restores persisted entities, skipping anything this build cannot decode.</summary>
+        private void RestoreEntities(uint savedSchemaHash)
+        {
+            if (savedSchemaHash != Registry.ComputeSchemaHash())
+            {
+                // The field layouts have changed since the save. Misinterpreting a blob
+                // would be far worse than losing it.
+                return;
+            }
+
+            int restored = 0;
+            int skipped = 0;
+
+            foreach (PersistedEntity blob in _persistence.LoadEntities())
+            {
+                if (!Registry.TryGet(blob.TypeId, out INetEntitySerializer serializer))
+                {
+                    // A mod that was loaded when the world was saved and is not now.
+                    skipped++;
+                    continue;
+                }
+
+                try
+                {
+                    NetEntity entity = serializer.Create(new EntityId(blob.EntityId));
+                    serializer.ReadFull(new NetReader(blob.State), entity);
+
+                    // Nobody is simulating it yet; the ownership pass hands it to
+                    // whoever turns up near it.
+                    entity.OwnerId = 0;
+                    entity.Dimension = blob.Dimension;
+                    World.State.AddOrReplace(entity);
+                    restored++;
+                }
+                catch (NetSerializationException exception)
+                {
+                    skipped++;
+                    Log.Warning(
+                        LogCategory.Persistence,
+                        $"Could not restore entity {blob.EntityId}: {exception.Message}");
+                }
+            }
+
+            if (restored > 0 || skipped > 0)
+            {
+                Log.Info(
+                    LogCategory.Persistence,
+                    $"Restored {restored} entity(ies) from persistence" +
+                    (skipped > 0 ? $"; skipped {skipped} this build cannot decode." : "."));
             }
         }
 
@@ -1197,6 +1293,7 @@ namespace Gtamp.Server.Core
             World.State.Environment.WeatherTransition = saved.WeatherTransition;
             World.State.Environment.Blackout = saved.Blackout;
             World.ReserveEntityIdsUpTo(saved.HighestEntityId);
+            RestoreEntities(saved.SchemaHash);
 
             Log.Success(
                 LogCategory.Persistence,

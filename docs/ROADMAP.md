@@ -87,14 +87,16 @@ the server's role is to accept or correct it. Building a "prediction" layer on t
 would be a re-implementation of movement that could only ever be less accurate
 than the game already running underneath it.
 
-## Phase 5 — Persistence depth
+## Phase 5 — Persistence depth ✅ complete
 
-| Item | Notes |
+| Item | State |
 | --- | --- |
-| Background save writer | Saves are on the tick thread today |
-| Schema migrations | The hash check catches incompatibility but nothing migrates |
-| PostgreSQL driver | The SQL is already portable |
-| Inventory and money | Tables exist and are empty |
+| Entity persistence | ✅ every non-player entity saved as its own serializer's blob and restored by id |
+| Background save writer | ✅ writes off the tick thread, coalesced so a slow disk costs freshness not memory |
+| Schema migrations | ✅ versioned in the database, refuses to open one written by a newer build |
+| Money | ✅ persisted per identity |
+| Item inventory | ⏸ a gameplay system, not a framework one. `CustomData` already carries it per entity and persists with it |
+| PostgreSQL driver | ⏸ the SQL is already portable; only the driver is missing |
 
 ## Phase 6 — Mod SDK depth
 
