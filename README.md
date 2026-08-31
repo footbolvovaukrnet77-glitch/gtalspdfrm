@@ -2,6 +2,8 @@
 
 > English. Русский: [README.ru.md](README.ru.md).
 
+[![CI](https://github.com/footbolvovaukrnet77-glitch/gtalspdfrm/actions/workflows/ci.yml/badge.svg)](https://github.com/footbolvovaukrnet77-glitch/gtalspdfrm/actions/workflows/ci.yml)
+
 A server-authoritative multiplayer framework that turns single-player GTA V into a
 shared world, with an entity system and mod SDK that third-party mods can extend
 without patching the framework.

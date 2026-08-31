@@ -2,6 +2,8 @@
 
 > Русская версия. English: [README.md](README.md).
 
+[![CI](https://github.com/footbolvovaukrnet77-glitch/gtalspdfrm/actions/workflows/ci.yml/badge.svg)](https://github.com/footbolvovaukrnet77-glitch/gtalspdfrm/actions/workflows/ci.yml)
+
 Мультиплеер-фреймворк с авторитетным сервером, превращающий одиночную GTA V в
 общий мир. В нём есть система сущностей и Mod SDK, которые сторонние моды могут
 расширять, не патча сам фреймворк.
