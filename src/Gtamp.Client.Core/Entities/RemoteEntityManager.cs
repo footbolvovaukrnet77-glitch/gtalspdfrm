@@ -46,6 +46,9 @@ namespace Gtamp.Client.Entities
 
         public bool TryGetVehicle(EntityId id, out RemoteVehicle vehicle) => _vehicles.TryGetValue(id, out vehicle!);
 
+        /// <summary>The game handle of a replicated object, for the entity inspector.</summary>
+        public bool TryGetObjectHandle(EntityId id, out int handle) => _objects.TryGetValue(id, out handle);
+
         /// <summary>Feeds a freshly applied snapshot view into the buffers and reconciles lifetimes.</summary>
         public void Sync(EntitySnapshotView view)
         {

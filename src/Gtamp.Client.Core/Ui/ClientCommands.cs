@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.Globalization;
 using System.Text;
 using Gtamp.Client.Core;
@@ -72,6 +73,24 @@ namespace Gtamp.Client.Ui
                 "net",
                 "network debugger: ping, loss, bandwidth, snapshots",
                 _ => Network(client)));
+
+            console.RegisterCommand(new ConsoleCommand(
+                "bundle",
+                "bundle [what went wrong]",
+                "write a diagnostic folder next to the logs; nothing is sent anywhere",
+                context => Bundle(client, context.RawArguments)));
+
+            console.RegisterCommand(new ConsoleCommand(
+                "overlay",
+                "overlay [on|off]",
+                "toggle the on-screen network readout",
+                context => Overlay(client, context)));
+
+            console.RegisterCommand(new ConsoleCommand(
+                "diff",
+                "diff <id>",
+                "compare an entity's server state against the local game's",
+                context => Diff(client, context)));
 
             console.RegisterCommand(new ConsoleCommand(
                 "admin",
@@ -178,14 +197,9 @@ namespace Gtamp.Client.Ui
 
             console.RegisterCommand(new ConsoleCommand(
                 "reload",
-                "reload <config>",
-                "reload the client configuration from disk",
-                context => context.Argument(0).ToLowerInvariant() switch
-                {
-                    "config" => "Reloading the config requires a restart of the script in this build; " +
-                                "the host reloads it on script reinitialise. See docs/ROADMAP.md (Phase 11).",
-                    _ => "Usage: reload config",
-                },
+                "reload <config|adapters>",
+                "re-read client.ini, or re-scan the adapter directory",
+                context => Reload(client, context.Argument(0).ToLowerInvariant()),
                 developerOnly: true));
 
             console.RegisterCommand(new ConsoleCommand(
@@ -287,11 +301,110 @@ namespace Gtamp.Client.Ui
                 builder.AppendLine($"  samples         {remote.SampleCount} (newest at t={remote.NewestSampleTime:0.00})");
             }
 
-            builder.Append(
-                "  NOTE: this is the replicated (server-authoritative) state. " +
-                "Local game state is compared against it in Phase 11's inspector.");
+            builder.Append("  (run 'diff " + id + "' to compare this against what the game actually has)");
 
             return builder.ToString();
+        }
+
+        private static string Reload(MultiplayerClient client, string what)
+        {
+            switch (what)
+            {
+                case "config":
+                {
+                    ConfigReloadResult result = client.ReloadConfig();
+                    if (!result.Success)
+                    {
+                        return "Could not reload the configuration: " + result.Error;
+                    }
+
+                    var builder = new StringBuilder();
+                    builder.AppendLine(result.Applied.Count == 0
+                        ? "Configuration re-read; nothing changed."
+                        : $"Applied {result.Applied.Count} change(s):");
+
+                    foreach (string change in result.Applied)
+                    {
+                        builder.AppendLine("  " + change);
+                    }
+
+                    foreach (string blocked in result.NeedsReconnect)
+                    {
+                        builder.AppendLine("  needs a reconnect: " + blocked);
+                    }
+
+                    return builder.ToString().TrimEnd();
+                }
+
+                case "adapters":
+                {
+                    IReadOnlyList<string> added = client.ReloadAdapters();
+                    return added.Count == 0
+                        ? "No new adapters found. An adapter that is already loaded cannot be replaced " +
+                          "without restarting the game — .NET Framework cannot unload an assembly, and " +
+                          "the AppDomain belongs to ScriptHookVDotNet."
+                        : $"Loaded {added.Count} new adapter(s): {string.Join(", ", added)}";
+                }
+
+                default:
+                    return "Usage: reload <config|adapters>";
+            }
+        }
+
+        private static string Bundle(MultiplayerClient client, string description)
+        {
+            BundleResult result = DiagnosticBundle.Write(client, description, client.LogDirectory);
+
+            if (!result.Success)
+            {
+                return "Could not write the bundle: " + result.Error;
+            }
+
+            var builder = new StringBuilder();
+            builder.AppendLine($"Wrote {result.Files.Count} file(s) to {result.Directory}:");
+            foreach (string file in result.Files)
+            {
+                builder.AppendLine("  " + file);
+            }
+
+            builder.Append(
+                "Nothing has been sent anywhere. Attach the folder yourself, and do not " +
+                "include the real client.ini — its IdentitySecret is your private key.");
+
+            return builder.ToString();
+        }
+
+        private static string Overlay(MultiplayerClient client, ConsoleCommandContext context)
+        {
+            string argument = context.Argument(0).ToLowerInvariant();
+            client.Config.ShowNetworkOverlay = argument switch
+            {
+                "on" => true,
+                "off" => false,
+                _ => !client.Config.ShowNetworkOverlay,
+            };
+
+            // Not persisted here on purpose: the console toggles it for this session,
+            // and client.ini decides what it is when the game starts. Writing the file
+            // from a debugging toggle would quietly change a setting the player set.
+            return client.Config.ShowNetworkOverlay
+                ? "Network overlay on for this session. Set ShowNetworkOverlay in client.ini to make it stick."
+                : "Network overlay off.";
+        }
+
+        /// <summary>
+        /// Puts the server's view of an entity next to the game's. This is the command
+        /// that answers "why does it look wrong", which the replicated-state dump on
+        /// its own cannot.
+        /// </summary>
+        private static string Diff(MultiplayerClient client, ConsoleCommandContext context)
+        {
+            if (!context.TryUInt(0, out uint id))
+            {
+                return "Usage: diff <id>   — compare the server's state for an entity against the local game's";
+            }
+
+            return EntityInspector.Format(EntityInspector.Compare(client, new EntityId(id)));
         }
 
         private static string Network(MultiplayerClient client)

@@ -33,6 +33,7 @@ namespace Gtamp.Client.Shv
         private ShvGameBridge? _bridge;
         private MultiplayerClient? _client;
         private ConsoleRenderer? _renderer;
+        private readonly OverlayRenderer _overlay = new OverlayRenderer();
         private ClientConfig? _config;
         private string _configPath = string.Empty;
         private bool _failed;
@@ -79,6 +80,8 @@ namespace Gtamp.Client.Shv
             _client = new MultiplayerClient(_config, _bridge, _log, transport, console)
             {
                 ClientVersion = typeof(GtampScript).Assembly.GetName().Version?.ToString(3) ?? "0.1.0",
+                LogDirectory = Path.Combine(root, "logs"),
+                ConfigPath = _configPath,
             };
 
             _renderer = new ConsoleRenderer(console);
@@ -121,6 +124,14 @@ namespace Gtamp.Client.Shv
             }
 
             _renderer.Draw();
+
+            // Drawn after the console so it is never on top of it, and only when the
+            // player asked for it — an always-on readout is clutter for everybody who
+            // is not debugging.
+            if (_client.Config.ShowNetworkOverlay && !_client.Console.IsOpen)
+            {
+                _overlay.Draw(NetworkOverlay.Build(_client));
+            }
         }
 
         private string BuildStatusLine()

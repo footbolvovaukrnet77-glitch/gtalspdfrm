@@ -74,9 +74,13 @@ into the game.
 | `status` | Connection, world and replication summary |
 | `players` | Players in the replicated world |
 | `entity <id>` | Full replicated state of one entity |
+| `diff <id>` | The server's state for an entity next to the local game's, field by field |
 | `net` | Network debugger: ping, loss, bandwidth, snapshots, retransmits |
 | `mods` | Detected mods and adapter status |
 | `diagnostics` | Check the installation and the session |
+| `bundle [what went wrong]` | Write a diagnostic folder next to the logs. Nothing is sent anywhere |
+| `overlay [on\|off]` | Toggle the on-screen network readout |
+| `admin <command...>` | Run a server command, if the server lets you |
 | `report <text>` | Build a bug report and copy it to the clipboard |
 | `say <text>` | Send a chat message |
 | `filter <name>` | `all`, `info`, `debug`, `warning`, `error`, `critical`, `network`, `server`, `client`, `mod`, `security` |
@@ -91,7 +95,8 @@ Developer-only (hidden and refused until `dev on`):
 | --- | --- |
 | `resync` | Throw away the replicated world and request a full snapshot |
 | `schema` | List registered entity types and their replicated fields |
-| `reload config` | Reload client configuration |
+| `reload config` | Re-read `client.ini` and apply what can change live |
+| `reload adapters` | Re-scan the adapter directory for adapters added since startup |
 
 ## Search
 
@@ -161,6 +166,89 @@ LOGS:           the last 40 lines
 
 Nothing is sent anywhere. The report goes to the clipboard and the log file, and
 the player decides what to do with it.
+
+## The entity inspector
+
+`entity <id>` shows what the **server** believes. `diff <id>` shows that next to
+what the **game** actually has:
+
+```
+Entity #152 (Vehicle) — server vs the replicated vehicle
+  field            server                          local
+  = position       (241.3, -1042.7, 29.3)          (241.4, -1042.6, 29.3) (0.14 m apart)
+  ≠ bodyHealth     1000                            614
+  = model          0xB779A091                      0xB779A091
+  ? deformation    —                               not readable
+      GTA V exposes deformation only through natives that write into a vehicle, never read from one
+  1 difference(s), 1 field(s) the game will not read back
+```
+
+Every symptom a player reports — "the car is in the wrong place", "he's driving a
+different vehicle", "my health keeps resetting" — is a disagreement between two
+states that are otherwise impossible to see at once. Showing only the replicated
+state answers "what does the server think" and leaves the actual question
+unanswered.
+
+**`?` is not a match.** GTA V exposes far less for reading than for writing, and a
+field that cannot be read back is marked rather than left blank — a blank in a
+diff reads as agreement, which is the one answer that must never be given for
+something nobody checked.
+
+Tolerances are per field, not global: a remote ped is deliberately rendered behind
+the server clock, so a small positional difference there is the interpolation
+working and is annotated as such.
+
+## The network overlay
+
+`overlay on`, or `ShowNetworkOverlay=True` in `client.ini`, draws a readout in the
+top-right corner:
+
+```
+GTAMP  Los Santos RP  3 player(s)
+ping 38 ms   loss 0.4%
+snapshots 4471 applied, 2 dropped
+resyncs 0   corrections 1
+entities 152   vehicles 14   objects 30
+```
+
+Colour follows the console's roles. The thresholds are the ones at which each
+symptom becomes visible rather than round numbers: 150 ms of ping is where remote
+players start to feel behind, 5% loss is where unreliable state updates thin out
+enough to see. A resync is always red — it means a delta failed to decode, which
+is a version or mod mismatch far more often than congestion.
+
+Missing mod content is raised here as well as in `/diagnostics`, because this is
+the readout that is on screen while the player is looking at the gap.
+
+## Diagnostic bundles
+
+`bundle <what went wrong>` writes a folder next to the logs:
+
+```
+report.txt           the full bug report
+diagnostics.txt      installation and session checks
+network.txt          the network readout at that moment
+log.txt              the last 500 client log lines
+client.ini.redacted  your configuration with secrets replaced
+README.txt           what this is and what not to share
+```
+
+**Nothing is sent anywhere.** Master prompt section 47 requires that crash data
+not leave the machine without permission, and the permission model here is the one
+that cannot be got wrong: the framework writes files, the player decides what to
+do with them. There is no upload path in this code, so there is nothing to enable
+by accident.
+
+**The identity secret is redacted, and that is not decoration.** Since
+authentication landed, `client.ini` holds the private key that proves who a player
+is. A bundle exists to be shared, so copying it verbatim would turn a bug report
+into a handover of the player's character. The secret and the server password are
+replaced with a marker that keeps their shape visible; the *public* identity stays,
+because it is the single most useful identifier in a report and is not a secret.
+
+Redaction matches on the key name, never on a substring — a player called
+`IdentitySecret` should not have their name removed, and more importantly a
+substring match that misses nothing still looks like it worked.
 
 ## Diagnostics
 

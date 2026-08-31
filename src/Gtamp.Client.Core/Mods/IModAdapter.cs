@@ -78,9 +78,67 @@ namespace Gtamp.Client.Mods
             }
         }
 
+        /// <summary>
+        /// Re-scans the adapter directory for adapters that were not there at startup.
+        /// <para>
+        /// <b>This is not hot-reload, and it deliberately does not pretend to be.</b>
+        /// The client runs on .NET Framework inside GTA V's CLR, where an assembly
+        /// cannot be unloaded without unloading the AppDomain that holds it — and the
+        /// AppDomain here belongs to ScriptHookVDotNet, not to this code. So a DLL
+        /// that is already loaded stays loaded, at the version it was loaded at, until
+        /// the game restarts.
+        /// </para>
+        /// <para>
+        /// What this does buy is the case that actually comes up while developing a
+        /// mod: dropping a <em>new</em> adapter in and picking it up without leaving
+        /// Los Santos. Adapters already active are skipped by id and reported, so
+        /// nobody is left thinking their rebuilt DLL took effect when it did not.
+        /// </para>
+        /// </summary>
+        /// <returns>The ids of adapters that were newly loaded.</returns>
+        public IReadOnlyList<string> ReloadFrom(string adapterDirectory, IModSdk sdk, ModEnvironment environment)
+        {
+            var before = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            foreach (IModAdapter adapter in _active)
+            {
+                before.Add(adapter.Id);
+            }
+
+            _skipped.Clear();
+            _failed.Clear();
+            LoadFrom(adapterDirectory, sdk, environment);
+
+            var added = new List<string>();
+            foreach (IModAdapter adapter in _active)
+            {
+                if (!before.Contains(adapter.Id))
+                {
+                    added.Add(adapter.Id);
+                }
+            }
+
+            return added;
+        }
+
         /// <summary>Registers an adapter directly. Used by tests and by adapters compiled into the host.</summary>
         public void Add(IModAdapter adapter, IModSdk sdk, ModEnvironment environment)
         {
+            foreach (IModAdapter existing in _active)
+            {
+                if (string.Equals(existing.Id, adapter.Id, StringComparison.OrdinalIgnoreCase))
+                {
+                    // A re-scan sees every file again, including the ones already
+                    // loaded. Registering them twice would double every event handler
+                    // and every entity type they declare.
+                    _skipped.Add(adapter.Id);
+                    _log.Info(
+                        LogCategory.Mod,
+                        $"Adapter '{adapter.Id}' is already loaded; a running assembly cannot be replaced " +
+                        "without restarting the game.");
+                    return;
+                }
+            }
+
             if (!adapter.IsAvailable(environment))
             {
                 _skipped.Add(adapter.Id);

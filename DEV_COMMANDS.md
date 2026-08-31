@@ -83,6 +83,9 @@ Type these at the running server's prompt.
 | `admin <command...>` | Run a server command, if the server lets you |
 | `mods` | Detected mods and adapter status |
 | `diagnostics` | Check the installation and the session |
+| `diff <id>` | Server state next to the local game's, field by field |
+| `bundle [text]` | Write a diagnostic folder next to the logs; nothing is sent |
+| `overlay [on\|off]` | Toggle the on-screen network readout |
 | `report <text>` | Build a bug report and copy it to the clipboard |
 | `say <text>` | Chat |
 | `filter <name>` | Show only matching lines |
@@ -92,6 +95,8 @@ Type these at the running server's prompt.
 | `dev [on\|off]` | Toggle developer mode |
 | `resync` *(dev)* | Discard the replicated world, request a full snapshot |
 | `schema` *(dev)* | List entity types and their replicated fields |
+| `reload config` *(dev)* | Re-read client.ini and apply what can change live |
+| `reload adapters` *(dev)* | Re-scan the adapter directory |
 
 Full reference: [docs/DEVELOPER_CONSOLE.md](docs/DEVELOPER_CONSOLE.md).
 

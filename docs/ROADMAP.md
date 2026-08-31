@@ -187,10 +187,23 @@ Two defects surfaced while building it:
   one, losing the change for good. Snapshots now echo the client update sequence
   they account for, so the two cases are told apart exactly rather than guessed at.
 
-## Phase 11 — Developer tools
+## Phase 11 — Developer tools ✅ complete
 
-Entity inspector comparing server state against live local state, crash-report
-bundles, richer network debugger overlay, module hot-reload.
+| Item | State |
+| --- | --- |
+| Entity inspector, server vs live local state | ✅ `diff <id>`, field by field, with a per-field tolerance and an explicit mark for anything the game will not read back |
+| Diagnostic bundle | ✅ `bundle`, writing report, diagnostics, network readout, recent log and a **redacted** config. Nothing is sent anywhere; there is no upload path in the code at all |
+| Network debugger overlay | ✅ `ShowNetworkOverlay` was a setting nothing read. It now draws ping, loss, snapshot health, resyncs and missing content, coloured by the thresholds at which each becomes visible |
+| Config reload | ✅ `reload config` re-reads `client.ini` and applies what can change live, naming what needs a reconnect instead of ignoring it |
+| Adapter re-scan | ✅ `reload adapters` picks up an adapter added since startup |
+| Replacing an adapter that is already loaded | ⛔ **not possible** — .NET Framework cannot unload an assembly without unloading its AppDomain, and that AppDomain belongs to ScriptHookVDotNet, not to this code |
+
+**The bundle redacts the identity secret, and that is load-bearing.** Since Phase 10
+`client.ini` holds a private key. A bundle is written to be shared, so copying it
+verbatim would turn "here is my bug report" into "here is my character".
+`DeveloperToolsTests.TheBundleNeverContainsTheIdentitySecret` asserts the secret
+and the server password appear in none of the files, while the public identity —
+the most useful single identifier in a report — stays.
 
 ## Phase 12 — Optimisation
 

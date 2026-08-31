@@ -208,6 +208,13 @@ namespace Gtamp.Client.Core
 
         public string ClientVersion { get; set; } = "0.1.0";
 
+        /// <summary>
+        /// Where the client writes its own files. Set by the host, which is the only
+        /// part that knows where GTA V is installed; defaults to the working directory
+        /// so a bundle written from a test lands somewhere rather than throwing.
+        /// </summary>
+        public string LogDirectory { get; set; } = ".";
+
         public double Now => _now;
 
         /// <summary>
@@ -242,7 +249,100 @@ namespace Gtamp.Client.Core
                 $"ScriptHookV={Yes(Environment.ScriptHookV)}, SHVDN={Yes(Environment.ScriptHookVDotNet)}, " +
                 $"RPH={Yes(Environment.RagePluginHook)}, LSPDFR={Yes(Environment.Lspdfr)}");
 
+            AdapterDirectory = adapterDirectory;
             Adapters.LoadFrom(adapterDirectory, Sdk, Environment);
+        }
+
+        /// <summary>Where adapters are loaded from, remembered so they can be re-scanned.</summary>
+        public string AdapterDirectory { get; private set; } = string.Empty;
+
+        /// <summary>The file the configuration came from, so it can be re-read.</summary>
+        public string ConfigPath { get; set; } = string.Empty;
+
+        /// <summary>
+        /// Re-reads <c>client.ini</c> and applies the settings that can safely change
+        /// mid-session.
+        /// <para>
+        /// Not all of them can. The identity keypair is loaded once and held for the
+        /// life of the client, because swapping it under a live session would leave
+        /// the server holding a proof for a key the client no longer has; the address
+        /// and port belong to the connection that is already open. Those are reported
+        /// as needing a reconnect rather than silently ignored, which is the failure
+        /// this command existed to avoid in the first place.
+        /// </para>
+        /// </summary>
+        public ConfigReloadResult ReloadConfig()
+        {
+            var result = new ConfigReloadResult();
+
+            if (string.IsNullOrEmpty(ConfigPath))
+            {
+                result.Error = "this client was not started from a configuration file";
+                return result;
+            }
+
+            ClientConfig fresh;
+            try
+            {
+                fresh = ClientConfig.Load(ConfigPath);
+            }
+            catch (Exception exception)
+            {
+                result.Error = exception.Message;
+                return result;
+            }
+
+            Apply("InterpolationDelay", Config.InterpolationDelay, fresh.InterpolationDelay, result,
+                () => Config.InterpolationDelay = fresh.InterpolationDelay);
+            Apply("CorrectionThreshold", Config.CorrectionThreshold, fresh.CorrectionThreshold, result,
+                () => Config.CorrectionThreshold = fresh.CorrectionThreshold);
+            Apply("HealthCorrectionThreshold", Config.HealthCorrectionThreshold, fresh.HealthCorrectionThreshold, result,
+                () => Config.HealthCorrectionThreshold = fresh.HealthCorrectionThreshold);
+            Apply("ShowNetworkOverlay", Config.ShowNetworkOverlay, fresh.ShowNetworkOverlay, result,
+                () => Config.ShowNetworkOverlay = fresh.ShowNetworkOverlay);
+            Apply("VerboseLogging", Config.VerboseLogging, fresh.VerboseLogging, result,
+                () => Config.VerboseLogging = fresh.VerboseLogging);
+            Apply("ConsoleKey", Config.ConsoleKey, fresh.ConsoleKey, result,
+                () => Config.ConsoleKey = fresh.ConsoleKey);
+            Apply("PlayerName", Config.PlayerName, fresh.PlayerName, result,
+                () => Config.PlayerName = fresh.PlayerName);
+
+            if (!string.Equals(fresh.IdentitySecret, Config.IdentitySecret, StringComparison.Ordinal))
+            {
+                result.NeedsReconnect.Add("IdentitySecret — the signing key is held for the life of the client");
+            }
+
+            if (!string.Equals(fresh.ServerAddress, Config.ServerAddress, StringComparison.Ordinal)
+                || fresh.ServerPort != Config.ServerPort)
+            {
+                result.NeedsReconnect.Add("ServerAddress/ServerPort — reconnect to use them");
+            }
+
+            result.Success = true;
+            return result;
+        }
+
+        private static void Apply<T>(
+            string name, T current, T updated, ConfigReloadResult result, Action assign)
+        {
+            if (Equals(current, updated))
+            {
+                return;
+            }
+
+            assign();
+            result.Applied.Add($"{name}: {current} -> {updated}");
+        }
+
+        /// <summary>Re-scans the adapter directory. See <see cref="AdapterHost.ReloadFrom"/> for what it cannot do.</summary>
+        public IReadOnlyList<string> ReloadAdapters()
+        {
+            if (string.IsNullOrEmpty(AdapterDirectory))
+            {
+                return Array.Empty<string>();
+            }
+
+            return Adapters.ReloadFrom(AdapterDirectory, Sdk, Environment);
         }
 
         public void Connect(string host, int port)
