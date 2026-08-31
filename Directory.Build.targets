@@ -1,0 +1,12 @@
+<Project>
+  <!-- netstandard2.0 and net48 need the polyfill shims; net8.0 has them built in. -->
+  <ItemGroup Condition="'$(TargetFramework)' != 'net8.0'">
+    <Compile Include="$(MSBuildThisFileDirectory)src/Common/Polyfills.cs"
+             Link="Common/Polyfills.cs"
+             Condition="'$(MSBuildProjectName)' != 'Gtamp.Common'" />
+  </ItemGroup>
+  <ItemGroup Condition="'$(TargetFramework)' == 'net48'">
+    <PackageReference Include="Microsoft.NETFramework.ReferenceAssemblies" Version="1.0.3"
+                      PrivateAssets="all" IncludeAssets="build" />
+  </ItemGroup>
+</Project>

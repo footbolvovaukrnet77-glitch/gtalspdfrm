@@ -1,0 +1,12 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>net48</TargetFramework>
+    <RootNamespace>Gtamp.Adapters.Rph</RootNamespace>
+    <AssemblyName>Gtamp.Adapters.Rph</AssemblyName>
+    <PlatformTarget>x64</PlatformTarget>
+  </PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="..\Gtamp.Shared\Gtamp.Shared.csproj" />
+    <ProjectReference Include="..\Gtamp.Client.Core\Gtamp.Client.Core.csproj" />
+  </ItemGroup>
+</Project>

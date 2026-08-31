@@ -1,0 +1,285 @@
+using System;
+using System.Collections.Generic;
+using System.Net;
+using Gtamp.Client.Core;
+using Gtamp.Client.Ui;
+using Gtamp.Server.Core;
+using Gtamp.Server.Persistence;
+using Gtamp.Shared.Core;
+using Gtamp.Shared.Diagnostics;
+using Gtamp.Shared.Entities;
+using Gtamp.Shared.Net;
+
+namespace Gtamp.Tests
+{
+    /// <summary>
+    /// An <see cref="IGameBridge"/> with no game behind it. Local player state is
+    /// whatever the test sets, and remote peds are recorded rather than spawned.
+    /// </summary>
+    public sealed class FakeGameBridge : IGameBridge
+    {
+        private int _nextHandle = 1;
+
+        public string GameVersion => "test-build";
+
+        public bool IsPlayerReady { get; set; } = true;
+
+        public LocalPlayerSample Sample = new LocalPlayerSample
+        {
+            Position = new NetVector3(215f, -810f, 30.7f),
+            Health = 200,
+            MaxHealth = 200,
+            ModelHash = 0x9B22DBAF,
+        };
+
+        public Dictionary<int, RemotePedFrame> Peds { get; } = new Dictionary<int, RemotePedFrame>();
+
+        public List<string> Notifications { get; } = new List<string>();
+
+        public int CorrectionsApplied { get; private set; }
+
+        public uint WeatherHash { get; private set; }
+
+        public int ClockHours { get; private set; } = -1;
+
+        public LocalPlayerSample SampleLocalPlayer() => Sample;
+
+        public void ApplyLocalCorrection(NetVector3 position, float heading, int health, int armor)
+        {
+            CorrectionsApplied++;
+            Sample.Position = position;
+            Sample.Heading = heading;
+            Sample.Health = health;
+            Sample.Armor = armor;
+        }
+
+        public int CreateRemotePed(uint modelHash, NetVector3 position, float heading)
+        {
+            int handle = _nextHandle++;
+            Peds[handle] = new RemotePedFrame { Position = position, Heading = heading };
+            return handle;
+        }
+
+        public void UpdateRemotePed(int handle, in RemotePedFrame frame) => Peds[handle] = frame;
+
+        public void DestroyRemotePed(int handle) => Peds.Remove(handle);
+
+        public bool IsRemotePedValid(int handle) => Peds.ContainsKey(handle);
+
+        public void SetWeather(uint weatherHash, uint nextWeatherHash, float transition) => WeatherHash = weatherHash;
+
+        public void SetClock(int hours, int minutes, int seconds) => ClockHours = hours;
+
+        public void ShowNotification(string text) => Notifications.Add(text);
+
+        public void ShowSubtitle(string text, int durationMilliseconds) => Notifications.Add(text);
+    }
+
+    /// <summary>One client plus the pieces a test wants to poke at.</summary>
+    public sealed class TestClient
+    {
+        public TestClient(MultiplayerClient client, FakeGameBridge bridge, ClientConfig config, DeveloperConsole console)
+        {
+            Client = client;
+            Bridge = bridge;
+            Config = config;
+            Console = console;
+        }
+
+        public MultiplayerClient Client { get; }
+
+        public FakeGameBridge Bridge { get; }
+
+        public ClientConfig Config { get; }
+
+        public DeveloperConsole Console { get; }
+
+        public int PlayerCount
+        {
+            get
+            {
+                int count = 0;
+                foreach (NetEntity entity in Client.ReplicatedWorld.Current.Entities)
+                {
+                    if (entity is PlayerEntity)
+                    {
+                        count++;
+                    }
+                }
+
+                return count;
+            }
+        }
+
+        public PlayerEntity? FindPlayer(string name)
+        {
+            foreach (NetEntity entity in Client.ReplicatedWorld.Current.Entities)
+            {
+                if (entity is PlayerEntity player && player.Name == name)
+                {
+                    return player;
+                }
+            }
+
+            return null;
+        }
+    }
+
+    /// <summary>
+    /// A whole session — server plus clients — running on one deterministic virtual
+    /// network. Time is advanced explicitly, so every test is reproducible and none
+    /// of them sleep.
+    /// </summary>
+    public sealed class TestHarness : IDisposable
+    {
+        public static readonly IPEndPoint ServerEndPoint = new IPEndPoint(IPAddress.Parse("127.0.0.1"), 27015);
+
+        private readonly List<TestClient> _clients = new List<TestClient>();
+        private int _nextClientPort = 40000;
+
+        public TestHarness(ServerConfig? config = null, IPersistenceStore? persistence = null, int seed = 1234)
+        {
+            Network = new LoopbackNetwork(seed);
+            ServerLog = new LogBus();
+            Config = config ?? new ServerConfig
+            {
+                ServerName = "test-server",
+                PersistenceEnabled = persistence != null,
+                SaveIntervalSeconds = 0,
+                TickRate = 60,
+                SnapshotRate = 20,
+            };
+
+            Server = new GameServer(
+                Config, ServerLog, Network.CreateTransport(ServerEndPoint), persistence ?? new NullPersistenceStore());
+
+            Server.Start(0);
+        }
+
+        public LoopbackNetwork Network { get; }
+
+        public GameServer Server { get; }
+
+        public ServerConfig Config { get; }
+
+        public LogBus ServerLog { get; }
+
+        public IReadOnlyList<TestClient> Clients => _clients;
+
+        public double Now => Network.Now;
+
+        /// <summary>Latency applied in each direction, in seconds.</summary>
+        public double Latency
+        {
+            get => Network.Latency;
+            set => Network.Latency = value;
+        }
+
+        public double PacketLoss
+        {
+            get => Network.PacketLoss;
+            set => Network.PacketLoss = value;
+        }
+
+        public TestClient CreateClient(string name, string? identityToken = null)
+        {
+            var config = new ClientConfig
+            {
+                PlayerName = name,
+                ServerAddress = "127.0.0.1",
+                ServerPort = ServerEndPoint.Port,
+                IdentityToken = identityToken ?? Guid.NewGuid().ToString("N"),
+                InterpolationDelay = 0.1,
+            };
+
+            var endPoint = new IPEndPoint(IPAddress.Parse("127.0.0.1"), _nextClientPort++);
+            IDatagramTransport transport = Network.CreateTransport(endPoint);
+
+            var bridge = new FakeGameBridge();
+            var log = new LogBus();
+            var console = new DeveloperConsole();
+            log.AddSink(console);
+
+            var client = new MultiplayerClient(config, bridge, log, transport, console);
+            var testClient = new TestClient(client, bridge, config, console);
+            _clients.Add(testClient);
+            return testClient;
+        }
+
+        public void RemoveClient(TestClient client)
+        {
+            client.Client.Dispose();
+            _clients.Remove(client);
+        }
+
+        /// <summary>Runs the whole session forward.</summary>
+        public void Advance(double seconds, double step = 1d / 60d)
+        {
+            for (double elapsed = 0; elapsed < seconds; elapsed += step)
+            {
+                double now = Network.Now;
+                Server.Tick(now);
+                foreach (TestClient client in _clients)
+                {
+                    client.Client.Update(now);
+                }
+
+                Network.Advance(step);
+            }
+        }
+
+        /// <summary>Advances until <paramref name="condition"/> holds, or fails the test by timing out.</summary>
+        public bool AdvanceUntil(Func<bool> condition, double timeoutSeconds = 5d, double step = 1d / 60d)
+        {
+            for (double elapsed = 0; elapsed < timeoutSeconds; elapsed += step)
+            {
+                if (condition())
+                {
+                    return true;
+                }
+
+                Advance(step, step);
+            }
+
+            return condition();
+        }
+
+        /// <summary>
+        /// Walks a client along +X at a plausible on-foot speed, sampling as the game
+        /// would. Teleporting the sample straight to the destination would be caught
+        /// by the anti-cheat, which is the correct behaviour — so tests move the way
+        /// a player does.
+        /// </summary>
+        public void Walk(TestClient client, float metres, float metresPerSecond = 6f, double step = 1d / 30d)
+        {
+            float travelled = 0f;
+            while (travelled < metres)
+            {
+                float delta = (float)(metresPerSecond * step);
+                if (travelled + delta > metres)
+                {
+                    delta = metres - travelled;
+                }
+
+                client.Bridge.Sample.Position = new NetVector3(
+                    client.Bridge.Sample.Position.X + delta,
+                    client.Bridge.Sample.Position.Y,
+                    client.Bridge.Sample.Position.Z);
+
+                travelled += delta;
+                Advance(step, step);
+            }
+        }
+
+        public void Dispose()
+        {
+            foreach (TestClient client in _clients)
+            {
+                client.Client.Dispose();
+            }
+
+            _clients.Clear();
+            Server.Dispose();
+        }
+    }
+}

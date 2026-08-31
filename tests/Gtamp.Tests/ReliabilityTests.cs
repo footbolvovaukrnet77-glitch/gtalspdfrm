@@ -1,0 +1,228 @@
+using System.Collections.Generic;
+using System.Net;
+using System.Text;
+using Gtamp.Shared.Net;
+using Gtamp.Shared.Protocol;
+using Xunit;
+
+namespace Gtamp.Tests
+{
+    /// <summary>
+    /// Exercises <see cref="NetPeer"/> over a network that loses, delays and reorders
+    /// datagrams. These are the conditions the reliability layer exists for, so they
+    /// are tested directly rather than hoped for.
+    /// </summary>
+    public class ReliabilityTests
+    {
+        private const uint Session = 0xC0FFEE;
+
+        private static readonly IPEndPoint Left = new IPEndPoint(IPAddress.Parse("127.0.0.1"), 1000);
+        private static readonly IPEndPoint Right = new IPEndPoint(IPAddress.Parse("127.0.0.1"), 2000);
+
+        private static byte[] Body(string text) => Encoding.UTF8.GetBytes(text);
+
+        [Fact]
+        public void ReliableMessagesArriveOnAPerfectLink()
+        {
+            var harness = new ReliableHarness();
+            for (int i = 0; i < 20; i++)
+            {
+                harness.A.Send(NetMessageType.ChatMessage, Body("m" + i), DeliveryMethod.ReliableOrdered);
+            }
+
+            harness.Run(1.0);
+            Assert.Equal(20, harness.Received.Count);
+        }
+
+        [Fact]
+        public void ReliableMessagesSurviveHeavyLossAndArriveInOrder()
+        {
+            var harness = new ReliableHarness(loss: 0.4, latency: 0.03, jitter: 0.02);
+            var expected = new List<string>();
+            for (int i = 0; i < 30; i++)
+            {
+                string text = "m" + i;
+                expected.Add(text);
+                harness.A.Send(NetMessageType.ChatMessage, Body(text), DeliveryMethod.ReliableOrdered);
+            }
+
+            harness.Run(20.0);
+
+            Assert.Equal(expected, harness.Received);
+            Assert.True(harness.A.Stats.ReliableRetransmits > 0, "the lossy link should have forced retransmissions");
+        }
+
+        [Fact]
+        public void ReliableDeliveryIsExactlyOnceDespiteRetransmits()
+        {
+            var harness = new ReliableHarness(loss: 0.5, latency: 0.05, jitter: 0.05, seed: 99);
+            for (int i = 0; i < 15; i++)
+            {
+                harness.A.Send(NetMessageType.ChatMessage, Body("m" + i), DeliveryMethod.ReliableOrdered);
+            }
+
+            harness.Run(25.0);
+
+            var seen = new HashSet<string>();
+            foreach (string message in harness.Received)
+            {
+                Assert.True(seen.Add(message), $"'{message}' was delivered more than once");
+            }
+
+            Assert.Equal(15, seen.Count);
+        }
+
+        [Fact]
+        public void UnreliableMessagesAreNotRetransmitted()
+        {
+            var harness = new ReliableHarness(loss: 0.5, seed: 3);
+            for (int i = 0; i < 40; i++)
+            {
+                harness.A.Send(NetMessageType.ClientStateUpdate, Body("u" + i), DeliveryMethod.Unreliable);
+                harness.Step(0.05);
+            }
+
+            harness.Run(2.0);
+
+            Assert.True(harness.Received.Count > 0, "some unreliable traffic should get through");
+            Assert.True(harness.Received.Count < 40, "unreliable traffic must not be retransmitted to completion");
+            Assert.Equal(0, harness.A.Stats.ReliableRetransmits);
+        }
+
+        [Fact]
+        public void AllReliableMessagesAreAcknowledgedOnceTheLinkSettles()
+        {
+            var harness = new ReliableHarness(loss: 0.25, latency: 0.02);
+            for (int i = 0; i < 10; i++)
+            {
+                harness.A.Send(NetMessageType.ChatMessage, Body("m" + i), DeliveryMethod.ReliableOrdered);
+            }
+
+            harness.Run(15.0);
+            Assert.Equal(0, harness.A.UnackedReliableCount);
+        }
+
+        [Fact]
+        public void RoundTripTimeIsEstimatedFromAcknowledgements()
+        {
+            var harness = new ReliableHarness(latency: 0.05);
+            harness.A.Send(NetMessageType.ChatMessage, Body("ping"), DeliveryMethod.ReliableOrdered);
+            harness.Run(3.0);
+
+            // One-way latency 50 ms both directions, so the RTT should land near 100 ms.
+            Assert.InRange(harness.A.Stats.RoundTripTime, 0.05, 0.30);
+            Assert.InRange(harness.A.Stats.PingMilliseconds, 50, 300);
+        }
+
+        [Fact]
+        public void LostPacketsAreCounted()
+        {
+            var harness = new ReliableHarness(loss: 0.5, seed: 11);
+            for (int i = 0; i < 60; i++)
+            {
+                harness.A.Send(NetMessageType.ClientStateUpdate, Body("u" + i), DeliveryMethod.Unreliable);
+                harness.Step(0.03);
+            }
+
+            harness.Run(5.0);
+            Assert.True(harness.A.Stats.PacketsLost > 0, "loss accounting should notice a 50% loss link");
+            Assert.InRange(harness.A.Stats.PacketLoss, 0.1, 0.9);
+        }
+
+        [Fact]
+        public void OversizedMessagesAreRejectedRatherThanTruncated()
+        {
+            var harness = new ReliableHarness();
+            Assert.Throws<NetSerializationException>(() =>
+                harness.A.Send(NetMessageType.Snapshot, new byte[NetPeer.MaxMessagePayload + 1], DeliveryMethod.Unreliable));
+        }
+
+        [Fact]
+        public void PacketsForAnotherSessionAreIgnored()
+        {
+            var harness = new ReliableHarness();
+            var writer = new NetWriter();
+            writer.WriteUInt32(ProtocolConstants.Magic);
+            writer.WriteByte(1);
+            writer.WriteUInt32(Session + 1);
+            writer.WriteUInt16(0);
+            writer.WriteUInt16(0);
+            writer.WriteUInt32(0);
+
+            Assert.False(harness.B.HandleDatagram(writer.ToArray(), 0));
+        }
+
+        [Fact]
+        public void GarbageIsDroppedWithoutThrowing()
+        {
+            var harness = new ReliableHarness();
+            Assert.False(harness.B.HandleDatagram(new byte[] { 1, 2, 3 }, 0));
+            Assert.False(harness.B.HandleDatagram(System.Array.Empty<byte>(), 0));
+        }
+
+        [Fact]
+        public void SequenceComparisonHandlesWraparound()
+        {
+            Assert.True(SequenceMath.GreaterThan(1, 65535));
+            Assert.False(SequenceMath.GreaterThan(65535, 1));
+            Assert.True(SequenceMath.GreaterThan(100, 99));
+            Assert.Equal(2, SequenceMath.Difference(1, 65535));
+        }
+
+        /// <summary>Two peers on one loopback network, pumped in lockstep with virtual time.</summary>
+        private sealed class ReliableHarness
+        {
+            private readonly IDatagramTransport _leftTransport;
+            private readonly IDatagramTransport _rightTransport;
+
+            public ReliableHarness(double loss = 0, double latency = 0, double jitter = 0, int seed = 7)
+            {
+                Network = new LoopbackNetwork(seed) { PacketLoss = loss, Latency = latency, Jitter = jitter };
+                _leftTransport = Network.CreateTransport(Left);
+                _rightTransport = Network.CreateTransport(Right);
+                A = new NetPeer(_leftTransport, Right, Session, 0);
+                B = new NetPeer(_rightTransport, Left, Session, 0);
+            }
+
+            public LoopbackNetwork Network { get; }
+
+            public NetPeer A { get; }
+
+            public NetPeer B { get; }
+
+            public List<string> Received { get; } = new List<string>();
+
+            public void Run(double seconds, double step = 0.02)
+            {
+                for (double elapsed = 0; elapsed < seconds; elapsed += step)
+                {
+                    Step(step);
+                }
+            }
+
+            public void Step(double step)
+            {
+                double now = Network.Now;
+                A.Flush(now);
+                B.Flush(now);
+                Network.Advance(step);
+
+                Drain(_leftTransport, A, null);
+                Drain(_rightTransport, B, Received);
+            }
+
+            private void Drain(IDatagramTransport transport, NetPeer peer, List<string>? sink)
+            {
+                while (transport.TryReceive(out IPEndPoint _, out byte[] payload))
+                {
+                    peer.HandleDatagram(payload, Network.Now);
+                }
+
+                while (peer.TryDequeue(out ReceivedMessage message))
+                {
+                    sink?.Add(Encoding.UTF8.GetString(message.Payload));
+                }
+            }
+        }
+    }
+}
