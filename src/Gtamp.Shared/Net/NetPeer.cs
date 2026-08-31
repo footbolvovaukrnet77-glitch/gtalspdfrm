@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Net;
 using Gtamp.Shared.Protocol;
+using Gtamp.Shared.Security;
 
 namespace Gtamp.Shared.Net
 {
@@ -106,6 +107,28 @@ namespace Gtamp.Shared.Net
         public ushort RemoteSequence => _remoteSequence;
 
         public int UnackedReliableCount => _outReliable.Count;
+
+        /// <summary>
+        /// Session encryption, or null for a plaintext session.
+        /// <para>
+        /// Attached after the handshake has agreed a key, which is why it is settable
+        /// rather than a constructor argument: the peer exists from the moment the
+        /// session id is known, and the key a few packets later.
+        /// </para>
+        /// </summary>
+        public SessionCrypto? Crypto { get; set; }
+
+        /// <summary>
+        /// Bytes an encrypted packet costs beyond its plaintext: the authentication
+        /// tag plus a worst-case block of PKCS#7 padding.
+        /// <para>
+        /// Reserved while packing rather than discovered afterwards. A packet that only
+        /// exceeds the MTU once encrypted would be fragmented by the network — the one
+        /// thing <see cref="ProtocolConstants.MaxPacketSize"/> exists to prevent — and
+        /// would do it invisibly.
+        /// </para>
+        /// </summary>
+        private int EncryptionOverhead => Crypto == null ? 0 : SessionCrypto.Overhead + SessionCrypto.IvLength;
 
         public void Send(NetMessageType type, byte[] payload, DeliveryMethod delivery)
         {
@@ -320,9 +343,21 @@ namespace Gtamp.Shared.Net
                 }
 
                 RecordSentPacket(sequence, now, carried);
-                _transport.Send(Remote, _writer.Buffer, 0, _writer.Length);
-                Stats.PacketsSent++;
-                Stats.BytesSent += _writer.Length;
+
+                if (Crypto == null)
+                {
+                    _transport.Send(Remote, _writer.Buffer, 0, _writer.Length);
+                    Stats.PacketsSent++;
+                    Stats.BytesSent += _writer.Length;
+                }
+                else
+                {
+                    byte[] datagram = EncryptPacket(headerLength, sequence);
+                    _transport.Send(Remote, datagram, 0, datagram.Length);
+                    Stats.PacketsSent++;
+                    Stats.BytesSent += datagram.Length;
+                }
+
                 _lastSendTime = now;
                 _ackPending = false;
                 wroteAnything = true;
@@ -373,9 +408,36 @@ namespace Gtamp.Shared.Net
                     _ackPendingSince = now;
                 }
 
-                while (!reader.EndOfData)
+                if (Crypto == null)
                 {
-                    ReadMessage(reader);
+                    while (!reader.EndOfData)
+                    {
+                        ReadMessage(reader);
+                    }
+
+                    return true;
+                }
+
+                // Everything after the header is one sealed block. A packet that fails
+                // authentication is dropped whole: partially trusting it is what a MAC
+                // exists to prevent.
+                int headerLength = reader.Position;
+                var header = new byte[headerLength];
+                Buffer.BlockCopy(data, 0, header, 0, headerLength);
+
+                var sealedBody = new byte[data.Length - headerLength];
+                Buffer.BlockCopy(data, headerLength, sealedBody, 0, sealedBody.Length);
+
+                if (!Crypto.TryDecrypt(header, sealedBody, sequence, out byte[] body))
+                {
+                    Stats.MessagesDropped++;
+                    return false;
+                }
+
+                var plaintext = new NetReader(body);
+                while (!plaintext.EndOfData)
+                {
+                    ReadMessage(plaintext);
                 }
 
                 return true;
@@ -404,6 +466,33 @@ namespace Gtamp.Shared.Net
         public bool IsTimedOut(double now, double timeout = ProtocolConstants.ConnectionTimeout) =>
             now - LastReceiveTime > timeout;
 
+        /// <summary>
+        /// Splits the packed packet into its cleartext header and its message region,
+        /// encrypts the second and authenticates both.
+        /// <para>
+        /// The header cannot be encrypted: the receiver needs the session id to find
+        /// the peer and the sequence number to derive the IV before it can decrypt
+        /// anything. It is authenticated instead, so rewriting a sequence number
+        /// invalidates the packet rather than redirecting it.
+        /// </para>
+        /// </summary>
+        private byte[] EncryptPacket(int headerLength, ushort sequence)
+        {
+            var header = new byte[headerLength];
+            Buffer.BlockCopy(_writer.Buffer, 0, header, 0, headerLength);
+
+            int bodyLength = _writer.Length - headerLength;
+            var body = new byte[bodyLength];
+            Buffer.BlockCopy(_writer.Buffer, headerLength, body, 0, bodyLength);
+
+            byte[] sealedBody = Crypto!.Encrypt(header, body, sequence);
+
+            var datagram = new byte[headerLength + sealedBody.Length];
+            Buffer.BlockCopy(header, 0, datagram, 0, headerLength);
+            Buffer.BlockCopy(sealedBody, 0, datagram, headerLength, sealedBody.Length);
+            return datagram;
+        }
+
         private void WriteHeader(NetWriter writer, ushort sequence)
         {
             writer.WriteUInt32(ProtocolConstants.Magic);
@@ -417,7 +506,7 @@ namespace Gtamp.Shared.Net
         private bool TryWriteMessage(NetWriter writer, PendingMessage message)
         {
             int needed = 1 + (message.Reliable ? 2 : 0) + 1 + VarUIntSize((uint)message.Payload.Length) + message.Payload.Length;
-            if (writer.Length + needed > ProtocolConstants.MaxPacketSize)
+            if (writer.Length + needed + EncryptionOverhead > ProtocolConstants.MaxPacketSize)
             {
                 return false;
             }

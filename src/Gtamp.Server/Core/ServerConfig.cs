@@ -114,6 +114,23 @@ namespace Gtamp.Server.Core
         /// </summary>
         public bool RequireAuthentication { get; set; } = true;
 
+        /// <summary>
+        /// Encrypt and authenticate every packet after the handshake.
+        /// <para>
+        /// On by default, and it depends on <see cref="RequireAuthentication"/>: the
+        /// key exchange rides inside the signed challenge, so a server that does not
+        /// authenticate has nothing to bind the exchange to and would be agreeing a
+        /// key with whoever answered first.
+        /// </para>
+        /// <para>
+        /// Turning it off returns to plaintext UDP, where anyone on the path reads
+        /// every position and chat line and can forge packets into a live session.
+        /// The switch exists for a LAN, and for someone debugging with a packet
+        /// capture.
+        /// </para>
+        /// </summary>
+        public bool EncryptSessions { get; set; } = true;
+
         /// <summary>Reject connections whose mod set is missing a Required server mod.</summary>
         public bool EnforceRequiredMods { get; set; } = true;
 

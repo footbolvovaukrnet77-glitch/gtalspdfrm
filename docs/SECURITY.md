@@ -230,9 +230,7 @@ runs on .NET Framework 4.8 inside GTA V's CLR and Ed25519 is not available there
 a public key is seen it is simply enrolled, so an active attacker who is on the
 path at that moment can register a key of their own — as a *new* player, with a
 new character. They cannot take over an existing identity, which requires a
-private key that has never been on the wire. And while the session itself is
-plaintext (Phase 12), an attacker on the path can interfere with the session
-regardless of how well the handshake authenticated it.
+private key that has never been on the wire.
 
 **Losing the secret loses the character**, exactly as losing the old identity
 token did. An unreadable `IdentitySecret` produces a new identity *and a warning
@@ -243,6 +241,57 @@ loss.
 any identity string a client claims — the pre-Phase-10 behaviour — and is the
 operator's call to make for a private server among people who already trust each
 other.
+
+## Session encryption
+
+Every packet after the handshake is encrypted and authenticated.
+
+**Key agreement.** Each connection generates a fresh ECDH P-256 keypair on both
+sides. The two ephemeral public keys are placed inside the bytes the identity key
+already signs during the challenge, so the one signature that proves who the
+client is also binds the key exchange to them — unauthenticated ECDH agrees a key
+with whoever is on the other end, which on a public network is whoever got there
+first.
+
+Ephemeral rather than derived from the identity keys, so that obtaining a player's
+private key lets an attacker impersonate them from then on but **not** decrypt
+sessions recorded before. That is forward secrecy, and it costs one key generation
+per join.
+
+**AES-CBC with HMAC-SHA256, encrypt-then-MAC — not AES-GCM.** GCM would be the
+obvious choice and does not exist on .NET Framework 4.8, which is what the client
+runs on inside GTA V's CLR. Five keys are derived from the one shared secret:
+cipher and MAC keys per direction, plus an IV key. Sharing a key between
+encryption and authentication, or between directions, is the classic way to turn a
+sound construction into an unsound one.
+
+**The header stays readable and is authenticated.** The receiver needs the session
+id to find the peer and the sequence number to derive the IV before it can decrypt
+anything, so those cannot be encrypted. The MAC covers them, so rewriting a
+sequence number invalidates the packet rather than redirecting it.
+
+**The IV is derived, not transmitted:** one AES block over the direction byte and
+the packet sequence, the same construction CTR mode uses for its keystream blocks.
+At a 1200-byte MTU, twenty snapshots a second and thirty-two players, the sixteen
+bytes an explicit IV would cost per packet is real bandwidth. The tag is truncated
+to 16 bytes — the same 128 bits GCM offers by default.
+
+**Verified as encrypted, not reported as encrypted.**
+`EncryptionTests.ASessionIsActuallyEncryptedOnTheWire` watches every datagram on
+the virtual wire and asserts a known plaintext never appears in it, with
+`WithEncryptionOffTheSameTrafficIsReadable` as the control — without that control a
+canary that never appears would prove nothing.
+
+**What it still does not protect.** The connectionless handshake packets
+themselves: the connect request, the challenge and the accept are readable, because
+there is no key until they have been exchanged. A passive observer therefore learns
+that a client joined, its name and its public identity. Everything after that is
+opaque.
+
+`encryptSessions` in `server.json` is on by default and depends on
+`requireAuthentication`: without a signed challenge there is nothing to bind the
+key exchange to. Turning it off returns to plaintext UDP and exists for a LAN, or
+for someone debugging with a packet capture.
 
 ## Bans
 
@@ -300,7 +349,10 @@ machine.
   it needs either session encryption or an out-of-band way to publish keys.
 - **File integrity checking of the client** — see the opening section; not
   defensible.
-- **Encryption of the session** — Phase 12. Today the protocol is plaintext UDP,
-  so anyone on the path can read and forge packets. Authentication proves who
-  opened the session; it does not protect what travels inside it. Run trusted
-  servers, or tunnel through a VPN, until then.
+- **Encryption of the handshake itself.** The connect request, challenge and
+  accept are connectionless and precede any key, so they are readable. A passive
+  observer learns that somebody joined, under what name, with what public
+  identity — and nothing they said afterwards.
+- **Replay protection beyond the packet level.** A captured packet only decrypts
+  at the sequence it was sent from, and the reliability layer already suppresses
+  duplicates, but there is no separate anti-replay window.

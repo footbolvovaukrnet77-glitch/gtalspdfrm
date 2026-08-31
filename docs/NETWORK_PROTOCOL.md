@@ -2,7 +2,7 @@
 
 > English. Русский: [ru/NETWORK_PROTOCOL.md](ru/NETWORK_PROTOCOL.md).
 
-Transport: UDP. Byte order: little-endian. Protocol version: **4**
+Transport: UDP. Byte order: little-endian. Protocol version: **5**
 (`ProtocolConstants.ProtocolVersion`); a mismatch is rejected during the
 handshake with a readable message.
 
@@ -135,11 +135,25 @@ middle:
 ```
   │  ConnectRequest ────────────────────────────► │
   │                                               │ ban check, then a random nonce
+  │                                               │ and a fresh ECDH P-256 keypair
   │ ◄──────────── ConnectChallenge                │
-  │  sign(clientNonce ‖ serverNonce ‖ serverName) │
+  │  ─ serverNonce, serverName                    │
+  │  ─ server ephemeral key (64 bytes)            │
+  │                                               │
+  │  sign(clientNonce ‖ serverNonce               │
+  │       ‖ serverName ‖ both ephemerals)         │
   │  ConnectProof ──────────────────────────────► │ verify against the claimed key
+  │  ─ identity public key, signature             │ then ECDH → shared secret
+  │  ─ client ephemeral key (64 bytes)            │
   │ ◄──────────── ConnectAccept                   │
 ```
+
+**Both ephemeral public keys are inside the signed bytes.** The one signature
+that proves the client owns its identity key therefore also binds the key
+exchange: an attacker who swaps either ephemeral key invalidates the signature
+rather than quietly ending up in the middle of the session. That is why the
+challenge carries the server's ephemeral key rather than sending it later — the
+client has to hold it before it can sign.
 
 The request is retried every 500 ms, up to 32 attempts — raised from 20 because
 four connectionless legs need two round trips through a lossy link where two
@@ -163,6 +177,93 @@ client whose accept was dropped is stranded until it gives up; see
 
 The nonce also stops a late accept from an abandoned attempt being adopted as a
 live session.
+
+## Session encryption
+
+Once the proof verifies, both sides hold the same ECDH shared secret, and the
+session is encrypted from the first session packet onward. `encryptSessions` in
+`server.json` is on by default; turning it off gives a plaintext session, and the
+server says so in its log rather than degrading quietly.
+
+The construction is **encrypt-then-MAC**: AES-256-CBC for confidentiality,
+HMAC-SHA256 truncated to 16 bytes for authenticity, over independent keys.
+
+```
+                    ECDH P-256 shared secret
+                               │
+       ┌──────────┬────────────┼────────────┬──────────┐
+   c2s cipher  c2s MAC    s2c cipher    s2c MAC     IV key
+```
+
+Five keys, each `HMAC-SHA256(secret, label ‖ counter)` under a distinct
+label/counter pair (`gtamp-c2s-v1`, `gtamp-s2c-v1`, `gtamp-iv-v1`). Separate
+directions mean a captured client packet cannot be replayed back at the client,
+and a separate MAC key means the cipher key is never also used as a MAC key. The
+first draft of `Derive` computed the same HMAC twice and would have made the
+cipher key equal the MAC key — a mistake worth naming, because nothing observable
+would have failed.
+
+An encrypted session packet keeps its header in the clear and seals everything
+after it:
+
+```
+u32      magic            ┐
+u8       kind = 1         │
+u32      sessionId        ├─ cleartext header — authenticated, not encrypted
+u16      sequence         │
+u16      ack              │
+u32      ackBits          ┘
+bytes    ciphertext         AES-256-CBC over the whole message block
+16 bytes tag                HMAC-SHA256(macKey, header ‖ ciphertext)[0..16]
+```
+
+**The header stays readable on purpose.** The reliability layer needs the
+sequence and acknowledgement fields to route a packet before an IV can be
+derived, and the demultiplexer needs the session id to know which keys to try.
+Readable is not unprotected: those bytes are inside the MAC, so rewriting a
+sequence number invalidates the packet instead of redirecting a captured one
+elsewhere in the stream.
+
+**The IV is derived, not transmitted.** It is one AES-ECB block over the
+direction byte and the packet sequence under the IV key. That saves 16 bytes on
+every packet and cannot be desynchronised by loss, because the receiver already
+has the sequence from the header. Per-packet overhead is therefore 16 bytes of
+tag plus CBC padding, and the `MaxPacketSize` accounting subtracts it *before* a
+message is admitted into a packet — so enabling encryption never pushes a packet
+that fit the MTU over it.
+
+**A packet that fails authentication is dropped whole** and counted, never
+partially parsed; that is the entire point of carrying a MAC. Decryption returns
+false rather than throwing, because a forged or corrupt packet is an ordinary
+event on a public network, not an exceptional one.
+
+### What this protects, and what it does not
+
+| Protected | Not protected |
+| --- | --- |
+| Message contents against a passive eavesdropper | Traffic analysis — packet sizes and timing stay visible |
+| Tampering with any byte, header fields included | The connectionless handshake legs, plaintext by construction |
+| A man in the middle without the client's identity private key | The server operator, who legitimately holds the session keys |
+| Replay of a packet into the opposite direction | Anything on a machine already compromised locally |
+
+Forward secrecy comes from the ephemeral keypairs: generated per connection and
+discarded with the session, so recovering an identity private key later does not
+decrypt a recorded session.
+
+`EncryptionTests` proves this rather than asserting it. It plants a canary string
+in a chat message, watches the virtual wire for those exact bytes, and requires
+them to be absent — paired with a control test that turns encryption off and
+requires the same canary to be *findable*. Without the control, a test that never
+saw the wire at all would pass for the wrong reason.
+
+**Platform limit, stated plainly.** `ECDiffieHellman` does not exist in
+`netstandard2.0`. `Gtamp.Shared` multi-targets `netstandard2.0;net48;net8.0`
+because of it, and the `netstandard2.0` build of `EphemeralKeyExchange` throws
+`PlatformNotSupportedException` instead of falling back to something weaker. A
+host that can only load the `netstandard2.0` assembly cannot open an encrypted
+session at all — it fails loudly rather than silently running in the clear. The
+shipped client and server both run on `net48`, so this path is not reached in
+practice.
 
 ## Message types
 

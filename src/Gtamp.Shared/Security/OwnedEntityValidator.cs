@@ -63,7 +63,7 @@ namespace Gtamp.Shared.Security
             }
 
             // --- movement budget ------------------------------------------------
-            if (!_motion.TryGetValue(current.Id, out EntityMotionState motion))
+            if (!_motion.TryGetValue(current.Id, out EntityMotionState? motion))
             {
                 motion = new EntityMotionState();
                 _motion[current.Id] = motion;
@@ -102,7 +102,7 @@ namespace Gtamp.Shared.Security
 
         public void Reset(EntityId id)
         {
-            if (_motion.TryGetValue(id, out EntityMotionState motion))
+            if (_motion.TryGetValue(id, out EntityMotionState? motion))
             {
                 motion.Budget = -1d;
                 motion.LastUpdateTime = 0d;

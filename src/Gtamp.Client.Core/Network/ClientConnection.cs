@@ -48,6 +48,12 @@ namespace Gtamp.Client.Network
 
         /// <summary>The proof for the current attempt, resent by the retry timer until the accept arrives.</summary>
         private byte[]? _pendingProof;
+
+        private EphemeralKeyExchange? _exchange;
+        private byte[]? _sessionSecret;
+
+        /// <summary>True once packets on this session are encrypted and authenticated.</summary>
+        public bool IsEncrypted => Peer?.Crypto != null;
         private double _lastAttemptTime;
         private int _attempts;
 
@@ -88,6 +94,9 @@ namespace Gtamp.Client.Network
             _attempts = 0;
             _lastAttemptTime = 0;
             _pendingProof = null;
+            _exchange?.Dispose();
+            _exchange = null;
+            _sessionSecret = null;
             LastError = string.Empty;
             Accept = null;
             Peer = null;
@@ -246,6 +255,19 @@ namespace Gtamp.Client.Network
 
                     Accept = accept;
                     Peer = new NetPeer(_transport, _server, accept.SessionId, now);
+
+                    if (_sessionSecret != null)
+                    {
+                        Peer.Crypto = SessionCrypto.FromSharedSecret(_sessionSecret, isServer: false);
+                        Array.Clear(_sessionSecret, 0, _sessionSecret.Length);
+                        _sessionSecret = null;
+
+                        // The private half has done its one job. Holding it for the
+                        // life of the session would give up the forward secrecy the
+                        // ephemeral exchange exists for.
+                        _exchange?.Dispose();
+                        _exchange = null;
+                    }
                     State = ClientConnectionState.Connected;
                     _log.Success(
                         LogCategory.Network,
@@ -285,14 +307,44 @@ namespace Gtamp.Client.Network
                         return;
                     }
 
+                    // A fresh exchange per attempt. Reusing one across retries would
+                    // mean a captured proof stays valid for the key it agreed.
+                    _exchange?.Dispose();
+                    _exchange = null;
+                    _sessionSecret = null;
+
+                    byte[] clientEphemeral = Array.Empty<byte>();
+                    if (EphemeralKeyExchange.IsWellFormed(challenge.EphemeralPublicKey))
+                    {
+                        try
+                        {
+                            _exchange = EphemeralKeyExchange.Create();
+                            clientEphemeral = _exchange.PublicKey;
+                            _sessionSecret = _exchange.Agree(challenge.EphemeralPublicKey);
+                        }
+                        catch (Exception exception)
+                        {
+                            LastError = "could not agree a session key: " + exception.Message;
+                            State = ClientConnectionState.Failed;
+                            _log.Error(LogCategory.Network, "Connection failed: " + LastError);
+                            Rejected?.Invoke(DisconnectReason.AuthenticationFailed, LastError);
+                            return;
+                        }
+                    }
+
                     byte[] payload = IdentityKey.BuildChallenge(
-                        challenge.ClientNonce, challenge.ServerNonce, challenge.ServerName);
+                        challenge.ClientNonce,
+                        challenge.ServerNonce,
+                        challenge.ServerName,
+                        challenge.EphemeralPublicKey,
+                        clientEphemeral);
 
                     var proof = new ConnectProofMessage
                     {
                         ClientNonce = challenge.ClientNonce,
                         PublicKey = Identity.PublicKey,
                         Signature = Identity.Sign(payload),
+                        EphemeralPublicKey = clientEphemeral,
                     };
 
                     ChallengesAnswered++;

@@ -64,8 +64,17 @@ namespace Gtamp.Shared.Net
             }
         }
 
+        /// <summary>
+        /// Every datagram that goes on the virtual wire, when set. Used by tests that
+        /// need to look at what an eavesdropper would see — there is no other honest
+        /// way to check that a session is actually encrypted rather than merely
+        /// reported as encrypted.
+        /// </summary>
+        public Action<byte[]>? Observer { get; set; }
+
         internal void Enqueue(IPEndPoint source, IPEndPoint target, byte[] payload)
         {
+            Observer?.Invoke(payload);
             DatagramsSent++;
             if (PacketLoss > 0 && _random.NextDouble() < PacketLoss)
             {

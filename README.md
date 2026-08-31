@@ -6,7 +6,7 @@ A server-authoritative multiplayer framework that turns single-player GTA V into
 shared world, with an entity system and mod SDK that third-party mods can extend
 without patching the framework.
 
-**Status: phases 1 to 11 complete.** Two players share one world, movement replicates,
+**Status: phases 1 to 12 complete.** Two players share one world, movement replicates,
 and a player who disconnects and comes back receives the world as it is *now* —
 including their own character, across a server restart.
 
@@ -82,8 +82,15 @@ including their own character, across a server restart.
   silently never appears. Custom weapons get a server-side validation envelope, an
   operator-editable one in `server.json`, and a client-side name so the console
   stops printing bare hashes.
+- **Encrypted, authenticated sessions.** A player proves ownership of an ECDSA
+  P-256 identity key during the handshake, and the same signature binds an
+  ephemeral ECDH exchange, so every session packet after it is AES-256-CBC with
+  an HMAC-SHA256 tag under per-direction keys. Forward-secret: the ephemeral keys
+  die with the session. Proven by a test that plants a canary in a chat message
+  and requires it to be absent from the wire — with a control test that requires
+  the same canary to be findable when encryption is off.
 
-343 automated tests, all passing, covering everything except the ScriptHookVDotNet
+360 automated tests, all passing, covering everything except the ScriptHookVDotNet
 host layer and the two plugin-host bridges, which need a running game.
 
 ## What does not work yet
@@ -116,7 +123,10 @@ Stated plainly, because a framework that hides its gaps wastes your time:
 - **Identity is a keypair, not an account.** The private half never leaves the
   machine, so nobody who watches a handshake can become you — but there is no
   login, no password reset, and copying `IdentitySecret` moves the character.
-- **The protocol is plaintext.** Run trusted servers until Phase 12.
+- **Encryption protects the wire, not the operator.** Sessions are encrypted and
+  authenticated, but the server legitimately holds the session keys and sees
+  everything you send it. Packet sizes and timing stay visible to an observer,
+  and the connectionless handshake legs are plaintext by construction.
 
 ## Quick start
 

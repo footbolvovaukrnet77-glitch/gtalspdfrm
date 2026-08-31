@@ -190,7 +190,8 @@ namespace Gtamp.Shared.Security
         }
 
         /// <summary>
-        /// The bytes both sides sign over: both nonces and the server's identity.
+        /// The bytes both sides sign over: both nonces, the server's identity, and both
+        /// ephemeral public keys.
         /// <para>
         /// The client nonce binds the proof to this specific connect attempt, the
         /// server nonce makes it unreplayable against a later one, and the server
@@ -198,18 +199,38 @@ namespace Gtamp.Shared.Security
         /// happens to reuse a nonce.
         /// </para>
         /// </summary>
-        public static byte[] BuildChallenge(uint clientNonce, byte[] serverNonce, string serverName)
+        public static byte[] BuildChallenge(
+            uint clientNonce,
+            byte[] serverNonce,
+            string serverName,
+            byte[]? serverEphemeral = null,
+            byte[]? clientEphemeral = null)
         {
             byte[] name = Encoding.UTF8.GetBytes(serverName ?? string.Empty);
             byte[] nonce = serverNonce ?? Array.Empty<byte>();
+            byte[] server = serverEphemeral ?? Array.Empty<byte>();
+            byte[] client = clientEphemeral ?? Array.Empty<byte>();
 
-            var buffer = new byte[4 + nonce.Length + name.Length];
+            var buffer = new byte[4 + nonce.Length + name.Length + server.Length + client.Length];
             buffer[0] = (byte)clientNonce;
             buffer[1] = (byte)(clientNonce >> 8);
             buffer[2] = (byte)(clientNonce >> 16);
             buffer[3] = (byte)(clientNonce >> 24);
-            Array.Copy(nonce, 0, buffer, 4, nonce.Length);
-            Array.Copy(name, 0, buffer, 4 + nonce.Length, name.Length);
+
+            int offset = 4;
+            Array.Copy(nonce, 0, buffer, offset, nonce.Length);
+            offset += nonce.Length;
+            Array.Copy(name, 0, buffer, offset, name.Length);
+            offset += name.Length;
+
+            // Both ephemeral public keys are inside the signed bytes, so the one
+            // signature that proves the client's identity also binds the key exchange
+            // to it. Unauthenticated ECDH agrees a key with whoever is on the other
+            // end, which on a public network is whoever got there first.
+            Array.Copy(server, 0, buffer, offset, server.Length);
+            offset += server.Length;
+            Array.Copy(client, 0, buffer, offset, client.Length);
+
             return buffer;
         }
 

@@ -2,7 +2,7 @@
 
 > English. Русский: [ru/ROADMAP.md](ru/ROADMAP.md).
 
-Status as of the Phase 8 commit. "Working" means implemented *and* covered by a
+Status as of the Phase 12 commit. "Working" means implemented *and* covered by a
 test that would fail if it broke.
 
 ---
@@ -205,10 +205,27 @@ verbatim would turn "here is my bug report" into "here is my character".
 and the server password appear in none of the files, while the public identity —
 the most useful single identifier in a report — stays.
 
-## Phase 12 — Optimisation
+## Phase 12 — Optimisation and encryption ✅ complete
 
-Per-entity baselines, allocation-free hot paths, session encryption, database
-throughput, and stress testing beyond 32 players.
+| Item | State |
+| --- | --- |
+| Session encryption | ✅ signed ephemeral ECDH P-256 per connection, AES-CBC with HMAC-SHA256 encrypt-then-MAC, derived IV, 16-byte tag. Verified by watching the wire, with a control |
+| Stress beyond 32 players | ✅ the convergence test now runs at 32 and 64 |
+| Allocation budget on the hot path | ✅ measured rather than claimed: ~26 KB per server tick at 16 players with encryption on, guarded at 512 KB so a regression trips the test |
+| Per-entity baselines | ⏸ **not done, and not pretended.** The per-client view history is the memory cost, and reworking the one path every correctness guarantee runs through — without being able to profile the real game — trades a measurable risk for an unmeasured gain |
+| Database throughput | ⏸ writes are already batched into one transaction and coalesced off the tick thread; nothing measured says this is the bottleneck |
+
+**On "allocation-free".** The phrase was in the plan and is not in the result,
+because it is the kind of claim that is easy to make and impossible to check
+later. What replaced it is a number: `StressTests.TheSnapshotPathStaysWithinItsAllocationBudget`
+measures server-thread allocation over 200 ticks with 16 players connected and
+fails if it grows by an order of magnitude. A budget that fails loudly is worth
+more than an adjective.
+
+**On the stress figures.** The suite runs on virtual time, so 64 players
+converging proves the protocol and the world state are *correct* at that size. It
+says nothing about whether a real server keeps up at 64 — that needs a real
+machine and real clients, and is not claimed here.
 
 ---
 

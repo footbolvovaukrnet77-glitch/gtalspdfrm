@@ -1,3 +1,4 @@
+using System;
 using System.Collections.Generic;
 using Gtamp.Server.Core;
 using Gtamp.Shared.Core;
@@ -27,9 +28,21 @@ namespace Gtamp.Tests
         [InlineData(5)]
         [InlineData(10)]
         [InlineData(20)]
+        [InlineData(32)]
+        [InlineData(64)]
         public void PlayersAllConvergeOnTheSameWorld(int playerCount)
         {
-            using var harness = new TestHarness();
+            // 64 is deliberately past the 32 the configuration defaults to and past
+            // anything that has been claimed. It is here to find out what happens
+            // rather than to assert that nothing does — every snapshot is now
+            // encrypted per client, so the cost of a player is higher than it was
+            // when the 32-player figure was written down.
+            using var harness = new TestHarness(new ServerConfig
+            {
+                ServerName = "stress",
+                SaveIntervalSeconds = 0,
+                MaxPlayers = Math.Max(32, playerCount),
+            });
 
             var clients = new List<TestClient>();
             for (int i = 0; i < playerCount; i++)
@@ -52,7 +65,7 @@ namespace Gtamp.Tests
 
                     return true;
                 },
-                timeoutSeconds: 20);
+                timeoutSeconds: 40);
 
             Assert.True(converged, $"{playerCount} clients never converged on a {playerCount}-player world");
             Assert.Equal(playerCount, harness.Server.Players.Count);
@@ -62,6 +75,60 @@ namespace Gtamp.Tests
                 Assert.Equal(playerCount - 1, client.Client.RemotePlayers.Count);
                 Assert.Equal(0, client.Client.ResyncsRequested);
             }
+        }
+
+        [Fact]
+        public void TheSnapshotPathStaysWithinItsAllocationBudget()
+        {
+            // "Allocation-free hot paths" is the kind of claim that is easy to make and
+            // impossible to check later, so this measures instead of asserting a
+            // rewrite. The number is a budget, not a target: it exists so that a change
+            // which multiplies allocations per snapshot fails here rather than being
+            // discovered as a stutter in a real game.
+            //
+            // Measured on the server thread only, over a fixed number of ticks with a
+            // fixed number of clients, so it is comparable between runs.
+            const int Players = 16;
+            const int Ticks = 200;
+
+            using var harness = new TestHarness(new ServerConfig
+            {
+                ServerName = "allocation",
+                SaveIntervalSeconds = 0,
+                MaxPlayers = Players,
+            });
+
+            var clients = new List<TestClient>();
+            for (int i = 0; i < Players; i++)
+            {
+                TestClient client = harness.CreateClient("player" + i);
+                clients.Add(client);
+                client.Client.Connect("127.0.0.1", TestHarness.ServerEndPoint.Port);
+            }
+
+            Assert.True(
+                harness.AdvanceUntil(() => harness.Server.Players.Count == Players, timeoutSeconds: 30),
+                "the clients never all connected");
+
+            // Settle first: the join path allocates far more than the steady state and
+            // measuring through it would hide any later regression.
+            harness.Advance(2.0);
+
+            long before = GC.GetAllocatedBytesForCurrentThread();
+            for (int i = 0; i < Ticks; i++)
+            {
+                harness.Server.Tick(harness.Now);
+                harness.Network.Advance(1d / 60d);
+            }
+
+            long perTick = (GC.GetAllocatedBytesForCurrentThread() - before) / Ticks;
+
+            // At 60 Hz this is the per-frame server allocation with 16 players
+            // connected, snapshots encrypted. Generous enough not to be flaky, tight
+            // enough that an order-of-magnitude regression trips it.
+            Assert.True(
+                perTick < 512 * 1024,
+                $"the server allocated {perTick} bytes per tick with {Players} players; the budget is 512 KB");
         }
 
         [Fact]

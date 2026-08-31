@@ -135,7 +135,7 @@ namespace Gtamp.Shared.Interop
             // memory growth on the writer. Newer state is always the more useful.
             while (_outbox.Count >= Capacity)
             {
-                if (_outbox.TryDequeue(out byte[] _))
+                if (_outbox.TryDequeue(out byte[]? _))
                 {
                     Dropped++;
                 }
@@ -154,7 +154,7 @@ namespace Gtamp.Shared.Interop
             topic = string.Empty;
             payload = Array.Empty<byte>();
 
-            while (_inbox.TryDequeue(out byte[] framed))
+            while (_inbox.TryDequeue(out byte[]? framed))
             {
                 if (!TryUnframe(framed, out topic, out payload))
                 {
@@ -172,11 +172,11 @@ namespace Gtamp.Shared.Interop
 
         public void Clear()
         {
-            while (_inbox.TryDequeue(out byte[] _))
+            while (_inbox.TryDequeue(out byte[]? _))
             {
             }
 
-            while (_outbox.TryDequeue(out byte[] _))
+            while (_outbox.TryDequeue(out byte[]? _))
             {
             }
         }

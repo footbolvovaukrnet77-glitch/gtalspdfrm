@@ -24,12 +24,16 @@ namespace Gtamp.Shared.Protocol
         /// <summary>Signed along with the nonces, so a proof cannot be replayed to another server.</summary>
         public string ServerName { get; set; } = string.Empty;
 
+        /// <summary>The server's ephemeral ECDH public point. Empty when encryption is off.</summary>
+        public byte[] EphemeralPublicKey { get; set; } = Array.Empty<byte>();
+
         public byte[] Serialize()
         {
             var writer = new NetWriter(128);
             writer.WriteUInt32(ClientNonce);
             writer.WriteByteArray(ServerNonce);
             writer.WriteString(ServerName);
+            writer.WriteByteArray(EphemeralPublicKey);
             return writer.ToArray();
         }
 
@@ -41,6 +45,7 @@ namespace Gtamp.Shared.Protocol
                 ClientNonce = reader.ReadUInt32(),
                 ServerNonce = reader.ReadByteArray(64),
                 ServerName = reader.ReadString(128),
+                EphemeralPublicKey = reader.ReadByteArray(128),
             };
         }
     }
@@ -55,12 +60,16 @@ namespace Gtamp.Shared.Protocol
 
         public byte[] Signature { get; set; } = Array.Empty<byte>();
 
+        /// <summary>The client's ephemeral ECDH public point. Empty when encryption is off.</summary>
+        public byte[] EphemeralPublicKey { get; set; } = Array.Empty<byte>();
+
         public byte[] Serialize()
         {
             var writer = new NetWriter(256);
             writer.WriteUInt32(ClientNonce);
             writer.WriteString(PublicKey);
             writer.WriteByteArray(Signature);
+            writer.WriteByteArray(EphemeralPublicKey);
             return writer.ToArray();
         }
 
@@ -75,6 +84,7 @@ namespace Gtamp.Shared.Protocol
                 // A P-256 DER signature is ~72 bytes; the cap is generous but bounded
                 // so an unauthenticated peer cannot make the server allocate freely.
                 Signature = reader.ReadByteArray(256),
+                EphemeralPublicKey = reader.ReadByteArray(128),
             };
         }
     }

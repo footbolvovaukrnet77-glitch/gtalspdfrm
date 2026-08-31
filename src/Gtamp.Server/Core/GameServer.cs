@@ -414,7 +414,14 @@ namespace Gtamp.Server.Core
             if (!_pendingAuth.TryGetValue(source, out PendingAuthentication? pending)
                 || pending.Request.ClientNonce != request.ClientNonce)
             {
-                pending = new PendingAuthentication(request, name, report, IdentityKey.CreateServerNonce(), _now);
+                pending = new PendingAuthentication(
+                    request,
+                    name,
+                    report,
+                    IdentityKey.CreateServerNonce(),
+                    Config.EncryptSessions ? EphemeralKeyExchange.Create() : null,
+                    _now);
+
                 _pendingAuth[source] = pending;
             }
 
@@ -423,6 +430,7 @@ namespace Gtamp.Server.Core
                 ClientNonce = request.ClientNonce,
                 ServerNonce = pending.ServerNonce,
                 ServerName = Config.ServerName,
+                EphemeralPublicKey = pending.Exchange?.PublicKey ?? Array.Empty<byte>(),
             };
 
             _transport.SendConnectionless(source, NetMessageType.ConnectChallenge, challenge.Serialize());
@@ -487,7 +495,13 @@ namespace Gtamp.Server.Core
                 return;
             }
 
-            byte[] expected = IdentityKey.BuildChallenge(proof.ClientNonce, pending.ServerNonce, Config.ServerName);
+            byte[] expected = IdentityKey.BuildChallenge(
+                proof.ClientNonce,
+                pending.ServerNonce,
+                Config.ServerName,
+                pending.Exchange?.PublicKey,
+                proof.EphemeralPublicKey);
+
             if (!IdentityKey.Verify(proof.PublicKey, expected, proof.Signature))
             {
                 _pendingAuth.Remove(source);
@@ -499,13 +513,52 @@ namespace Gtamp.Server.Core
                 return;
             }
 
+            byte[]? sessionSecret = null;
+            if (pending.Exchange != null)
+            {
+                if (!EphemeralKeyExchange.IsWellFormed(proof.EphemeralPublicKey))
+                {
+                    _pendingAuth.Remove(source);
+                    RejectConnection(
+                        source,
+                        proof.ClientNonce,
+                        DisconnectReason.AuthenticationFailed,
+                        "this server encrypts sessions and the client sent no key exchange");
+                    return;
+                }
+
+                try
+                {
+                    sessionSecret = pending.Exchange.Agree(proof.EphemeralPublicKey);
+                }
+                catch (Exception exception)
+                {
+                    // A point that is not on the curve, or any other malformed key.
+                    // Refused rather than allowed to fall back to plaintext: silently
+                    // downgrading is how encryption stops meaning anything.
+                    _pendingAuth.Remove(source);
+                    Log.Warning(LogCategory.Security, $"Key agreement with {source} failed: {exception.Message}");
+                    RejectConnection(
+                        source, proof.ClientNonce, DisconnectReason.AuthenticationFailed, "key agreement failed");
+                    return;
+                }
+                finally
+                {
+                    pending.Exchange.Dispose();
+                }
+            }
+
             _pendingAuth.Remove(source);
-            Admit(source, pending.Request, pending.Name, pending.ModReport);
+            Admit(source, pending.Request, pending.Name, pending.ModReport, sessionSecret);
         }
 
         /// <summary>Creates the session. Everything before this point is admission control.</summary>
         private void Admit(
-            IPEndPoint source, ConnectRequestMessage request, string name, List<ModCompatibilityEntry> report)
+            IPEndPoint source,
+            ConnectRequestMessage request,
+            string name,
+            List<ModCompatibilityEntry> report,
+            byte[]? sessionSecret = null)
         {
             // A reconnect from an identity that is still "connected" replaces the old
             // session; the previous socket is almost always already dead.
@@ -525,6 +578,14 @@ namespace Gtamp.Server.Core
 
             uint sessionId = NextSessionId();
             var peer = new NetPeer(_transport, source, sessionId, _now);
+
+            if (sessionSecret != null)
+            {
+                // Attached before the accept is sent, but the accept itself is
+                // connectionless and therefore not encrypted — it has to be readable
+                // by a client that does not have a peer yet. Everything after it is.
+                peer.Crypto = SessionCrypto.FromSharedSecret(sessionSecret, isServer: true);
+            }
             var session = new PlayerSession(Players.AllocatePlayerId(), peer, name, request.IdentityToken)
             {
                 ConnectedAt = _now,
@@ -599,14 +660,19 @@ namespace Gtamp.Server.Core
                 string name,
                 List<ModCompatibilityEntry> modReport,
                 byte[] serverNonce,
+                EphemeralKeyExchange? exchange,
                 double issuedAt)
             {
                 Request = request;
                 Name = name;
                 ModReport = modReport;
                 ServerNonce = serverNonce;
+                Exchange = exchange;
                 IssuedAt = issuedAt;
             }
+
+            /// <summary>Discarded once the session key is derived; a fresh one per connection.</summary>
+            public EphemeralKeyExchange? Exchange { get; }
 
             public ConnectRequestMessage Request { get; }
 
