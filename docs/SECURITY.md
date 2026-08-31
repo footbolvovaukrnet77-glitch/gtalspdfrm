@@ -198,28 +198,109 @@ pilots.
 | Client identity token | **Partially** — proves continuity, not identity (see below) |
 | Server world state | Yes — it is the source of truth |
 
-### The identity token is not authentication
+### Identity is a keypair, and the private half never moves
 
-It is a GUID in a text file. Anyone who copies it becomes that player. It solves
-*continuity* — "give me my character back" — not *identity*.
+Each installation holds an ECDSA P-256 keypair, generated on first run and stored
+in `client.ini`. The **public** half is the identity: it is what the server knows
+the player by, what bans are keyed to, and what persistence stores a character
+against. The **private** half signs a per-connection challenge and is never
+transmitted, so nothing an eavesdropper can capture lets them become that player.
 
-Real authentication (challenge/response against a stored secret, and a ban list
-keyed to something harder to forge) is Phase 10 and is not pretended to exist now.
+```
+CLIENT                                        SERVER
+  ConnectRequest (identity = public key) ────►
+                                              validate version, name, password, mods
+                                              check the ban list
+  ◄──── ConnectChallenge (random nonce)
+  sign(clientNonce ‖ serverNonce ‖ serverName)
+  ConnectProof (public key, signature) ──────►
+                                              verify against the claimed key
+  ◄──── ConnectAccept
+```
+
+The nonces and the server name are all inside the signed bytes: the client nonce
+binds the proof to one connect attempt, the server nonce makes it unreplayable
+against a later one, and the server name stops a proof captured on one server
+being replayed to another.
+
+**P-256 rather than Ed25519**, which would be the better curve, because the client
+runs on .NET Framework 4.8 inside GTA V's CLR and Ed25519 is not available there.
+
+**What this does not solve.** First contact is trust-on-first-use: the first time
+a public key is seen it is simply enrolled, so an active attacker who is on the
+path at that moment can register a key of their own — as a *new* player, with a
+new character. They cannot take over an existing identity, which requires a
+private key that has never been on the wire. And while the session itself is
+plaintext (Phase 12), an attacker on the path can interfere with the session
+regardless of how well the handshake authenticated it.
+
+**Losing the secret loses the character**, exactly as losing the old identity
+token did. An unreadable `IdentitySecret` produces a new identity *and a warning
+saying so*, rather than a silent fresh start that looks like server-side data
+loss.
+
+`RequireAuthentication` in `server.json` is on by default. Turning it off accepts
+any identity string a client claims — the pre-Phase-10 behaviour — and is the
+operator's call to make for a private server among people who already trust each
+other.
+
+## Bans
+
+Keyed by identity public key. Not by name, which the player chooses and changes in
+a text file, and not by address, which is shared by everyone behind one router and
+changed by reconnecting a home line — banning either is a combination of trivially
+evaded and hitting people who did nothing.
+
+An entry carries a reason, who issued it, and an optional expiry; expiry is
+applied on lookup rather than by a sweep, because a timed ban that outlives its
+window for want of a sweep is the same bug as one that never expires. Bans are
+written to the database synchronously, unlike every other write here, because a
+ban issued moments before a crash is exactly the one that must survive it.
+
+**What a ban does not stop:** generating a fresh keypair and coming back as a new
+player. Nothing available to a server with no account system can stop that, and
+this does not pretend otherwise. What it buys is that evading costs the evader
+everything they had — the new identity is a new character with nothing in it.
 
 ## Administration
 
-Roles are `Player`, `Moderator`, `Admin`, persisted per identity token. Developer
-console commands are gated behind developer mode and refused otherwise
-(`ConsoleTests.DeveloperCommandsAreRefusedUntilDeveloperModeIsOn`).
+Roles are `Player`, `Moderator`, `Admin`, persisted per identity.
 
-The server console is unauthenticated by design — it is stdin of the server
-process. Anyone who can reach it already has the machine.
+| Role | May |
+| --- | --- |
+| `Player` | nothing over the network |
+| `Moderator` | inspect, announce, kick, ban, move/kill/respawn players |
+| `Admin` | all of that, plus the world clock and weather, saving, roles and shutdown |
+
+A moderator cannot change roles, including their own: a moderator who can promote
+themselves is an admin with extra steps.
+
+Admin commands arrive over the network as `AdminCommand` (`0x50`) and are answered
+with `SecurityNotice` (`0x51`). **Authorisation happens on the server and only
+there** — the client sends a string and is told what happened, so a modified
+client gains nothing by pretending to be an admin. The in-game `admin <command>`
+is deliberately *not* gated behind developer mode: developer mode is a local
+switch that gates nothing an attacker could not flip, and the only gate that means
+anything is the server's.
+
+Permissions are declared per command, and **a command with no entry needs the
+highest permission**. A table where forgetting to add a command makes it public is
+worse than no table at all, because it reads as though it is protecting something.
+
+The stdin console runs the same command table with no authorisation, by design —
+it is the server process's own input. Anyone who can reach it already has the
+machine.
 
 ## Not implemented, and not claimed to be
 
-- Authentication beyond the identity token — Phase 10
-- A ban list — Phase 10
-- File integrity checking of the client — see the opening section; not defensible
-- Encryption of the session — Phase 12; today the protocol is plaintext UDP, so
-  anyone on the path can read and forge packets. Run trusted servers, or tunnel
-  through a VPN, until then.
+- **Accounts.** Identity is a key on a machine, not a login. There is no password
+  reset, no "same character on two computers" without copying the secret, and no
+  central registry.
+- **Protection against the first-contact substitution** described above. Solving
+  it needs either session encryption or an out-of-band way to publish keys.
+- **File integrity checking of the client** — see the opening section; not
+  defensible.
+- **Encryption of the session** — Phase 12. Today the protocol is plaintext UDP,
+  so anyone on the path can read and forge packets. Authentication proves who
+  opened the session; it does not protect what travels inside it. Run trusted
+  servers, or tunnel through a VPN, until then.

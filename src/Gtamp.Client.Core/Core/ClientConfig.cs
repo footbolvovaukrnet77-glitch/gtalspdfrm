@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.Globalization;
 using System.IO;
 using Gtamp.Shared.Protocol;
+using Gtamp.Shared.Security;
 
 namespace Gtamp.Client.Core
 {
@@ -26,10 +27,23 @@ namespace Gtamp.Client.Core
         public string ServerPassword { get; set; } = string.Empty;
 
         /// <summary>
-        /// Stable per-installation secret. Generated on first run; it is what lets the
-        /// server give this player their character back after a reconnect.
+        /// This installation's public identity: base64 of an ECDSA P-256 public key.
+        /// It names the player to the server and is not a secret — publishing it lets
+        /// somebody address you, not impersonate you.
         /// </summary>
         public string IdentityToken { get; set; } = string.Empty;
+
+        /// <summary>
+        /// The private half of that key. Generated on first run and never sent
+        /// anywhere: the server proves the player by asking for a signature, not by
+        /// being told the secret.
+        /// <para>
+        /// Copying this line to another machine moves the character with it. Losing it
+        /// loses the character, exactly as losing the old identity token did — but
+        /// leaking it no longer lets a bystander who watched one handshake become you.
+        /// </para>
+        /// </summary>
+        public string IdentitySecret { get; set; } = string.Empty;
 
         /// <summary>Virtual key code that opens the developer console. 119 is F8.</summary>
         public int ConsoleKey { get; set; } = 119;
@@ -87,14 +101,56 @@ namespace Gtamp.Client.Core
                 }
             }
 
-            if (string.IsNullOrWhiteSpace(config.IdentityToken))
+            if (config.EnsureIdentity())
             {
-                config.IdentityToken = Guid.NewGuid().ToString("N");
                 config.Save(path);
             }
 
             return config;
         }
+
+        /// <summary>
+        /// Makes sure this installation has a usable keypair, generating one on first
+        /// run or when the stored blob is unreadable. Returns true when the file needs
+        /// writing back.
+        /// <para>
+        /// An unreadable secret produces a <b>new identity with a warning</b>, not a
+        /// crash and not a silent fresh start. The player loses their character either
+        /// way; what the warning buys is that they find out why, and can restore the
+        /// line from a backup before playing.
+        /// </para>
+        /// </summary>
+        public bool EnsureIdentity()
+        {
+            IdentityKey? key = IdentityKey.TryImport(IdentitySecret);
+            if (key != null)
+            {
+                // A public key that does not match the private one would make every
+                // handshake fail with "the proof names a different identity", so it is
+                // recomputed rather than trusted.
+                bool changed = !string.Equals(IdentityToken, key.PublicKey, StringComparison.Ordinal);
+                IdentityToken = key.PublicKey;
+                key.Dispose();
+                return changed;
+            }
+
+            IdentityRegenerated = !string.IsNullOrWhiteSpace(IdentitySecret);
+
+            using IdentityKey created = IdentityKey.Create();
+            IdentitySecret = created.ExportPrivateBlob();
+            IdentityToken = created.PublicKey;
+            return true;
+        }
+
+        /// <summary>
+        /// True when the stored secret was present but unusable, so a new identity was
+        /// generated. The client logs this at warning level rather than letting a lost
+        /// character look like a server-side problem.
+        /// </summary>
+        public bool IdentityRegenerated { get; private set; }
+
+        /// <summary>Loads the signing key. The caller owns it and must dispose it.</summary>
+        public IdentityKey? LoadIdentity() => IdentityKey.TryImport(IdentitySecret);
 
         public void Save(string path)
         {
@@ -113,7 +169,10 @@ namespace Gtamp.Client.Core
                 $"ServerAddress={ServerAddress}",
                 $"ServerPort={ServerPort.ToString(CultureInfo.InvariantCulture)}",
                 $"ServerPassword={ServerPassword}",
+                "; Your public identity. Safe to share; it is how the server knows you.",
                 $"IdentityToken={IdentityToken}",
+                "; The private half. Never share this, and never send it anywhere.",
+                $"IdentitySecret={IdentitySecret}",
                 "; Virtual key code. 119 = F8, 192 = tilde.",
                 $"ConsoleKey={ConsoleKey.ToString(CultureInfo.InvariantCulture)}",
                 $"InterpolationDelay={InterpolationDelay.ToString("0.###", CultureInfo.InvariantCulture)}",
@@ -149,6 +208,9 @@ namespace Gtamp.Client.Core
                     break;
                 case "identitytoken":
                     IdentityToken = value;
+                    break;
+                case "identitysecret":
+                    IdentitySecret = value;
                     break;
                 case "consolekey":
                     if (int.TryParse(value, NumberStyles.Integer, CultureInfo.InvariantCulture, out int consoleKey))

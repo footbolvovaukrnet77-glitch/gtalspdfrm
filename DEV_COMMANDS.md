@@ -55,6 +55,10 @@ Type these at the running server's prompt.
 | `entity <id>` | Full state of one entity |
 | `net` | Per-connection counters: ping, RTT variance, packets, loss, retransmits |
 | `kick <playerId>` | Disconnect a player |
+| `ban <playerId\|fingerprint> [minutes] [reason]` | Ban an identity; 0 minutes is permanent |
+| `unban <name\|fingerprint>` | Lift a ban |
+| `bans` | List active bans |
+| `role <playerId> <player\|moderator\|admin>` | Set what a player may do over the network |
 | `teleport <id> <x> <y> <z> [heading]` | Move a player; holds their authority until they confirm |
 | `kill <playerId>` | Kill a player |
 | `respawn <playerId>` | Respawn a dead player immediately |
@@ -76,6 +80,7 @@ Type these at the running server's prompt.
 | `players` | Players in the replicated world |
 | `entity <id>` | Replicated state of one entity |
 | `net` | Network debugger |
+| `admin <command...>` | Run a server command, if the server lets you |
 | `mods` | Detected mods and adapter status |
 | `diagnostics` | Check the installation and the session |
 | `report <text>` | Build a bug report and copy it to the clipboard |

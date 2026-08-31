@@ -43,7 +43,7 @@ tools\build.bat Release
 ./tools/test.sh          # или tools\test.bat
 ```
 
-Ожидается: `Passed! - Failed: 0, Passed: 304`.
+Ожидается: `Passed! - Failed: 0, Passed: 323`.
 
 ---
 
@@ -216,7 +216,8 @@ PlayerName=YourName
 ServerAddress=127.0.0.1
 ServerPort=27015
 ServerPassword=
-IdentityToken=<сгенерирован — не меняйте, иначе потеряете персонажа>
+IdentityToken=<публичный ключ; безопасно показывать>
+IdentitySecret=<приватный ключ; никому не показывайте и не теряйте>
 ConsoleKey=119
 InterpolationDelay=0.12
 CorrectionThreshold=3

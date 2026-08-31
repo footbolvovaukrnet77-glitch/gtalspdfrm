@@ -152,7 +152,10 @@ namespace Gtamp.Tests
         [Fact]
         public void APlayerGetsTheirCharacterBackAfterAServerRestart()
         {
-            const string identity = "persistent-alice";
+            // A real keypair, because the server now asks the returning player to
+            // prove they hold it rather than taking their word for a token.
+            using var key = Gtamp.Shared.Security.IdentityKey.Create();
+            string identity = key.ExportPrivateBlob();
             float finalX;
 
             var firstConfig = new ServerConfig

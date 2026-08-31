@@ -10,7 +10,7 @@ namespace Gtamp.Shared.Protocol
         /// field layouts change in a way that is not backwards compatible.
         /// A mismatch is rejected during the handshake with a readable message.
         /// </summary>
-        public const ushort ProtocolVersion = 3;
+        public const ushort ProtocolVersion = 4;
 
         /// <summary>
         /// Conservative payload budget. 1200 bytes keeps a datagram below the
@@ -41,7 +41,13 @@ namespace Gtamp.Shared.Protocol
 
         public const double HandshakeRetryInterval = 0.5;
 
-        public const int HandshakeMaxAttempts = 20;
+        /// <summary>
+        /// Attempts before the client gives up. Raised from 20 when authentication
+        /// turned the handshake from two legs into four: the same link that used to
+        /// need one round trip through now needs two, so the same number of tries
+        /// buys materially less.
+        /// </summary>
+        public const int HandshakeMaxAttempts = 32;
 
         public const int MaxPlayerNameLength = 32;
     }

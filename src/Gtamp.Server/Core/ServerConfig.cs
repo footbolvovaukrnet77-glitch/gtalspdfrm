@@ -101,6 +101,19 @@ namespace Gtamp.Server.Core
         /// </summary>
         public double FinishedActivityLingerSeconds { get; set; } = 30;
 
+        /// <summary>
+        /// Require every client to prove it holds the private half of the identity it
+        /// claims (see docs/SECURITY.md).
+        /// <para>
+        /// On by default. Security that is off by default is decoration, and the
+        /// protocol version has changed anyway, so there is no older client this
+        /// would newly lock out. An operator running a private server among people
+        /// who already trust each other can turn it off; what they give up is that
+        /// anyone who learns another player's identity string becomes that player.
+        /// </para>
+        /// </summary>
+        public bool RequireAuthentication { get; set; } = true;
+
         /// <summary>Reject connections whose mod set is missing a Required server mod.</summary>
         public bool EnforceRequiredMods { get; set; } = true;
 

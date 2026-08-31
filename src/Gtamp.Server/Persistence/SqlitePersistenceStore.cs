@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Globalization;
 using System.IO;
+using Gtamp.Shared.Security;
 using Microsoft.Data.Sqlite;
 
 namespace Gtamp.Server.Persistence
@@ -15,7 +16,7 @@ namespace Gtamp.Server.Persistence
     public sealed class SqlitePersistenceStore : IPersistenceStore
     {
         /// <summary>Schema this build writes and understands.</summary>
-        public const int CurrentSchemaVersion = 2;
+        public const int CurrentSchemaVersion = 3;
 
         private readonly string _path;
         private SqliteConnection? _connection;
@@ -87,6 +88,7 @@ CREATE TABLE IF NOT EXISTS entities (
             Execute("CREATE TABLE IF NOT EXISTS mod_state (mod_id TEXT NOT NULL, key TEXT NOT NULL, value TEXT NOT NULL, PRIMARY KEY (mod_id, key));");
             Execute("CREATE TABLE IF NOT EXISTS permissions (identity_token TEXT NOT NULL, permission TEXT NOT NULL, PRIMARY KEY (identity_token, permission));");
             Execute("CREATE TABLE IF NOT EXISTS server_settings (key TEXT PRIMARY KEY, value TEXT NOT NULL);");
+            Execute(BansTableSql);
 
             RunMigrations();
         }
@@ -132,6 +134,13 @@ CREATE TABLE IF NOT EXISTS entities (
                     // Entity blobs gained a dimension so a persisted entity comes back
                     // into the instance it belonged to.
                     AddColumnIfMissing("entities", "dimension", "INTEGER NOT NULL DEFAULT 0");
+                    break;
+
+                case 3:
+                    // Bans, keyed by identity public key. Created here as well as in
+                    // the CREATE TABLE block above, so a database made by an older
+                    // build gains the table rather than failing its first ban.
+                    Execute(BansTableSql);
                     break;
 
                 default:
@@ -334,6 +343,86 @@ ON CONFLICT(id) DO UPDATE SET
             }
 
             return results;
+        }
+
+        private const string BansTableSql = @"
+CREATE TABLE IF NOT EXISTS bans (
+    public_key  TEXT PRIMARY KEY,
+    player_name TEXT NOT NULL,
+    reason      TEXT NOT NULL,
+    issued_by   TEXT NOT NULL,
+    issued_at   TEXT NOT NULL,
+    expires_at  TEXT
+);";
+
+        /// <summary>
+        /// Replaces the whole ban list in one transaction.
+        /// <para>
+        /// Wholesale rather than incremental because the list is small and changes
+        /// rarely, and because a partial write is the one failure mode that matters
+        /// here: a ban applied in memory and lost on disk comes back the next time the
+        /// server restarts, which is exactly when nobody is watching.
+        /// </para>
+        /// </summary>
+        public void SaveBans(IReadOnlyList<BanEntry> bans)
+        {
+            using SqliteTransaction transaction = Connection.BeginTransaction();
+
+            using (SqliteCommand clear = CreateCommand("DELETE FROM bans;"))
+            {
+                clear.Transaction = transaction;
+                clear.ExecuteNonQuery();
+            }
+
+            foreach (BanEntry ban in bans)
+            {
+                using SqliteCommand insert = CreateCommand(
+                    "INSERT INTO bans (public_key, player_name, reason, issued_by, issued_at, expires_at) " +
+                    "VALUES ($key, $name, $reason, $by, $at, $expires);");
+
+                insert.Transaction = transaction;
+                insert.Parameters.AddWithValue("$key", ban.PublicKey);
+                insert.Parameters.AddWithValue("$name", ban.PlayerName ?? string.Empty);
+                insert.Parameters.AddWithValue("$reason", ban.Reason ?? string.Empty);
+                insert.Parameters.AddWithValue("$by", ban.IssuedBy ?? "server");
+                insert.Parameters.AddWithValue("$at", ban.IssuedAt.ToString("O", CultureInfo.InvariantCulture));
+                insert.Parameters.AddWithValue(
+                    "$expires",
+                    ban.ExpiresAt.HasValue
+                        ? (object)ban.ExpiresAt.Value.ToString("O", CultureInfo.InvariantCulture)
+                        : DBNull.Value);
+
+                insert.ExecuteNonQuery();
+            }
+
+            transaction.Commit();
+        }
+
+        public IReadOnlyList<BanEntry> LoadBans()
+        {
+            var bans = new List<BanEntry>();
+            using SqliteCommand command = CreateCommand(
+                "SELECT public_key, player_name, reason, issued_by, issued_at, expires_at FROM bans;");
+
+            using SqliteDataReader reader = command.ExecuteReader();
+            while (reader.Read())
+            {
+                bans.Add(new BanEntry
+                {
+                    PublicKey = reader.GetString(0),
+                    PlayerName = reader.GetString(1),
+                    Reason = reader.GetString(2),
+                    IssuedBy = reader.GetString(3),
+                    IssuedAt = DateTime.Parse(
+                        reader.GetString(4), CultureInfo.InvariantCulture, DateTimeStyles.RoundtripKind),
+                    ExpiresAt = reader.IsDBNull(5)
+                        ? null
+                        : DateTime.Parse(
+                            reader.GetString(5), CultureInfo.InvariantCulture, DateTimeStyles.RoundtripKind),
+                });
+            }
+
+            return bans;
         }
 
         public string Describe() => $"SQLite at {Path.GetFullPath(_path)}";

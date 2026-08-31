@@ -176,7 +176,8 @@ namespace Gtamp.Tests
         public void AReconnectingPlayerReceivesTheCurrentWorldNotAnOldOne()
         {
             using var harness = new TestHarness();
-            string aliceIdentity = "alice-identity-token";
+            using var aliceKey = Gtamp.Shared.Security.IdentityKey.Create();
+            string aliceIdentity = aliceKey.ExportPrivateBlob();
 
             TestClient alice = harness.CreateClient("alice", aliceIdentity);
             TestClient bob = harness.CreateClient("bob");

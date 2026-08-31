@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.Net;
+using Gtamp.Server.Admin;
 using Gtamp.Server.Entities;
 using Gtamp.Server.Missions;
 using Gtamp.Server.Mods;
@@ -36,6 +37,9 @@ namespace Gtamp.Server.Core
         public const double AuthorityHoldTimeoutSeconds = 10d;
 
         private readonly IDatagramTransport _transport;
+        private readonly Dictionary<IPEndPoint, PendingAuthentication> _pendingAuth =
+            new Dictionary<IPEndPoint, PendingAuthentication>();
+        private readonly List<IPEndPoint> _expiredAuth = new List<IPEndPoint>();
         private readonly IPersistenceStore _persistence;
         private readonly Random _random = new Random();
         private readonly List<PlayerSession> _reapBuffer = new List<PlayerSession>();
@@ -123,6 +127,17 @@ namespace Gtamp.Server.Core
 
         public CombatSettings Combat { get; }
 
+        /// <summary>Identities that are not allowed in. Persisted, and checked before anything else.</summary>
+        public BanList Bans { get; } = new BanList();
+
+        /// <summary>
+        /// The command table admin requests from clients are run against. Set by the
+        /// host that owns the stdin console, so the two share one implementation; when
+        /// nothing sets it, network admin commands report that rather than silently
+        /// doing nothing.
+        /// </summary>
+        public IAdminSurface AdminSurface { get; set; } = new UnavailableAdminSurface();
+
         public NetworkedEntityManager Entities { get; }
 
         /// <summary>Missions, callouts, jobs — anything with objectives and participants.</summary>
@@ -177,6 +192,7 @@ namespace Gtamp.Server.Core
             _now = now;
             ReceiveDatagrams();
             ProcessSessionMessages();
+            ExpirePendingAuthentications();
 
             double delta = now - _lastTickTime;
             if (delta >= Config.TickIntervalSeconds)
@@ -255,6 +271,10 @@ namespace Gtamp.Server.Core
                     {
                         HandleConnectRequest(source, body);
                     }
+                    else if (type == NetMessageType.ConnectProof)
+                    {
+                        HandleConnectProof(source, body);
+                    }
                     else if (Config.VerboseNetworkLogging)
                     {
                         Log.Debug(LogCategory.Network, $"Ignored connectionless {type} from {source}");
@@ -279,6 +299,9 @@ namespace Gtamp.Server.Core
                 }
             }
         }
+
+        /// <summary>How long a challenge stays answerable.</summary>
+        public const double AuthenticationTimeoutSeconds = 15.0;
 
         private void HandleConnectRequest(IPEndPoint source, byte[] body)
         {
@@ -343,6 +366,147 @@ namespace Gtamp.Server.Core
                 return;
             }
 
+            BanEntry? ban = Bans.Find(request.IdentityToken, DateTime.UtcNow);
+            if (ban != null)
+            {
+                RejectConnection(
+                    source,
+                    request.ClientNonce,
+                    DisconnectReason.Banned,
+                    ban.ExpiresAt.HasValue
+                        ? $"banned until {ban.ExpiresAt.Value:yyyy-MM-dd HH:mm}Z: {ban.Reason}"
+                        : $"banned: {ban.Reason}");
+                return;
+            }
+
+            if (Config.RequireAuthentication)
+            {
+                if (!IdentityKey.LooksLikePublicKey(request.IdentityToken))
+                {
+                    RejectConnection(
+                        source,
+                        request.ClientNonce,
+                        DisconnectReason.AuthenticationFailed,
+                        "this server requires a signing identity; the client sent a legacy identity token");
+                    return;
+                }
+
+                Challenge(source, request, name, report);
+                return;
+            }
+
+            Admit(source, request, name, report);
+        }
+
+        /// <summary>
+        /// Issues the proof-of-possession challenge, or re-issues the identical one
+        /// for a retried request.
+        /// <para>
+        /// Re-issuing the same nonce matters. The challenge is connectionless and so
+        /// unreliable; if it is lost the client retries its connect request, and a
+        /// fresh nonce would invalidate a proof already in flight for the first one —
+        /// telling a legitimate player their key is wrong.
+        /// </para>
+        /// </summary>
+        private void Challenge(
+            IPEndPoint source, ConnectRequestMessage request, string name, List<ModCompatibilityEntry> report)
+        {
+            if (!_pendingAuth.TryGetValue(source, out PendingAuthentication? pending)
+                || pending.Request.ClientNonce != request.ClientNonce)
+            {
+                pending = new PendingAuthentication(request, name, report, IdentityKey.CreateServerNonce(), _now);
+                _pendingAuth[source] = pending;
+            }
+
+            var challenge = new ConnectChallengeMessage
+            {
+                ClientNonce = request.ClientNonce,
+                ServerNonce = pending.ServerNonce,
+                ServerName = Config.ServerName,
+            };
+
+            _transport.SendConnectionless(source, NetMessageType.ConnectChallenge, challenge.Serialize());
+        }
+
+        private void HandleConnectProof(IPEndPoint source, byte[] body)
+        {
+            ConnectProofMessage proof;
+            try
+            {
+                proof = ConnectProofMessage.Deserialize(body);
+            }
+            catch (NetSerializationException exception)
+            {
+                Log.Warning(LogCategory.Security, $"Malformed connect proof from {source}: {exception.Message}");
+                return;
+            }
+
+            if (!_pendingAuth.TryGetValue(source, out PendingAuthentication? pending)
+                || pending.Request.ClientNonce != proof.ClientNonce)
+            {
+                // The proof for a handshake that already succeeded. This is the normal
+                // case when the accept was lost: the client resends its proof, not its
+                // request, so the accept has to be resendable from here too — exactly
+                // as it is from the request path. Without this a lost accept strands
+                // the client for good, because the pending record is gone and the
+                // request it would retry with is never sent again.
+                if (Players.TryGetByEndPoint(source, out PlayerSession settled)
+                    && settled.HandshakeNonce == proof.ClientNonce
+                    && string.Equals(settled.IdentityToken, proof.PublicKey, StringComparison.Ordinal))
+                {
+                    _transport.SendConnectionless(source, NetMessageType.ConnectAccept, settled.AcceptPayload);
+                    if (Config.VerboseNetworkLogging)
+                    {
+                        Log.Debug(LogCategory.Network, $"Re-sent the accept to {settled} after a repeated proof.");
+                    }
+
+                    return;
+                }
+
+                // Otherwise a proof for a challenge that has expired. Dropped rather
+                // than rejected: rejecting would let a stray duplicate tear down a
+                // session that is working.
+                if (Config.VerboseNetworkLogging)
+                {
+                    Log.Debug(LogCategory.Security, $"Unmatched connect proof from {source}.");
+                }
+
+                return;
+            }
+
+            // The key in the proof must be the one the request claimed. Without this
+            // check a client could claim one identity and prove another.
+            if (!string.Equals(proof.PublicKey, pending.Request.IdentityToken, StringComparison.Ordinal))
+            {
+                _pendingAuth.Remove(source);
+                Log.Warning(
+                    LogCategory.Security,
+                    $"{source} proved a different identity than it claimed. Rejected.");
+                RejectConnection(
+                    source, proof.ClientNonce, DisconnectReason.AuthenticationFailed, "the proof names a different identity");
+                return;
+            }
+
+            byte[] expected = IdentityKey.BuildChallenge(proof.ClientNonce, pending.ServerNonce, Config.ServerName);
+            if (!IdentityKey.Verify(proof.PublicKey, expected, proof.Signature))
+            {
+                _pendingAuth.Remove(source);
+                Log.Warning(
+                    LogCategory.Security,
+                    $"{source} failed to prove identity {IdentityKey.FingerprintOf(proof.PublicKey)}.");
+                RejectConnection(
+                    source, proof.ClientNonce, DisconnectReason.AuthenticationFailed, "signature did not verify");
+                return;
+            }
+
+            _pendingAuth.Remove(source);
+            Admit(source, pending.Request, pending.Name, pending.ModReport);
+        }
+
+        /// <summary>Creates the session. Everything before this point is admission control.</summary>
+        private void Admit(
+            IPEndPoint source, ConnectRequestMessage request, string name, List<ModCompatibilityEntry> report)
+        {
             // A reconnect from an identity that is still "connected" replaces the old
             // session; the previous socket is almost always already dead.
             PlayerSession? existing = Players.FindByIdentity(request.IdentityToken);
@@ -419,6 +583,64 @@ namespace Gtamp.Server.Core
                 if (entry.Status != ModCompatibility.Compatible)
                 {
                     Log.Warning(LogCategory.Mod, $"{name}: {entry.ModId} — {entry.Status}: {entry.Detail}");
+                }
+            }
+        }
+
+        /// <summary>
+        /// A connect request waiting on its proof. Held by endpoint, for at most
+        /// <see cref="AuthenticationTimeoutSeconds"/>, so a client that starts a
+        /// handshake and never finishes it costs one small record and not a slot.
+        /// </summary>
+        private sealed class PendingAuthentication
+        {
+            public PendingAuthentication(
+                ConnectRequestMessage request,
+                string name,
+                List<ModCompatibilityEntry> modReport,
+                byte[] serverNonce,
+                double issuedAt)
+            {
+                Request = request;
+                Name = name;
+                ModReport = modReport;
+                ServerNonce = serverNonce;
+                IssuedAt = issuedAt;
+            }
+
+            public ConnectRequestMessage Request { get; }
+
+            public string Name { get; }
+
+            public List<ModCompatibilityEntry> ModReport { get; }
+
+            public byte[] ServerNonce { get; }
+
+            public double IssuedAt { get; }
+        }
+
+        private void ExpirePendingAuthentications()
+        {
+            if (_pendingAuth.Count == 0)
+            {
+                return;
+            }
+
+            _expiredAuth.Clear();
+            foreach (KeyValuePair<IPEndPoint, PendingAuthentication> pair in _pendingAuth)
+            {
+                if (_now - pair.Value.IssuedAt > AuthenticationTimeoutSeconds)
+                {
+                    _expiredAuth.Add(pair.Key);
+                }
+            }
+
+            foreach (IPEndPoint endPoint in _expiredAuth)
+            {
+                _pendingAuth.Remove(endPoint);
+                if (Config.VerboseNetworkLogging)
+                {
+                    Log.Debug(LogCategory.Security, $"Authentication from {endPoint} expired unanswered.");
                 }
             }
         }
@@ -550,6 +772,10 @@ namespace Gtamp.Server.Core
                 case NetMessageType.KeepAlive:
                     break;
 
+                case NetMessageType.AdminCommand:
+                    HandleAdminCommand(session, AdminCommandMessage.Deserialize(message.Payload));
+                    break;
+
                 case NetMessageType.ModEvent:
                 {
                     ModEventMessage modEvent = ModEventMessage.Deserialize(message.Payload);
@@ -575,6 +801,15 @@ namespace Gtamp.Server.Core
         {
             session.Replication.Acknowledge(update.AcknowledgedSnapshotId);
             session.LastStateUpdateAt = _now;
+
+            // Recorded even when the update is then ignored or rejected. The client is
+            // asking "have you seen my report yet", and the honest answer is yes —
+            // what the server did with it is a separate question, answered by the
+            // state in the snapshot itself.
+            if (update.UpdateSequence > session.LastProcessedUpdateSequence)
+            {
+                session.LastProcessedUpdateSequence = update.UpdateSequence;
+            }
 
             PlayerEntity? entity = World.GetPlayer(session.EntityId);
             if (entity == null)
@@ -1017,7 +1252,8 @@ namespace Gtamp.Server.Core
                 }
 
                 SnapshotWriteResult result = SnapshotCodec.Write(
-                    World.State, baseline, Registry, order, snapshotId, budget);
+                    World.State, baseline, Registry, order, snapshotId, budget,
+                    session.LastProcessedUpdateSequence);
 
                 session.Peer.Send(NetMessageType.Snapshot, result.Payload, DeliveryMethod.Unreliable);
                 session.Replication.RecordSent(result, World.Tick);
@@ -1162,6 +1398,69 @@ namespace Gtamp.Server.Core
             return World.Spawn(entity);
         }
 
+        /// <summary>Writes one player's record now. Used when a role changes.</summary>
+        public void SavePlayer(PlayerSession session) => PersistPlayer(session);
+
+        /// <summary>Sends a security notice to one client. Silently does nothing if they have gone.</summary>
+        public void NotifyPlayer(PlayerSession session, SecurityNoticeKind kind, string text)
+        {
+            if (session.PendingRemoval)
+            {
+                return;
+            }
+
+            var notice = new SecurityNoticeMessage { Kind = kind, Text = text };
+            session.Peer.Send(NetMessageType.SecurityNotice, notice.Serialize(), DeliveryMethod.ReliableOrdered);
+        }
+
+        /// <summary>
+        /// Runs an administrative command on a player's behalf.
+        /// <para>
+        /// The same command table the stdin console uses, so there is one
+        /// implementation rather than two that drift. Authorisation happens here and
+        /// only here: the client sends a string and is told what happened, which means
+        /// a modified client gains nothing by pretending to be an admin.
+        /// </para>
+        /// </summary>
+        private void HandleAdminCommand(PlayerSession session, AdminCommandMessage message)
+        {
+            string line = message.CommandLine?.Trim() ?? string.Empty;
+            if (line.Length == 0)
+            {
+                return;
+            }
+
+            if (!AdminPermissions.IsAllowed(session.Role, line))
+            {
+                Log.Warning(
+                    LogCategory.Security,
+                    $"{session} tried to run '{AdminPermissions.FirstWord(line)}' as {session.Role}. Refused.");
+
+                NotifyPlayer(
+                    session,
+                    SecurityNoticeKind.PermissionDenied,
+                    $"'{AdminPermissions.FirstWord(line)}' needs more than the {session.Role} role. " +
+                    $"You may run: {string.Join(", ", new List<string>(AdminPermissions.CommandsFor(session.Role)))}");
+                return;
+            }
+
+            Log.Info(LogCategory.Security, $"{session} ({session.Role}) ran '{line}'.");
+
+            string result;
+            try
+            {
+                result = AdminSurface.Execute(line);
+            }
+            catch (Exception exception)
+            {
+                // A command that throws must not take the tick thread with it.
+                Log.Error(LogCategory.Security, $"Admin command '{line}' threw.", exception);
+                result = "The command failed on the server; the server log has the detail.";
+            }
+
+            NotifyPlayer(session, SecurityNoticeKind.CommandResult, result);
+        }
+
         private void PersistPlayer(PlayerSession session)
         {
             if (!Config.PersistenceEnabled || !_persistence.Enabled)
@@ -1283,6 +1582,79 @@ namespace Gtamp.Server.Core
             _persistence.SaveEntities(blobs);
         }
 
+        /// <summary>
+        /// Loads the ban list. Expired entries are dropped on the way in and written
+        /// back, so the file does not grow forever with bans nobody is serving.
+        /// </summary>
+        private void RestoreBans()
+        {
+            IReadOnlyList<BanEntry> stored = _persistence.LoadBans();
+            if (stored.Count == 0)
+            {
+                return;
+            }
+
+            DateTime now = DateTime.UtcNow;
+            var live = new List<BanEntry>();
+            foreach (BanEntry ban in stored)
+            {
+                if (!ban.IsExpired(now))
+                {
+                    live.Add(ban);
+                }
+            }
+
+            Bans.Replace(live);
+            Log.Info(
+                LogCategory.Security,
+                $"Loaded {live.Count} ban(s)" +
+                (live.Count < stored.Count ? $"; {stored.Count - live.Count} had expired and were dropped." : "."));
+
+            if (live.Count < stored.Count)
+            {
+                _persistence.SaveBans(live);
+            }
+        }
+
+        /// <summary>Adds a ban, disconnects the player if they are on, and writes it to disk immediately.</summary>
+        public bool AddBan(BanEntry entry)
+        {
+            if (!Bans.Add(entry))
+            {
+                return false;
+            }
+
+            _persistence.SaveBans(new List<BanEntry>(Bans.Entries));
+
+            foreach (PlayerSession session in Players.Sessions)
+            {
+                if (string.Equals(session.IdentityToken, entry.PublicKey, StringComparison.Ordinal))
+                {
+                    RemoveSession(session, DisconnectReason.Banned, notifyPeer: true, announce: true);
+                    break;
+                }
+            }
+
+            Log.Warning(
+                LogCategory.Security,
+                $"Banned {IdentityKey.FingerprintOf(entry.PublicKey)} " +
+                $"({(string.IsNullOrEmpty(entry.PlayerName) ? "unknown name" : entry.PlayerName)}): {entry.Reason}");
+
+            return true;
+        }
+
+        public bool RemoveBan(string publicKey)
+        {
+            if (!Bans.Remove(publicKey))
+            {
+                return false;
+            }
+
+            _persistence.SaveBans(new List<BanEntry>(Bans.Entries));
+            Log.Info(LogCategory.Security, $"Lifted the ban on {IdentityKey.FingerprintOf(publicKey)}.");
+            return true;
+        }
+
         /// <summary>Restores persisted entities, skipping anything this build cannot decode.</summary>
         private void RestoreEntities(uint savedSchemaHash)
         {
@@ -1342,6 +1714,8 @@ namespace Gtamp.Server.Core
                 ApplyConfiguredStartConditions();
                 return;
             }
+
+            RestoreBans();
 
             PersistedWorld? saved = _persistence.LoadWorld();
             if (saved == null)

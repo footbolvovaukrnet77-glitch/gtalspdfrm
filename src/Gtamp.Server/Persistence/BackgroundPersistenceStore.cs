@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using Gtamp.Shared.Security;
 using System.Threading;
 using Gtamp.Shared.Diagnostics;
 
@@ -137,6 +138,32 @@ namespace Gtamp.Server.Persistence
             lock (_gate)
             {
                 return _pendingWorld ?? _inner.LoadWorld();
+            }
+        }
+
+        /// <summary>
+        /// Bans are written straight through, not queued.
+        /// <para>
+        /// Every other write here is coalesced because it happens on the tick thread
+        /// many times a second. A ban happens when an admin types one word, and the
+        /// cost of doing it synchronously is a single small transaction. The cost of
+        /// queueing it is that a ban issued moments before a crash is not on disk when
+        /// the server comes back — precisely when nobody is watching.
+        /// </para>
+        /// </summary>
+        public void SaveBans(IReadOnlyList<BanEntry> bans)
+        {
+            lock (_gate)
+            {
+                _inner.SaveBans(bans);
+            }
+        }
+
+        public IReadOnlyList<BanEntry> LoadBans()
+        {
+            lock (_gate)
+            {
+                return _inner.LoadBans();
             }
         }
 

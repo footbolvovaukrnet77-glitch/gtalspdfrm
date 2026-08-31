@@ -131,6 +131,16 @@ namespace Gtamp.Tests
 
             public IReadOnlyList<PersistedEntity> LoadEntities() => Array.Empty<PersistedEntity>();
 
+            public void SaveBans(IReadOnlyList<Gtamp.Shared.Security.BanEntry> bans)
+            {
+                Bans = bans;
+            }
+
+            public IReadOnlyList<Gtamp.Shared.Security.BanEntry> Bans { get; private set; } =
+                System.Array.Empty<Gtamp.Shared.Security.BanEntry>();
+
+            public IReadOnlyList<Gtamp.Shared.Security.BanEntry> LoadBans() => Bans;
+
             public string Describe() => "recording";
 
             public void Dispose()
@@ -297,6 +307,16 @@ namespace Gtamp.Tests
             }
 
             public IReadOnlyList<PersistedEntity> LoadEntities() => Array.Empty<PersistedEntity>();
+
+            public void SaveBans(IReadOnlyList<Gtamp.Shared.Security.BanEntry> bans)
+            {
+                Bans = bans;
+            }
+
+            public IReadOnlyList<Gtamp.Shared.Security.BanEntry> Bans { get; private set; } =
+                System.Array.Empty<Gtamp.Shared.Security.BanEntry>();
+
+            public IReadOnlyList<Gtamp.Shared.Security.BanEntry> LoadBans() => Bans;
 
             public string Describe() => "throwing";
 

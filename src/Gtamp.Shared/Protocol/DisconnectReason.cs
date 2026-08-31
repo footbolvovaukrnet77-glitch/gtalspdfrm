@@ -15,6 +15,7 @@ namespace Gtamp.Shared.Protocol
         AntiCheat = 10,
         InternalError = 11,
         IncompatibleMods = 12,
+        AuthenticationFailed = 13,
     }
 
     public static class DisconnectReasonText
@@ -33,6 +34,7 @@ namespace Gtamp.Shared.Protocol
             DisconnectReason.AntiCheat => "rejected by anti-cheat",
             DisconnectReason.InternalError => "internal server error",
             DisconnectReason.IncompatibleMods => "required mods are incompatible",
+            DisconnectReason.AuthenticationFailed => "could not prove ownership of this identity",
             _ => "unknown reason",
         };
     }

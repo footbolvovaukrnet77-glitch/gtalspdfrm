@@ -74,6 +74,12 @@ namespace Gtamp.Client.Ui
                 _ => Network(client)));
 
             console.RegisterCommand(new ConsoleCommand(
+                "admin",
+                "admin <command...>",
+                "run a server command, if the server lets you",
+                context => Admin(client, context.RawArguments)));
+
+            console.RegisterCommand(new ConsoleCommand(
                 "mods",
                 "mods",
                 "list detected mods and adapter status",
@@ -306,6 +312,31 @@ namespace Gtamp.Client.Ui
             builder.AppendLine($"  snapshots       {client.ReplicatedWorld.SnapshotsApplied} applied / {client.ReplicatedWorld.SnapshotsDropped} dropped");
             builder.Append($"  resyncs         {client.ResyncsRequested}");
             return builder.ToString();
+        }
+
+        /// <summary>
+        /// Forwards a command to the server. Deliberately not gated behind developer
+        /// mode: developer mode is a local switch and gates nothing an attacker could
+        /// not flip. The only gate that means anything is the server's, and it is the
+        /// server that applies it.
+        /// </summary>
+        private static string Admin(MultiplayerClient client, string rawArguments)
+        {
+            string line = rawArguments?.Trim() ?? string.Empty;
+            if (line.Length == 0)
+            {
+                return "Usage: admin <command...>   e.g. admin players, admin kick 3, admin ban 3 60 griefing";
+            }
+
+            if (!client.SendAdminCommand(line))
+            {
+                return "Not connected to a server.";
+            }
+
+            // The answer arrives as a security notice and is printed by the log, so
+            // the reply here says only that the request left. Pretending to have an
+            // answer that has not arrived is worse than saying nothing.
+            return $"Sent '{line}' to the server.";
         }
 
         private static string Mods(MultiplayerClient client)

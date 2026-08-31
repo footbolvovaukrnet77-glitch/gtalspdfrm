@@ -5,6 +5,7 @@ using Gtamp.Shared.Diagnostics;
 using Gtamp.Shared.Mods;
 using Gtamp.Shared.Net;
 using Gtamp.Shared.Protocol;
+using Gtamp.Shared.Security;
 
 namespace Gtamp.Client.Network
 {
@@ -34,6 +35,19 @@ namespace Gtamp.Client.Network
 
         private IPEndPoint? _server;
         private ConnectRequestMessage? _request;
+
+        /// <summary>
+        /// The key this client signs challenges with. Set by the client from
+        /// <c>client.ini</c>; null means the identity is a legacy token and any server
+        /// that requires authentication will say so.
+        /// </summary>
+        public IdentityKey? Identity { get; set; }
+
+        /// <summary>Challenges answered on this connection attempt. Reported by /net.</summary>
+        public int ChallengesAnswered { get; private set; }
+
+        /// <summary>The proof for the current attempt, resent by the retry timer until the accept arrives.</summary>
+        private byte[]? _pendingProof;
         private double _lastAttemptTime;
         private int _attempts;
 
@@ -73,6 +87,7 @@ namespace Gtamp.Client.Network
             _server = server;
             _attempts = 0;
             _lastAttemptTime = 0;
+            _pendingProof = null;
             LastError = string.Empty;
             Accept = null;
             Peer = null;
@@ -169,6 +184,18 @@ namespace Gtamp.Client.Network
             Peer.Flush(now);
         }
 
+        /// <summary>
+        /// One retry step. Once a challenge has arrived, the retry re-sends the
+        /// <em>proof</em> rather than starting the handshake again.
+        /// <para>
+        /// Authentication made the handshake four legs instead of two, and on a lossy
+        /// link the chance of all four surviving is the square of the chance for two —
+        /// at 60% loss that is 2.6% per attempt instead of 16%. Retrying from the
+        /// beginning throws away a challenge that did arrive; re-sending the proof
+        /// keeps it, so after the challenge lands each retry needs one packet through
+        /// instead of three.
+        /// </para>
+        /// </summary>
         private void SendConnectRequest(double now)
         {
             if (_request == null || _server == null)
@@ -178,6 +205,13 @@ namespace Gtamp.Client.Network
 
             _attempts++;
             _lastAttemptTime = now;
+
+            if (_pendingProof != null)
+            {
+                _transport.SendConnectionless(_server, NetMessageType.ConnectProof, _pendingProof);
+                return;
+            }
+
             _transport.SendConnectionless(_server, NetMessageType.ConnectRequest, _request.Serialize());
         }
 
@@ -219,6 +253,56 @@ namespace Gtamp.Client.Network
                         (accept.Restored ? " — previous state restored" : string.Empty));
 
                     Accepted?.Invoke(accept);
+                    break;
+                }
+
+                case NetMessageType.ConnectChallenge:
+                {
+                    ConnectChallengeMessage challenge;
+                    try
+                    {
+                        challenge = ConnectChallengeMessage.Deserialize(body);
+                    }
+                    catch (NetSerializationException exception)
+                    {
+                        _log.Error(LogCategory.Network, "Could not decode the server's challenge.", exception);
+                        return;
+                    }
+
+                    if (challenge.ClientNonce != _request.ClientNonce)
+                    {
+                        // A challenge for an earlier attempt. Answering it would prove
+                        // an identity against a nonce the server has already retired.
+                        return;
+                    }
+
+                    if (Identity == null)
+                    {
+                        LastError = "this server requires a signing identity and this client has none";
+                        State = ClientConnectionState.Failed;
+                        _log.Error(LogCategory.Network, "Connection failed: " + LastError);
+                        Rejected?.Invoke(DisconnectReason.AuthenticationFailed, LastError);
+                        return;
+                    }
+
+                    byte[] payload = IdentityKey.BuildChallenge(
+                        challenge.ClientNonce, challenge.ServerNonce, challenge.ServerName);
+
+                    var proof = new ConnectProofMessage
+                    {
+                        ClientNonce = challenge.ClientNonce,
+                        PublicKey = Identity.PublicKey,
+                        Signature = Identity.Sign(payload),
+                    };
+
+                    ChallengesAnswered++;
+                    _pendingProof = proof.Serialize();
+                    _transport.SendConnectionless(_server, NetMessageType.ConnectProof, _pendingProof);
+
+                    // The retry timer is deliberately left running. If the proof is
+                    // lost the client re-sends its connect request, and the server
+                    // answers with the same challenge — so the handshake recovers
+                    // without a second retry mechanism of its own.
                     break;
                 }
 

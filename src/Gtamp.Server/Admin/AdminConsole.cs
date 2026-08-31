@@ -9,6 +9,7 @@ using Gtamp.Shared.Diagnostics;
 using Gtamp.Shared.Entities;
 using Gtamp.Shared.Net;
 using Gtamp.Shared.Protocol;
+using Gtamp.Shared.Security;
 
 namespace Gtamp.Server.Admin
 {
@@ -17,13 +18,17 @@ namespace Gtamp.Server.Admin
     /// is what the in-game developer console forwards privileged commands to, so
     /// there is one implementation rather than two that drift apart.
     /// </summary>
-    public sealed class AdminConsole
+    public sealed class AdminConsole : IAdminSurface
     {
         private readonly GameServer _server;
 
         public AdminConsole(GameServer server)
         {
             _server = server;
+
+            // The same table now serves both front ends: this console on stdin, and
+            // admin commands arriving from an in-game client.
+            server.AdminSurface = this;
         }
 
         public bool StopRequested { get; private set; }
@@ -47,6 +52,10 @@ namespace Gtamp.Server.Admin
                 "entity" => Entity(args),
                 "entities" => Entities(),
                 "kick" => Kick(args),
+                "ban" => Ban(args),
+                "unban" => Unban(args),
+                "bans" => Bans(),
+                "role" => Role(args),
                 "teleport" or "tp" => Teleport(args),
                 "kill" => Kill(args),
                 "respawn" => RespawnCommand(args),
@@ -70,6 +79,10 @@ namespace Gtamp.Server.Admin
             "  entity <id>         full state of one entity",
             "  net                 per-connection network counters",
             "  kick <playerId>     disconnect a player",
+            "  ban <playerId|fingerprint> [minutes] [reason]   ban an identity; 0 minutes is permanent",
+            "  unban <name|fingerprint>   lift a ban",
+            "  bans                list active bans",
+            "  role <playerId> <player|moderator|admin>   set what a player may do over the network",
             "  teleport <id> <x> <y> <z> [heading]   move a player",
             "  kill <playerId>     kill a player",
             "  respawn <playerId>  respawn a dead player immediately",
@@ -217,6 +230,136 @@ namespace Gtamp.Server.Admin
 
             _server.Kick(session, DisconnectReason.Kicked, "kicked from the server console");
             return $"Kicked {session.Name}.";
+        }
+
+        /// <summary>
+        /// Bans by player id when they are connected, or by fingerprint when they are
+        /// not — an admin should not have to wait for somebody to come back in order
+        /// to keep them out.
+        /// </summary>
+        private string Ban(string[] args)
+        {
+            if (args.Length < 1)
+            {
+                return "Usage: ban <playerId|fingerprint> [minutes] [reason]";
+            }
+
+            string publicKey;
+            string playerName;
+
+            if (uint.TryParse(args[0], out uint playerId)
+                && _server.Players.TryGetByPlayerId(playerId, out PlayerSession session))
+            {
+                publicKey = session.IdentityToken;
+                playerName = session.Name;
+            }
+            else
+            {
+                BanEntry? known = _server.Bans.FindByReference(args[0]);
+                if (known == null)
+                {
+                    return $"No connected player with id '{args[0]}', and no existing ban matching it. " +
+                           "Ban a connected player by id, or use a fingerprint from 'bans'.";
+                }
+
+                publicKey = known.PublicKey;
+                playerName = known.PlayerName;
+            }
+
+            int minutes = 0;
+            int reasonFrom = 1;
+            if (args.Length > 1 && int.TryParse(args[1], NumberStyles.Integer, CultureInfo.InvariantCulture, out int parsed))
+            {
+                minutes = parsed;
+                reasonFrom = 2;
+            }
+
+            string reason = args.Length > reasonFrom
+                ? string.Join(" ", args[reasonFrom..])
+                : "no reason given";
+
+            var entry = new BanEntry
+            {
+                PublicKey = publicKey,
+                PlayerName = playerName,
+                Reason = reason,
+                IssuedBy = "console",
+                IssuedAt = DateTime.UtcNow,
+                ExpiresAt = minutes > 0 ? DateTime.UtcNow.AddMinutes(minutes) : null,
+            };
+
+            if (!_server.AddBan(entry))
+            {
+                return "That identity cannot be banned; it has no key.";
+            }
+
+            return minutes > 0
+                ? $"Banned {playerName} for {minutes} minute(s): {reason}"
+                : $"Banned {playerName} permanently: {reason}";
+        }
+
+        private string Unban(string[] args)
+        {
+            if (args.Length < 1)
+            {
+                return "Usage: unban <name|fingerprint>";
+            }
+
+            BanEntry? entry = _server.Bans.FindByReference(args[0]);
+            if (entry == null)
+            {
+                return $"No ban matching '{args[0]}'. Run 'bans' to see the list.";
+            }
+
+            _server.RemoveBan(entry.PublicKey);
+            return $"Lifted the ban on {(string.IsNullOrEmpty(entry.PlayerName) ? args[0] : entry.PlayerName)}.";
+        }
+
+        private string Bans()
+        {
+            DateTime now = DateTime.UtcNow;
+            var builder = new StringBuilder();
+            int count = 0;
+
+            foreach (BanEntry entry in _server.Bans.Entries)
+            {
+                builder.AppendLine("  " + entry.Describe(now));
+                count++;
+            }
+
+            return count == 0 ? "No active bans." : $"{count} active ban(s):" + Environment.NewLine + builder.ToString().TrimEnd();
+        }
+
+        /// <summary>
+        /// Sets a player's role. Roles are stored per identity, so they survive a
+        /// reconnect and a server restart — a moderator who has to be re-promoted
+        /// every time they rejoin is a moderator nobody bothers to appoint.
+        /// </summary>
+        private string Role(string[] args)
+        {
+            if (args.Length < 2 || !uint.TryParse(args[0], out uint playerId))
+            {
+                return "Usage: role <playerId> <player|moderator|admin>";
+            }
+
+            if (!Enum.TryParse(args[1], ignoreCase: true, out PlayerRole role))
+            {
+                return $"Unknown role '{args[1]}'. Use player, moderator or admin.";
+            }
+
+            if (!_server.Players.TryGetByPlayerId(playerId, out PlayerSession session))
+            {
+                return $"No player with id {playerId}.";
+            }
+
+            session.Role = role;
+            _server.SavePlayer(session);
+            _server.NotifyPlayer(
+                session,
+                SecurityNoticeKind.Information,
+                $"Your role on this server is now {role}.");
+
+            return $"{session.Name} is now {role}.";
         }
 
         private string Teleport(string[] args)

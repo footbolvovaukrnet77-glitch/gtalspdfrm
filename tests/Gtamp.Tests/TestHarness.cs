@@ -377,16 +377,26 @@ namespace Gtamp.Tests
             set => Network.PacketLoss = value;
         }
 
-        public TestClient CreateClient(string name, string? identityToken = null)
+        /// <summary>
+        /// Creates a client. Pass <paramref name="identitySecret"/> — a value taken
+        /// from another client's <c>Config.IdentitySecret</c> — to come back as the
+        /// same player; otherwise a fresh keypair is generated, exactly as a first run
+        /// on a new machine would.
+        /// </summary>
+        public TestClient CreateClient(string name, string? identitySecret = null)
         {
             var config = new ClientConfig
             {
                 PlayerName = name,
                 ServerAddress = "127.0.0.1",
                 ServerPort = ServerEndPoint.Port,
-                IdentityToken = identityToken ?? Guid.NewGuid().ToString("N"),
+                IdentitySecret = identitySecret ?? string.Empty,
                 InterpolationDelay = 0.1,
             };
+
+            // The same call the real client makes on first run: derive the public
+            // identity from the secret, or mint a keypair when there is none.
+            config.EnsureIdentity();
 
             var endPoint = new IPEndPoint(IPAddress.Parse("127.0.0.1"), _nextClientPort++);
             IDatagramTransport transport = Network.CreateTransport(endPoint);

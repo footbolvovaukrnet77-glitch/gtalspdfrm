@@ -150,6 +150,42 @@ namespace Gtamp.Tests
     public class CorrectionTests
     {
         [Fact]
+        public void AnAcceptedChangeIsNotUndoneByASnapshotThatPredatesIt()
+        {
+            // The race: the client reports a change, the server accepts it, but a
+            // snapshot encoded before that report arrived is still in flight carrying
+            // the old value. Measured against the report, that stale echo is
+            // indistinguishable from a rejection — and correcting on it snaps the
+            // player back to a value the server has already accepted, after which the
+            // client reports the reverted value and the change is lost for good.
+            //
+            // The snapshot header echoes the client update sequence it took into
+            // account, so each snapshot is judged against the report it answers.
+            using var harness = new TestHarness();
+            harness.Latency = 0.08;
+
+            TestClient alice = harness.CreateClient("alice");
+            alice.Client.Connect("127.0.0.1", TestHarness.ServerEndPoint.Port);
+            Assert.True(harness.AdvanceUntil(() => alice.Client.IsConnected));
+            harness.Advance(1.0);
+
+            int correctionsBefore = alice.Client.CorrectionsApplied;
+            alice.Bridge.Sample.Health = 120;
+
+            Assert.True(
+                harness.AdvanceUntil(
+                    () => harness.Server.World.GetPlayer(alice.Client.LocalEntityId)?.Health == 120,
+                    timeoutSeconds: 5),
+                "the server never accepted the health the client reported");
+
+            harness.Advance(2.0);
+
+            Assert.Equal(120, alice.Bridge.Sample.Health);
+            Assert.Equal(120, harness.Server.World.GetPlayer(alice.Client.LocalEntityId)!.Health);
+            Assert.Equal(correctionsBefore, alice.Client.CorrectionsApplied);
+        }
+
+        [Fact]
         public void OrdinaryDamageAtLatencyDoesNotCauseACorrection()
         {
             // The snapshot answering an earlier report still shows the old health.

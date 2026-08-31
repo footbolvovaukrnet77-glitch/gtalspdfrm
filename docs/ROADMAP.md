@@ -163,10 +163,29 @@ Two bugs surfaced while building this, both user-visible and both fixed:
 - **An unresolvable model was retried every frame in silence.** Sixty attempts a
   second, no log line, no diagnostic, and an entity that never appeared.
 
-## Phase 10 — Security
+## Phase 10 — Security ✅ complete
 
-Real authentication, ban lists, permissions and admin commands over the network.
-The identity token is continuity, not identity — see [SECURITY.md](SECURITY.md).
+| Item | State |
+| --- | --- |
+| Real authentication | ✅ ECDSA P-256 keypair per installation; the private half never leaves the machine and the server verifies a signed per-connection challenge |
+| Ban list | ✅ keyed by identity public key, with reasons and expiry, persisted synchronously and checked before anything else in the handshake |
+| Permissions | ✅ `Player` / `Moderator` / `Admin`, declared per command, default deny for anything unlisted |
+| Admin commands over the network | ✅ `AdminCommand` / `SecurityNotice`, authorised on the server and running the same command table as the stdin console |
+| Accounts, password reset, a central registry | ⛔ **out of scope** — identity is a key on a machine, not a login |
+| Protection against first-contact key substitution | ⏸ needs session encryption (Phase 12) or an out-of-band way to publish keys |
+
+Two defects surfaced while building it:
+
+- **The handshake became four connectionless legs and needed every one of them to
+  be idempotent.** A fresh challenge on a retry invalidates a proof already in
+  flight; a proof arriving after the accept was lost has to be answerable with the
+  stored accept, exactly as the request path already was.
+- **The client corrected itself on snapshots that predated its own report.** The
+  server had accepted the change; the snapshot in flight still carried the old
+  value; measured against the report they are indistinguishable. The client snapped
+  back to a value the server had already accepted and then reported the reverted
+  one, losing the change for good. Snapshots now echo the client update sequence
+  they account for, so the two cases are told apart exactly rather than guessed at.
 
 ## Phase 11 — Developer tools
 

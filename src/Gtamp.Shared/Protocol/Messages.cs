@@ -214,12 +214,20 @@ namespace Gtamp.Shared.Protocol
         /// <summary>Clothing and props, as the client currently has them.</summary>
         public PedAppearance Appearance { get; } = new PedAppearance();
 
+        /// <summary>
+        /// Increments with every update this client sends. Echoed back in the
+        /// snapshot header so the client can tell which of its reports the server had
+        /// seen when it wrote that snapshot.
+        /// </summary>
+        public uint UpdateSequence { get; set; }
+
         public byte[] Serialize()
         {
             var writer = new NetWriter(128);
             writer.WriteVarUInt(ClientTick);
             writer.WriteDouble(ClientTime);
             writer.WriteVarUInt(AcknowledgedSnapshotId);
+            writer.WriteVarUInt(UpdateSequence);
             writer.WriteQuantizedPosition(Position);
             writer.WriteQuantizedVelocity(Velocity);
             writer.WriteAngleDegrees(Heading);
@@ -245,6 +253,7 @@ namespace Gtamp.Shared.Protocol
                 ClientTick = reader.ReadVarUInt(),
                 ClientTime = reader.ReadDouble(),
                 AcknowledgedSnapshotId = reader.ReadVarUInt(),
+                UpdateSequence = reader.ReadVarUInt(),
                 Position = reader.ReadQuantizedPosition(),
                 Velocity = reader.ReadQuantizedVelocity(),
                 Heading = reader.ReadAngleDegrees(),

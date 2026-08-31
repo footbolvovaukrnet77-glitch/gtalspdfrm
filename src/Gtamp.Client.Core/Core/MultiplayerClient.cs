@@ -15,6 +15,7 @@ using Gtamp.Shared.Entities;
 using Gtamp.Shared.Mods;
 using Gtamp.Shared.Net;
 using Gtamp.Shared.Protocol;
+using Gtamp.Shared.Security;
 using Gtamp.Shared.World;
 
 namespace Gtamp.Client.Core
@@ -32,6 +33,47 @@ namespace Gtamp.Client.Core
     {
         private readonly List<ReceivedMessage> _inbox = new List<ReceivedMessage>();
         private readonly IDatagramTransport _transport;
+        private readonly IdentityKey? _identity;
+
+        /// <summary>Sequence stamped on outgoing state updates, so the server can echo it back.</summary>
+        private uint _updateSequence;
+
+        /// <summary>The newest sequence the server has confirmed seeing, from the snapshot header.</summary>
+        private uint _serverAcknowledgedSequence;
+
+        /// <summary>
+        /// What this client reported, kept by sequence number.
+        /// <para>
+        /// A snapshot answers one particular report — the one whose sequence it echoes
+        /// — and the only meaningful question about it is whether the server changed
+        /// <em>that</em> report. Comparing it against the newest report instead reads
+        /// every metre walked since as disagreement; comparing it against nothing at
+        /// all cannot tell a rejection from a snapshot written before the report
+        /// arrived. So the reports are kept until the server says which one it saw.
+        /// </para>
+        /// <para>
+        /// 64 entries is a little over two seconds at the 30 Hz client update rate,
+        /// which is far more round trip than any playable link. An answer older than
+        /// that is not judged at all rather than judged against the wrong report.
+        /// </para>
+        /// </summary>
+        private readonly ReportedState[] _reportHistory = new ReportedState[64];
+
+        private readonly struct ReportedState
+        {
+            public ReportedState(uint sequence, NetVector3 position, int health)
+            {
+                Sequence = sequence;
+                Position = position;
+                Health = health;
+            }
+
+            public uint Sequence { get; }
+
+            public NetVector3 Position { get; }
+
+            public int Health { get; }
+        }
 
         private double _lastStateSendTime;
         private double _lastPingTime;
@@ -59,6 +101,28 @@ namespace Gtamp.Client.Core
             Registry = registry ?? EntityRegistry.CreateDefault();
             ReplicatedWorld = new ReplicatedWorld(Registry);
             Connection = new ClientConnection(_transport, Log);
+
+            // The keypair is loaded once and held for the life of the client: signing
+            // is on the connect path, and importing a key per attempt would put a
+            // key-derivation cost inside a retry loop.
+            _identity = Config.LoadIdentity();
+            Connection.Identity = _identity;
+
+            if (Config.IdentityRegenerated)
+            {
+                Log.Warning(
+                    LogCategory.Security,
+                    "The stored identity secret could not be read, so a new identity was generated. " +
+                    "Servers will treat this installation as a new player and your saved character will not " +
+                    "come back. Restore IdentitySecret in client.ini from a backup to get it back.");
+            }
+            else if (_identity == null)
+            {
+                Log.Warning(
+                    LogCategory.Security,
+                    "No signing identity is configured. Servers that require authentication will refuse " +
+                    "this client. See docs/SECURITY.md.");
+            }
             MissingContent = new MissingContentTracker(Log);
             RemotePlayers = new RemotePlayerManager(Bridge, Log, MissingContent);
             RemoteEntities = new RemoteEntityManager(Bridge, Log, MissingContent);
@@ -267,6 +331,7 @@ namespace Gtamp.Client.Core
             RemotePlayers.Clear();
             RemoteEntities.Clear();
             Connection.Disconnect(DisconnectReason.ClientQuit, "client shutting down", _now);
+            _identity?.Dispose();
             _transport.Dispose();
         }
 
@@ -335,6 +400,25 @@ namespace Gtamp.Client.Core
                         break;
                     }
 
+                    case NetMessageType.SecurityNotice:
+                    {
+                        SecurityNoticeMessage notice = SecurityNoticeMessage.Deserialize(message.Payload);
+                        LogLevel level = notice.Kind switch
+                        {
+                            SecurityNoticeKind.PermissionDenied => LogLevel.Warning,
+                            SecurityNoticeKind.Warning => LogLevel.Warning,
+                            _ => LogLevel.Info,
+                        };
+
+                        Log.Write(level, LogCategory.Security, notice.Text);
+                        if (notice.Kind != SecurityNoticeKind.CommandResult)
+                        {
+                            Bridge.ShowNotification(notice.Text);
+                        }
+
+                        break;
+                    }
+
                     case NetMessageType.Pong:
                         break;
 
@@ -365,6 +449,11 @@ namespace Gtamp.Client.Core
 
                 RequestResync(error);
                 return;
+            }
+
+            if (header != null && header.AcknowledgedClientUpdate > _serverAcknowledgedSequence)
+            {
+                _serverAcknowledgedSequence = header.AcknowledgedClientUpdate;
             }
 
             SynchroniseServerClock(ReplicatedWorld.ServerTime);
@@ -448,6 +537,23 @@ namespace Gtamp.Client.Core
             NetVector3 referencePosition = _hasReportedState ? _lastReportedPosition : local.Position;
             int referenceHealth = _hasReportedState ? _lastReportedHealth : local.Health;
 
+            if (_hasReportedState)
+            {
+                // Judge this snapshot against the report it actually answers.
+                ReportedState answered = _reportHistory[_serverAcknowledgedSequence % _reportHistory.Length];
+                if (answered.Sequence != _serverAcknowledgedSequence || _serverAcknowledgedSequence == 0)
+                {
+                    // The server has not confirmed any report yet, or the one it
+                    // confirmed has aged out of the ring. Either way there is nothing
+                    // sound to compare against, and guessing is what produces the
+                    // rubber-band. Wait for the next snapshot.
+                    return;
+                }
+
+                referencePosition = answered.Position;
+                referenceHealth = answered.Health;
+            }
+
             float drift = NetVector3.Distance(referencePosition, authoritative.Position);
             int healthGap = Math.Abs(referenceHealth - authoritative.Health);
 
@@ -459,7 +565,6 @@ namespace Gtamp.Client.Core
             {
                 return;
             }
-
             CorrectionsApplied++;
             Log.Debug(
                 LogCategory.Network,
@@ -470,6 +575,12 @@ namespace Gtamp.Client.Core
 
             // The correction is now what the server believes, so the next comparison
             // must be against it rather than against the report it superseded.
+            // The correction is now what the server believes, so the report it
+            // answered is rewritten to match: judging the next snapshot against the
+            // superseded value would correct the same disagreement twice.
+            _reportHistory[_serverAcknowledgedSequence % _reportHistory.Length] =
+                new ReportedState(_serverAcknowledgedSequence, authoritative.Position, authoritative.Health);
+
             _lastReportedPosition = authoritative.Position;
             _lastReportedHealth = authoritative.Health;
             _hasReportedState = true;
@@ -556,7 +667,11 @@ namespace Gtamp.Client.Core
                 update.Appearance.CopyFrom(sample.Appearance);
             }
 
+            update.UpdateSequence = ++_updateSequence;
             Connection.Peer?.Send(NetMessageType.ClientStateUpdate, update.Serialize(), DeliveryMethod.Unreliable);
+
+            _reportHistory[_updateSequence % _reportHistory.Length] =
+                new ReportedState(_updateSequence, sample.Position, sample.Health);
 
             _lastReportedPosition = sample.Position;
             _lastReportedHealth = sample.Health;
@@ -580,6 +695,22 @@ namespace Gtamp.Client.Core
             WorldEnvironment environment = ReplicatedWorld.Environment;
             Bridge.SetClock(environment.Hours, environment.Minutes, environment.Seconds);
             Bridge.SetWeather(environment.WeatherHash, environment.NextWeatherHash, environment.WeatherTransition);
+        }
+
+        /// <summary>
+        /// Asks the server to run an administrative command. Whether it may is the
+        /// server's decision — this only carries the request and shows the answer.
+        /// </summary>
+        public bool SendAdminCommand(string commandLine)
+        {
+            if (!Connection.IsConnected || string.IsNullOrWhiteSpace(commandLine))
+            {
+                return false;
+            }
+
+            var message = new AdminCommandMessage { CommandLine = commandLine.Trim() };
+            Connection.Peer!.Send(NetMessageType.AdminCommand, message.Serialize(), DeliveryMethod.ReliableOrdered);
+            return true;
         }
 
         private bool SendModEvent(string eventName, byte[] payload, bool reliable)

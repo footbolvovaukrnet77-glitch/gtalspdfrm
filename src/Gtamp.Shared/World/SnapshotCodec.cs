@@ -42,6 +42,18 @@ namespace Gtamp.Shared.World
 
         public double ServerTime { get; set; }
 
+        /// <summary>
+        /// The sequence number of the last client state update this snapshot's
+        /// contents take into account, for the client this snapshot was written for.
+        /// <para>
+        /// It is what lets the receiving client tell "the server rejected what I told
+        /// it" from "the server had not heard me yet when it wrote this". Without it
+        /// the two are indistinguishable, and correcting on the second undoes changes
+        /// the server has in fact accepted.
+        /// </para>
+        /// </summary>
+        public uint AcknowledgedClientUpdate { get; set; }
+
         public List<EntityId> CreatedIds { get; } = new List<EntityId>();
 
         public List<EntityId> UpdatedIds { get; } = new List<EntityId>();
@@ -89,7 +101,8 @@ namespace Gtamp.Shared.World
             EntityRegistry registry,
             IReadOnlyList<NetEntity> order,
             uint snapshotId,
-            int byteBudget)
+            int byteBudget,
+            uint acknowledgedClientUpdate = 0)
         {
             if (snapshotId == 0)
             {
@@ -114,6 +127,7 @@ namespace Gtamp.Shared.World
             writer.WriteVarUInt(baselineId);
             writer.WriteVarUInt(world.Tick);
             writer.WriteDouble(world.ServerTime);
+            writer.WriteVarUInt(acknowledgedClientUpdate);
             writer.WriteByte(environmentChanged ? FlagEnvironmentPresent : (byte)0);
             if (environmentChanged)
             {
@@ -213,6 +227,7 @@ namespace Gtamp.Shared.World
                 BaselineId = reader.ReadVarUInt(),
                 Tick = reader.ReadVarUInt(),
                 ServerTime = reader.ReadDouble(),
+                AcknowledgedClientUpdate = reader.ReadVarUInt(),
             };
 
             if (baseline.SnapshotId != header.BaselineId)

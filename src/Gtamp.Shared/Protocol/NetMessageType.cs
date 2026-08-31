@@ -20,6 +20,12 @@ namespace Gtamp.Shared.Protocol
         /// <summary>One piece of a message too large for a single datagram.</summary>
         Fragment = 0x06,
 
+        /// <summary>Server → client, connectionless: prove you hold the identity key you claimed.</summary>
+        ConnectChallenge = 0x07,
+
+        /// <summary>Client → server, connectionless: the signature over that challenge.</summary>
+        ConnectProof = 0x08,
+
         // 0x10-0x1F — timing and diagnostics.
         Ping = 0x10,
         Pong = 0x11,

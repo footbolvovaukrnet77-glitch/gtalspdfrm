@@ -50,6 +50,13 @@ namespace Gtamp.Server.Players
 
         public ModManifest Manifest { get; set; } = new ModManifest();
 
+        /// <summary>
+        /// The sequence of the newest client state update this session has processed.
+        /// Echoed in that client's next snapshot so it can tell a rejection from a
+        /// snapshot that simply predates its report.
+        /// </summary>
+        public uint LastProcessedUpdateSequence { get; set; }
+
         public double ConnectedAt { get; set; }
 
         /// <summary>

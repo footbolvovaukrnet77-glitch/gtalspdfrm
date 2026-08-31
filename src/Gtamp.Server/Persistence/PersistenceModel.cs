@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using Gtamp.Shared.Security;
 
 namespace Gtamp.Server.Persistence
 {
@@ -97,6 +98,11 @@ namespace Gtamp.Server.Persistence
 
         IReadOnlyList<PersistedEntity> LoadEntities();
 
+        /// <summary>Replaces the stored ban list wholesale. Bans change rarely and are small.</summary>
+        void SaveBans(IReadOnlyList<BanEntry> bans);
+
+        IReadOnlyList<BanEntry> LoadBans();
+
         string Describe();
     }
 
@@ -126,6 +132,12 @@ namespace Gtamp.Server.Persistence
         }
 
         public IReadOnlyList<PersistedEntity> LoadEntities() => Array.Empty<PersistedEntity>();
+
+        public void SaveBans(IReadOnlyList<BanEntry> bans)
+        {
+        }
+
+        public IReadOnlyList<BanEntry> LoadBans() => Array.Empty<BanEntry>();
 
         public string Describe() => "disabled";
 

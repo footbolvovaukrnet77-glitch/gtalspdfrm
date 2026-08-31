@@ -2,7 +2,7 @@
 
 > English. Русский: [ru/NETWORK_PROTOCOL.md](ru/NETWORK_PROTOCOL.md).
 
-Transport: UDP. Byte order: little-endian. Protocol version: **3**
+Transport: UDP. Byte order: little-endian. Protocol version: **4**
 (`ProtocolConstants.ProtocolVersion`); a mismatch is rejected during the
 handshake with a readable message.
 
@@ -129,7 +129,29 @@ CLIENT                                          SERVER
   │ ◄────────────────────────────────── Snapshot  │  20 Hz, unreliable
 ```
 
-The request is retried every 500 ms, up to 20 attempts.
+When the server requires authentication — the default — two more legs sit in the
+middle:
+
+```
+  │  ConnectRequest ────────────────────────────► │
+  │                                               │ ban check, then a random nonce
+  │ ◄──────────── ConnectChallenge                │
+  │  sign(clientNonce ‖ serverNonce ‖ serverName) │
+  │  ConnectProof ──────────────────────────────► │ verify against the claimed key
+  │ ◄──────────── ConnectAccept                   │
+```
+
+The request is retried every 500 ms, up to 32 attempts — raised from 20 because
+four connectionless legs need two round trips through a lossy link where two
+needed one.
+
+**Every leg is idempotent, and it has to be.** A lost challenge is answered by
+re-issuing the *identical* nonce for the same client nonce: a fresh one would
+invalidate a proof already in flight and tell a legitimate player their key is
+wrong. A lost proof is resent by the client's retry timer — which resends the
+proof rather than restarting the handshake, so a challenge that did arrive is not
+thrown away. A lost accept is resent when the proof arrives again, which is why
+the proof path can answer with a stored accept as well as the request path can.
 
 **The handshake is idempotent.** The accept is the one packet with no reliability
 layer behind it — it is sent before the session exists. If it is lost, the client
@@ -152,6 +174,8 @@ live session.
 | `0x04` | Disconnect | reliable | both |
 | `0x05` | KeepAlive | unreliable | both |
 | `0x06` | Fragment | reliable | both |
+| `0x07` | ConnectChallenge | connectionless | S → C |
+| `0x08` | ConnectProof | connectionless | C → S |
 | `0x10` | Ping | unreliable | C → S |
 | `0x11` | Pong | unreliable | S → C |
 | `0x20` | ClientStateUpdate | unreliable | C → S |
@@ -200,6 +224,7 @@ varuint  snapshotId          non-zero, increasing per client
 varuint  baselineId          0 means "full state"
 varuint  tick
 f64      serverTime
+varuint  ackClientUpdate     newest client update this snapshot accounts for
 u8       flags               bit0 = environment block present
 [environment]
 varuint  removedCount
@@ -241,6 +266,30 @@ This is the mechanism that lets replication be optimised without the server worl
 state ever being reduced. `StressTests.DistanceNeverRemovesAnEntityFromTheServerWorld`
 scatters 100 entities across the whole map, far outside any streaming range of the
 only connected player, and asserts the client converges on all of them.
+
+### Why the snapshot echoes a client update sequence
+
+Every `ClientStateUpdate` carries an incrementing `updateSequence`, and each
+snapshot echoes the newest one the server had processed when it wrote that
+snapshot.
+
+Without it the client cannot tell two situations apart, and they need opposite
+responses:
+
+| The snapshot disagrees with what I reported because… | Correct response |
+| --- | --- |
+| the server **rejected** it (anti-cheat, a respawn, an authority hold) | snap to the server |
+| the server **had not seen it yet** when it wrote this snapshot | do nothing |
+
+Treating the second as the first is a self-inflicted rubber-band, and a
+particularly nasty one: the client snaps back to a value the server has *already
+accepted*, then reports the reverted value, and the change is lost for good. The
+echo makes the distinction exact — the client keeps a short history of what it
+reported, indexed by sequence, and judges each snapshot against the report that
+snapshot actually answers.
+
+Regression test:
+`CorrectionTests.AnAcceptedChangeIsNotUndoneByASnapshotThatPredatesIt`.
 
 ## Quantisation
 

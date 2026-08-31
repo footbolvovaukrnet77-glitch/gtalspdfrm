@@ -43,7 +43,7 @@ Expected output: `Build succeeded. 0 Warning(s) 0 Error(s)`.
 ./tools/test.sh          # or tools\test.bat
 ```
 
-Expected: `Passed! - Failed: 0, Passed: 304`.
+Expected: `Passed! - Failed: 0, Passed: 323`.
 
 ---
 
@@ -215,7 +215,8 @@ PlayerName=YourName
 ServerAddress=127.0.0.1
 ServerPort=27015
 ServerPassword=
-IdentityToken=<generated — do not change or you lose your character>
+IdentityToken=<your public key; safe to share>
+IdentitySecret=<your private key; never share it, never lose it>
 ConsoleKey=119
 InterpolationDelay=0.12
 CorrectionThreshold=3
