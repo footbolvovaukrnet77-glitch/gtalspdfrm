@@ -2,6 +2,7 @@
 bin/
 obj/
 dist/
+artifacts/
 
 # Server runtime state
 server.json

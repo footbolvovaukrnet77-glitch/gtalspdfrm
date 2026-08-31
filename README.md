@@ -93,6 +93,13 @@ including their own character, across a server restart.
 360 automated tests, all passing, covering everything except the ScriptHookVDotNet
 host layer and the two plugin-host bridges, which need a running game.
 
+Every push and pull request runs the build, the suite and a documentation check
+on `ubuntu-latest` ([`.github/workflows/ci.yml`](.github/workflows/ci.yml)). The
+build step passes `-warnaserror`, so the zero-warning claim is enforced rather
+than asserted, and the whole solution — the `net48` client included — compiles on
+Linux without a Windows runner. Running the client still needs Windows and GTA V,
+and CI does not pretend otherwise.
+
 ## What does not work yet
 
 Stated plainly, because a framework that hides its gaps wastes your time:

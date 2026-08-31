@@ -45,6 +45,26 @@ Expected output: `Build succeeded. 0 Warning(s) 0 Error(s)`.
 
 Expected: `Passed! - Failed: 0, Passed: 360`.
 
+### Check the documentation
+
+```bash
+python3 tools/check-docs.py    # or python tools\check-docs.py on Windows
+```
+
+Expected: `no broken links, no missing translations`. It fails on a relative link
+to a file that does not exist, on a `#anchor` naming a heading that is not there,
+and on an English document with no Russian counterpart or the reverse. Needs
+nothing but Python 3 — no packages to install.
+
+### The same three commands run in CI
+
+`.github/workflows/ci.yml` runs the build, the test suite and the documentation
+check on `ubuntu-latest` for every push and every pull request. The build step
+passes `-warnaserror`, so the zero-warning claim above is enforced rather than
+asserted. The whole solution compiles on Linux, the `net48` client included,
+because `Microsoft.NETFramework.ReferenceAssemblies` supplies the .NET Framework
+4.8 reference assemblies; **running** the client still needs Windows and GTA V.
+
 ---
 
 ## 2. Server

@@ -229,6 +229,34 @@ machine and real clients, and is not claimed here.
 
 ---
 
+## Continuous integration ✅ in place
+
+`.github/workflows/ci.yml` runs on every push and every pull request:
+
+| Step | What it guards |
+| --- | --- |
+| `dotnet build -c Release -warnaserror` | The zero-warning claim. Without `-warnaserror` it decays the first time a warning lands that nobody scrolls up far enough to see |
+| `dotnet test -c Release` | All 360 tests, with the `.trx` uploaded as an artifact so a failure is readable without re-running anything |
+| `python3 tools/check-docs.py` | Dead relative links, `#anchors` naming headings that no longer exist, and any document that lost its counterpart in the other language |
+
+The whole solution compiles on `ubuntu-latest`, the `net48` client included,
+because `Microsoft.NETFramework.ReferenceAssemblies` supplies the .NET Framework
+4.8 reference assemblies. No Windows runner is needed to *build*.
+
+**What CI still does not cover, and cannot.** Running the client, RPH's loader
+and `GameFiber` timing, and whether each LSPDFR probe binds against a given
+LSPDFR release. Those need Windows, GTA V, RPH and LSPDFR on the runner. A green
+CI badge on this repository means the code compiles clean and the suite passes —
+not that the mod works in the game.
+
+**The documentation checker is itself checked.** It was run against a
+deliberately broken tree — a link to a missing file, an anchor naming a heading
+that does not exist, and a Russian document removed — and reported all three and
+exited non-zero. A checker that only ever passes is indistinguishable from one
+that checks nothing.
+
+---
+
 ## Deliberately not done
 
 Things that could have been faked and were not:
