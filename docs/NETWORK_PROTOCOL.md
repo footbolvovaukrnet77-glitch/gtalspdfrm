@@ -207,6 +207,57 @@ silently appears somewhere plausible.
 The position bound is asserted over 5,000 random samples in
 `SerializationTests.QuantizedPositionStaysWithinTheDocumentedErrorBound`.
 
+## Fragmentation
+
+A reliable message larger than the per-message budget is split into fragments,
+each an ordinary reliable message:
+
+```
+u16 groupId | u8 index | u8 count | u8 innerType | chunk
+```
+
+Ordering and retransmission come free from the reliable channel, so reassembly
+needs no acknowledgement scheme of its own. The receiver buffers fragments until
+the set is complete, then delivers the reassembled message under its inner type.
+
+Limits, both of them memory bounds: 256 KB per message and 8 concurrent fragment
+sets. A peer that opens more sets than it finishes has its oldest dropped.
+
+**Unreliable fragmentation is refused, not offered.** Losing any one fragment
+loses the whole message, so the effective loss rate is multiplied by the fragment
+count — a 5-fragment message on a 10% link arrives 59% of the time. Anything big
+enough to need splitting is worth sending reliably, and the send call says so
+rather than letting the caller discover it in production.
+
+## Owner state streams
+
+The client that owns an entity reports it at the client update rate. The payload
+is written by the entity type's own serializer, so a mod-defined type streams with
+no protocol change.
+
+Updates are **delta-compressed against a snapshot the client has applied**, named
+by id. That baseline is one the server sent and still holds in that client's
+history, so both sides name the same starting point.
+
+This is what makes delta compression safe on an unreliable channel. A "delta
+against whatever I sent last" scheme silently desynchronises the moment one update
+is dropped — the receiver applies the next delta to the wrong base and has no way
+to know. Here a lost update costs one frame of freshness, and a baseline that has
+aged out of history is simply ignored, with the client rebasing on its next
+applied snapshot.
+
+## Adaptive bandwidth
+
+Each client's snapshot budget moves with what its link is carrying: cut to 75% on
+loss above 8%, crept back up by 10% of the maximum per clean second, floored at a
+configurable minimum. Additive increase, multiplicative decrease — the same shape
+TCP uses, and for the same reason.
+
+It changes only how much is sent per snapshot. It never changes what the server
+keeps and never drops an entity permanently: a smaller budget defers more entities
+to later snapshots, so a congested client converges more slowly and still
+converges.
+
 ## Interpolation timeline
 
 Remote players are rendered a fixed delay behind the client's **estimate** of the

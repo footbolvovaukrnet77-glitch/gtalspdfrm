@@ -9,6 +9,7 @@ using Gtamp.Shared.Entities;
 using Gtamp.Shared.Net;
 using Gtamp.Shared.Protocol;
 using Gtamp.Shared.Security;
+using Gtamp.Shared.World;
 
 namespace Gtamp.Server.Entities
 {
@@ -120,6 +121,10 @@ namespace Gtamp.Server.Entities
         /// meant to stop.
         /// </para>
         /// </summary>
+        public int DeltaUpdatesApplied { get; private set; }
+
+        public int UpdatesDroppedForMissingBaseline { get; private set; }
+
         public bool HandleOwnedUpdate(
             PlayerSession session, OwnedEntityUpdateMessage update, OwnedEntityValidator validator, double now)
         {
@@ -141,10 +146,29 @@ namespace Gtamp.Server.Entities
                 return false;
             }
 
-            NetEntity candidate = serializer.Create(existing.Id);
+            NetEntity candidate;
             try
             {
-                serializer.ReadFull(new NetReader(update.State), candidate);
+                if (update.BaselineSnapshotId == 0)
+                {
+                    candidate = serializer.Create(existing.Id);
+                    serializer.ReadFull(new NetReader(update.State), candidate);
+                }
+                else
+                {
+                    if (!TryResolveBaseline(session, update, out NetEntity baseline))
+                    {
+                        // The snapshot the delta names has aged out of this client's
+                        // history. Ignoring it is safe: the client rebases on every
+                        // snapshot it applies, so it recovers within one interval.
+                        UpdatesDroppedForMissingBaseline++;
+                        return false;
+                    }
+
+                    candidate = baseline.Clone();
+                    serializer.ReadDelta(new NetReader(update.State), candidate);
+                    DeltaUpdatesApplied++;
+                }
             }
             catch (NetSerializationException exception)
             {
@@ -172,6 +196,23 @@ namespace Gtamp.Server.Entities
 
             _world.State.AddOrReplace(candidate);
             return true;
+        }
+
+        /// <summary>
+        /// Finds the entity state the client's delta was written against, from the
+        /// snapshot history the server keeps for that client.
+        /// </summary>
+        private static bool TryResolveBaseline(
+            PlayerSession session, OwnedEntityUpdateMessage update, out NetEntity baseline)
+        {
+            baseline = null!;
+
+            if (!session.Replication.History.TryGet(update.BaselineSnapshotId, out EntitySnapshotView view))
+            {
+                return false;
+            }
+
+            return view.TryGet(update.EntityId, out baseline);
         }
 
         public EntityEventMessage? HandleRelease(PlayerSession session, EntityReleaseRequestMessage request, PlayerRegistry players)

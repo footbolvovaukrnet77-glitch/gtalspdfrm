@@ -58,6 +58,9 @@ namespace Gtamp.Shared.Net
 
         public int MessagesDropped { get; internal set; }
 
+        /// <summary>Fragments produced by splitting oversized messages.</summary>
+        public int FragmentsSent { get; internal set; }
+
         /// <summary>Smoothed round-trip time in seconds.</summary>
         public double RoundTripTime { get; internal set; }
 
@@ -77,6 +80,7 @@ namespace Gtamp.Shared.Net
             PacketsLost = 0;
             ReliableRetransmits = 0;
             MessagesDropped = 0;
+            FragmentsSent = 0;
             RoundTripTime = 0;
             RoundTripVariance = 0;
         }

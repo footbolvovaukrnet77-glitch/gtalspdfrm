@@ -4,7 +4,7 @@ A server-authoritative multiplayer framework that turns single-player GTA V into
 shared world, with an entity system and mod SDK that third-party mods can extend
 without patching the framework.
 
-**Status: Phases 1 to 3 complete.** Two players share one world, movement replicates,
+**Status: Phases 1 to 4 complete.** Two players share one world, movement replicates,
 and a player who disconnects and comes back receives the world as it is *now* —
 including their own character, across a server restart.
 
@@ -41,6 +41,8 @@ including their own character, across a server restart.
 - **Vehicles, NPCs and objects** with server-assigned identities, client-driven
   simulation and ownership that migrates when the owner leaves or drives away.
 - **Server-arbitrated combat** with per-weapon range and damage envelopes.
+- **Fragmentation** for reliable messages up to 256 KB, and **adaptive bandwidth
+  shaping** that backs off on loss and creeps back on a clean link.
 - **Server-arbitrated death and respawn**, with an authority hold so a
   server-initiated move is not dragged back by the client's in-flight updates.
 - **SQLite persistence** that survives a real process restart.
@@ -54,7 +56,7 @@ including their own character, across a server restart.
   the adapters link against them; the adapters bind by reflection and report
   themselves inactive when the mod is absent.
 
-220 automated tests, all passing, covering everything except the ScriptHookVDotNet
+234 automated tests, all passing, covering everything except the ScriptHookVDotNet
 host layer, which needs a running game.
 
 ## What does not work yet

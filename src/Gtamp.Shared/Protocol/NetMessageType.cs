@@ -17,6 +17,9 @@ namespace Gtamp.Shared.Protocol
         Disconnect = 0x04,
         KeepAlive = 0x05,
 
+        /// <summary>One piece of a message too large for a single datagram.</summary>
+        Fragment = 0x06,
+
         // 0x10-0x1F — timing and diagnostics.
         Ping = 0x10,
         Pong = 0x11,

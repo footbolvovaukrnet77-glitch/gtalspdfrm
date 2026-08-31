@@ -43,6 +43,9 @@ namespace Gtamp.Server.Players
 
         public ClientReplicationState Replication { get; } = new ClientReplicationState();
 
+        /// <summary>Adapts this client's snapshot budget to what its link is carrying.</summary>
+        public BandwidthShaper? Bandwidth { get; set; }
+
         public PlayerValidationState Validation { get; } = new PlayerValidationState();
 
         public ModManifest Manifest { get; set; } = new ModManifest();

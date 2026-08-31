@@ -317,6 +317,7 @@ namespace Gtamp.Server.Core
             {
                 ConnectedAt = _now,
                 Manifest = request.Manifest,
+                Bandwidth = new BandwidthShaper(Config.SnapshotByteBudget, Config.MinimumSnapshotByteBudget),
             };
 
             PersistedPlayer? saved = _persistence.LoadPlayer(request.IdentityToken);
@@ -922,6 +923,9 @@ namespace Gtamp.Server.Core
                 List<NetEntity> order = ReplicationPriority.Order(
                     World.State.Entities, viewer, World.Tick, session.Replication, EntityId.None);
 
+                session.Bandwidth?.Update(session.Peer.Stats, _now);
+                int budget = session.Bandwidth?.CurrentBudget ?? Config.SnapshotByteBudget;
+
                 uint snapshotId = session.Replication.AllocateSnapshotId();
 
                 if (session.PendingAuthorityHold)
@@ -941,7 +945,7 @@ namespace Gtamp.Server.Core
                 }
 
                 SnapshotWriteResult result = SnapshotCodec.Write(
-                    World.State, baseline, Registry, order, snapshotId, Config.SnapshotByteBudget);
+                    World.State, baseline, Registry, order, snapshotId, budget);
 
                 session.Peer.Send(NetMessageType.Snapshot, result.Payload, DeliveryMethod.Unreliable);
                 session.Replication.RecordSent(result, World.Tick);
@@ -952,7 +956,7 @@ namespace Gtamp.Server.Core
                     Log.Debug(
                         LogCategory.Network,
                         $"{session}: snapshot {snapshotId} deferred {result.DeferredCount} entities " +
-                        $"({result.Payload.Length}/{Config.SnapshotByteBudget} bytes used)");
+                        $"({result.Payload.Length}/{budget} bytes used)");
                 }
             }
         }

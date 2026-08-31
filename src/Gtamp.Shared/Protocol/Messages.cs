@@ -483,12 +483,25 @@ namespace Gtamp.Shared.Protocol
     {
         public EntityId EntityId { get; set; }
 
+        /// <summary>
+        /// Snapshot the delta was written against, or 0 for full state.
+        /// <para>
+        /// The baseline is a snapshot the client has <em>applied</em>, which means the
+        /// server sent it and still holds it in that client's history. That is what
+        /// makes delta compression safe over an unreliable channel: both sides can name
+        /// the same starting point, so a lost update cannot silently desynchronise the
+        /// chain the way a "delta against my previous send" scheme would.
+        /// </para>
+        /// </summary>
+        public uint BaselineSnapshotId { get; set; }
+
         public byte[] State { get; set; } = Array.Empty<byte>();
 
         public byte[] Serialize()
         {
-            var writer = new NetWriter(State.Length + 8);
+            var writer = new NetWriter(State.Length + 12);
             writer.WriteVarUInt(EntityId.Value);
+            writer.WriteVarUInt(BaselineSnapshotId);
             writer.WriteByteArray(State);
             return writer.ToArray();
         }
@@ -499,6 +512,7 @@ namespace Gtamp.Shared.Protocol
             return new OwnedEntityUpdateMessage
             {
                 EntityId = new EntityId(reader.ReadVarUInt()),
+                BaselineSnapshotId = reader.ReadVarUInt(),
                 State = reader.ReadByteArray(ProtocolConstants.MaxPacketSize),
             };
         }

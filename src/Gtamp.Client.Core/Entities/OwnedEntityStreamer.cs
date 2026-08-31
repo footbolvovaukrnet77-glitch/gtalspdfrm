@@ -68,6 +68,11 @@ namespace Gtamp.Client.Entities
 
         public int SpawnsRejected { get; private set; }
 
+        /// <summary>Updates sent as a delta rather than as full state.</summary>
+        public int DeltaUpdatesSent { get; private set; }
+
+        public int FullUpdatesSent { get; private set; }
+
         /// <summary>Game handle of the entity this client owns, or 0.</summary>
         public bool TryGetHandle(EntityId id, out int handle) => _ownedHandles.TryGetValue(id, out handle);
 
@@ -232,10 +237,35 @@ namespace Gtamp.Client.Entities
                     continue;
                 }
 
-                var writer = new NetWriter(256);
-                _registry.Get((byte)EntityType.Vehicle).WriteFull(writer, state);
+                // Preserve the fields the server owns; reporting our stale copy of them
+                // would fight the server's own decisions.
+                state.OwnerId = entity.OwnerId;
 
-                var update = new OwnedEntityUpdateMessage { EntityId = pair.Key, State = writer.ToArray() };
+                INetEntitySerializer serializer = _registry.Get((byte)EntityType.Vehicle);
+                var writer = new NetWriter(256);
+                uint baselineId = 0;
+
+                // The baseline is the view the server sent and still holds for us, so
+                // both sides name the same starting point.
+                if (view.SnapshotId != 0)
+                {
+                    baselineId = view.SnapshotId;
+                    serializer.WriteDelta(writer, entity, state);
+                    DeltaUpdatesSent++;
+                }
+                else
+                {
+                    serializer.WriteFull(writer, state);
+                    FullUpdatesSent++;
+                }
+
+                var update = new OwnedEntityUpdateMessage
+                {
+                    EntityId = pair.Key,
+                    BaselineSnapshotId = baselineId,
+                    State = writer.ToArray(),
+                };
+
                 Send?.Invoke(NetMessageType.OwnedEntityUpdate, update.Serialize(), DeliveryMethod.Unreliable);
             }
 

@@ -66,17 +66,26 @@ exposes deformation only through natives that write into a vehicle, never read
 from one, so a faithful copy cannot be sampled at all. Body health plus the door,
 window and tyre states carry as much of it as the engine will give up.
 
-## Phase 4 — Networking depth
+## Phase 4 — Networking depth ✅ complete
 
-| Item | Notes |
+| Item | State |
 | --- | --- |
-| Client-side prediction for the local player | Today the local player is not predicted; it is simulated locally and corrected |
-| Vehicle prediction and reconciliation | Non-owned vehicles interpolate; they do not predict |
-| Ownership handover of an existing local entity | A client granted ownership of somebody else's vehicle has no local handle for it yet |
-| Animation and scenario replication | `AnimationHash` is on the wire and unused |
-| Per-entity baselines | Replaces the per-client view history; needed before entity counts reach the thousands |
-| Packet fragmentation | Today a single message must fit in one datagram |
-| Bandwidth shaping per client | Today the budget is global |
+| Packet fragmentation | ✅ reliable messages up to 256 KB split and reassembled; unreliable fragmentation is refused on purpose |
+| Delta-compressed owner streams | ✅ owners delta against a snapshot the server still holds, so a lost update costs freshness rather than the chain |
+| Adaptive bandwidth shaping | ✅ per client, additive increase and multiplicative decrease from measured loss |
+| Client-side prediction for the local player | ⏸ **not applicable as usually meant** — see below |
+| Vehicle prediction and reconciliation | ⏸ non-owned vehicles interpolate and extrapolate up to 250 ms; they do not predict |
+| Ownership handover of an existing local entity | ⏸ a client granted ownership of somebody else's vehicle has no local handle for it |
+| Per-entity baselines | ⏸ moved to Phase 12; the per-client view history is the memory cost to beat |
+
+**Why local-player prediction is not the usual thing here.** In a conventional
+architecture the server simulates movement and the client predicts what the server
+will say. Here the server cannot simulate movement at all — it has no physics and
+no map. GTA V *is* the simulation, running on the client. So there is nothing to
+predict: the client already has the authoritative-feeling result immediately, and
+the server's role is to accept or correct it. Building a "prediction" layer on top
+would be a re-implementation of movement that could only ever be less accurate
+than the game already running underneath it.
 
 ## Phase 5 — Persistence depth
 

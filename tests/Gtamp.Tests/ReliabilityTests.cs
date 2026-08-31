@@ -130,11 +130,80 @@ namespace Gtamp.Tests
         }
 
         [Fact]
-        public void OversizedMessagesAreRejectedRatherThanTruncated()
+        public void OversizedUnreliableMessagesAreRejectedRatherThanTruncated()
+        {
+            // Unreliable fragmentation multiplies the loss rate by the fragment count,
+            // so it is refused rather than offered as a footgun.
+            var harness = new ReliableHarness();
+            NetSerializationException exception = Assert.Throws<NetSerializationException>(() =>
+                harness.A.Send(NetMessageType.Snapshot, new byte[NetPeer.MaxMessagePayload + 1], DeliveryMethod.Unreliable));
+
+            Assert.Contains("send it reliably", exception.Message);
+        }
+
+        [Fact]
+        public void ALargeReliableMessageIsFragmentedAndReassembled()
+        {
+            var harness = new ReliableHarness();
+            var payload = new byte[NetPeer.MaxMessagePayload * 4 + 137];
+            for (int i = 0; i < payload.Length; i++)
+            {
+                payload[i] = (byte)(i * 31);
+            }
+
+            harness.A.Send(NetMessageType.ModManifest, payload, DeliveryMethod.ReliableOrdered);
+            harness.Run(3.0);
+
+            Assert.True(harness.A.Stats.FragmentsSent >= 5, $"only {harness.A.Stats.FragmentsSent} fragments were sent");
+            Assert.Single(harness.RawReceived);
+            Assert.Equal(NetMessageType.ModManifest, harness.RawReceived[0].Type);
+            Assert.Equal(payload, harness.RawReceived[0].Payload);
+        }
+
+        [Fact]
+        public void AFragmentedMessageSurvivesHeavyLoss()
+        {
+            var harness = new ReliableHarness(loss: 0.35, latency: 0.03, jitter: 0.02, seed: 606);
+            var payload = new byte[NetPeer.MaxMessagePayload * 6];
+            for (int i = 0; i < payload.Length; i++)
+            {
+                payload[i] = (byte)(i % 251);
+            }
+
+            harness.A.Send(NetMessageType.ModManifest, payload, DeliveryMethod.ReliableOrdered);
+            harness.Run(30.0);
+
+            Assert.Single(harness.RawReceived);
+            Assert.Equal(payload, harness.RawReceived[0].Payload);
+        }
+
+        [Fact]
+        public void FragmentedAndOrdinaryMessagesStayInOrder()
+        {
+            var harness = new ReliableHarness(loss: 0.2, seed: 42);
+            var big = new byte[NetPeer.MaxMessagePayload * 3];
+
+            harness.A.Send(NetMessageType.ChatMessage, Body("first"), DeliveryMethod.ReliableOrdered);
+            harness.A.Send(NetMessageType.ModManifest, big, DeliveryMethod.ReliableOrdered);
+            harness.A.Send(NetMessageType.ChatMessage, Body("last"), DeliveryMethod.ReliableOrdered);
+            harness.Run(20.0);
+
+            Assert.Equal(3, harness.RawReceived.Count);
+            Assert.Equal(NetMessageType.ChatMessage, harness.RawReceived[0].Type);
+            Assert.Equal(NetMessageType.ModManifest, harness.RawReceived[1].Type);
+            Assert.Equal(NetMessageType.ChatMessage, harness.RawReceived[2].Type);
+            Assert.Equal(big.Length, harness.RawReceived[1].Payload.Length);
+        }
+
+        [Fact]
+        public void AMessageBeyondTheReassemblyLimitIsRefused()
         {
             var harness = new ReliableHarness();
             Assert.Throws<NetSerializationException>(() =>
-                harness.A.Send(NetMessageType.Snapshot, new byte[NetPeer.MaxMessagePayload + 1], DeliveryMethod.Unreliable));
+                harness.A.Send(
+                    NetMessageType.ModManifest,
+                    new byte[NetPeer.MaxFragmentedMessage + 1],
+                    DeliveryMethod.ReliableOrdered));
         }
 
         [Fact]
@@ -192,6 +261,9 @@ namespace Gtamp.Tests
 
             public List<string> Received { get; } = new List<string>();
 
+            /// <summary>Everything B received, before it is turned into text.</summary>
+            public List<ReceivedMessage> RawReceived { get; } = new List<ReceivedMessage>();
+
             public void Run(double seconds, double step = 0.02)
             {
                 for (double elapsed = 0; elapsed < seconds; elapsed += step)
@@ -220,7 +292,13 @@ namespace Gtamp.Tests
 
                 while (peer.TryDequeue(out ReceivedMessage message))
                 {
-                    sink?.Add(Encoding.UTF8.GetString(message.Payload));
+                    if (sink == null)
+                    {
+                        continue;
+                    }
+
+                    RawReceived.Add(message);
+                    sink.Add(Encoding.UTF8.GetString(message.Payload));
                 }
             }
         }

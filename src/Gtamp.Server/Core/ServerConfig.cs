@@ -33,6 +33,12 @@ namespace Gtamp.Server.Core
         /// <summary>Bytes of snapshot payload per client per snapshot. Caps outbound bandwidth.</summary>
         public int SnapshotByteBudget { get; set; } = 1024;
 
+        /// <summary>
+        /// Floor the adaptive shaper will not go below, however bad a client's link is.
+        /// Below this a client stops converging on the world at all.
+        /// </summary>
+        public int MinimumSnapshotByteBudget { get; set; } = 256;
+
         /// <summary>Seconds between persistence saves. 0 disables periodic saving.</summary>
         public double SaveIntervalSeconds { get; set; } = 60;
 
@@ -163,6 +169,12 @@ namespace Gtamp.Server.Core
             if (SnapshotByteBudget < 256 || SnapshotByteBudget > 64 * 1024)
             {
                 throw new InvalidDataException("snapshotByteBudget must be between 256 and 65536.");
+            }
+
+            if (MinimumSnapshotByteBudget < 256 || MinimumSnapshotByteBudget > SnapshotByteBudget)
+            {
+                throw new InvalidDataException(
+                    "minimumSnapshotByteBudget must be between 256 and snapshotByteBudget.");
             }
 
             if (RespawnDelaySeconds < 0 || RespawnDelaySeconds > 600)

@@ -37,6 +37,20 @@ namespace Gtamp.Shared.Net
         /// </summary>
         public const double MaxAckDelay = 0.02;
 
+        /// <summary>
+        /// Largest message that can be reassembled from fragments. Bounded because the
+        /// receiver has to buffer every fragment until the set is complete, and a peer
+        /// that announces a huge message and then never finishes it would otherwise be
+        /// able to exhaust memory.
+        /// </summary>
+        public const int MaxFragmentedMessage = 256 * 1024;
+
+        /// <summary>Fragment sets being reassembled at once. Also a memory bound.</summary>
+        public const int MaxConcurrentFragmentSets = 8;
+
+        /// <summary>Header inside a fragment payload: group id, index, count, inner type.</summary>
+        private const int FragmentHeaderSize = 5;
+
         private readonly IDatagramTransport _transport;
         private readonly NetWriter _writer = new NetWriter(ProtocolConstants.MaxPacketSize);
         private readonly Queue<PendingMessage> _outUnreliable = new Queue<PendingMessage>();
@@ -45,6 +59,9 @@ namespace Gtamp.Shared.Net
         private readonly Queue<ReceivedMessage> _delivered = new Queue<ReceivedMessage>();
         private readonly SentPacket[] _sentPackets = new SentPacket[SentWindow];
 
+        private readonly Dictionary<ushort, FragmentSet> _fragments = new Dictionary<ushort, FragmentSet>();
+
+        private ushort _nextFragmentGroup;
         private ushort _nextPacketSequence;
         private ushort _nextReliableSequence;
         private ushort _nextOrderedDelivery;
@@ -86,10 +103,19 @@ namespace Gtamp.Shared.Net
 
             if (payload.Length > MaxMessagePayload)
             {
-                // Higher layers must split their own payloads (the snapshot encoder
-                // does). Silently truncating here would corrupt world state.
-                throw new NetSerializationException(
-                    $"Message {type} is {payload.Length} bytes; the per-message budget is {MaxMessagePayload}.");
+                if (delivery != DeliveryMethod.ReliableOrdered)
+                {
+                    // Unreliable fragmentation is a trap: losing any one fragment loses
+                    // the whole message, so the effective loss rate is multiplied by the
+                    // fragment count. Anything big enough to need splitting is worth
+                    // sending reliably.
+                    throw new NetSerializationException(
+                        $"Message {type} is {payload.Length} bytes. Unreliable messages must fit in " +
+                        $"{MaxMessagePayload} bytes; send it reliably to have it fragmented.");
+                }
+
+                SendFragmented(type, payload);
+                return;
             }
 
             if (delivery == DeliveryMethod.ReliableOrdered)
@@ -101,6 +127,115 @@ namespace Gtamp.Shared.Net
             {
                 _outUnreliable.Enqueue(new PendingMessage(type, payload, false, 0));
             }
+        }
+
+        /// <summary>
+        /// Splits an oversized message into fragments, each an ordinary reliable
+        /// message. Ordering and retransmission come for free from the reliable
+        /// channel, so reassembly does not need its own acknowledgement scheme.
+        /// </summary>
+        private void SendFragmented(NetMessageType type, byte[] payload)
+        {
+            int chunkSize = MaxMessagePayload - FragmentHeaderSize;
+            int count = (payload.Length + chunkSize - 1) / chunkSize;
+
+            if (count > byte.MaxValue || payload.Length > MaxFragmentedMessage)
+            {
+                throw new NetSerializationException(
+                    $"Message {type} is {payload.Length} bytes; the fragmented limit is {MaxFragmentedMessage}.");
+            }
+
+            ushort group = _nextFragmentGroup++;
+            for (int index = 0; index < count; index++)
+            {
+                int offset = index * chunkSize;
+                int length = Math.Min(chunkSize, payload.Length - offset);
+
+                var fragment = new byte[FragmentHeaderSize + length];
+                fragment[0] = (byte)group;
+                fragment[1] = (byte)(group >> 8);
+                fragment[2] = (byte)index;
+                fragment[3] = (byte)count;
+                fragment[4] = (byte)type;
+                Array.Copy(payload, offset, fragment, FragmentHeaderSize, length);
+
+                _outReliable.Add(new PendingMessage(NetMessageType.Fragment, fragment, true, _nextReliableSequence++));
+            }
+
+            Stats.FragmentsSent += count;
+        }
+
+        /// <summary>
+        /// Accumulates a fragment and returns the reassembled message once the set is
+        /// complete. Reliable delivery is ordered, so fragments normally arrive in
+        /// sequence; the index is still honoured so a future unordered channel does not
+        /// silently corrupt a message.
+        /// </summary>
+        private bool TryReassemble(ReceivedMessage message, out ReceivedMessage complete)
+        {
+            complete = default;
+            byte[] payload = message.Payload;
+
+            if (payload.Length < FragmentHeaderSize)
+            {
+                Stats.MessagesDropped++;
+                return false;
+            }
+
+            ushort group = (ushort)(payload[0] | (payload[1] << 8));
+            byte index = payload[2];
+            byte count = payload[3];
+            var innerType = (NetMessageType)payload[4];
+            int chunkLength = payload.Length - FragmentHeaderSize;
+
+            if (count == 0 || index >= count)
+            {
+                Stats.MessagesDropped++;
+                return false;
+            }
+
+            if (!_fragments.TryGetValue(group, out FragmentSet? set))
+            {
+                if (_fragments.Count >= MaxConcurrentFragmentSets)
+                {
+                    // A peer opening more fragment sets than it finishes. Dropping the
+                    // oldest keeps memory bounded without punishing a slow but honest
+                    // sender.
+                    ushort oldest = 0;
+                    bool found = false;
+                    foreach (ushort key in _fragments.Keys)
+                    {
+                        oldest = key;
+                        found = true;
+                        break;
+                    }
+
+                    if (found)
+                    {
+                        _fragments.Remove(oldest);
+                        Stats.MessagesDropped++;
+                    }
+                }
+
+                set = new FragmentSet(count, innerType);
+                _fragments[group] = set;
+            }
+
+            if (!set.Accept(index, payload, FragmentHeaderSize, chunkLength, out string? error))
+            {
+                _fragments.Remove(group);
+                Stats.MessagesDropped++;
+                return false;
+            }
+
+            if (!set.IsComplete)
+            {
+                return false;
+            }
+
+            _fragments.Remove(group);
+            complete = new ReceivedMessage(set.InnerType, set.Assemble(), DeliveryMethod.ReliableOrdered);
+            return true;
         }
 
         /// <summary>Packs queued messages into datagrams and hands them to the transport.</summary>
@@ -312,8 +447,19 @@ namespace Gtamp.Shared.Net
             while (_pendingOrdered.TryGetValue(_nextOrderedDelivery, out ReceivedMessage next))
             {
                 _pendingOrdered.Remove(_nextOrderedDelivery);
-                _delivered.Enqueue(next);
                 _nextOrderedDelivery++;
+
+                if (next.Type == NetMessageType.Fragment)
+                {
+                    if (TryReassemble(next, out ReceivedMessage complete))
+                    {
+                        _delivered.Enqueue(complete);
+                    }
+
+                    continue;
+                }
+
+                _delivered.Enqueue(next);
             }
         }
 
@@ -484,6 +630,66 @@ namespace Gtamp.Shared.Net
             public int SendCount { get; set; }
 
             public double NextSendTime { get; set; }
+        }
+
+        /// <summary>One message being reassembled from its fragments.</summary>
+        private sealed class FragmentSet
+        {
+            private readonly byte[]?[] _chunks;
+            private int _received;
+            private int _totalLength;
+
+            public FragmentSet(byte count, NetMessageType innerType)
+            {
+                _chunks = new byte[count][];
+                InnerType = innerType;
+            }
+
+            public NetMessageType InnerType { get; }
+
+            public bool IsComplete => _received == _chunks.Length;
+
+            public bool Accept(byte index, byte[] source, int offset, int length, out string? error)
+            {
+                error = null;
+
+                if (_chunks[index] != null)
+                {
+                    // A duplicate fragment from a retransmission that crossed its ack.
+                    return true;
+                }
+
+                if (_totalLength + length > MaxFragmentedMessage)
+                {
+                    error = "the fragment set exceeds the reassembly limit";
+                    return false;
+                }
+
+                var chunk = new byte[length];
+                Array.Copy(source, offset, chunk, 0, length);
+                _chunks[index] = chunk;
+                _received++;
+                _totalLength += length;
+                return true;
+            }
+
+            public byte[] Assemble()
+            {
+                var result = new byte[_totalLength];
+                int position = 0;
+                foreach (byte[]? chunk in _chunks)
+                {
+                    if (chunk == null)
+                    {
+                        continue;
+                    }
+
+                    Array.Copy(chunk, 0, result, position, chunk.Length);
+                    position += chunk.Length;
+                }
+
+                return result;
+            }
         }
 
         private struct SentPacket
