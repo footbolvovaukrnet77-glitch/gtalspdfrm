@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using Gtamp.Client.Core;
+using Gtamp.Client.Mods;
 using Gtamp.Shared.Diagnostics;
 using Gtamp.Shared.Core;
 using Gtamp.Shared.Entities;
@@ -19,11 +20,15 @@ namespace Gtamp.Client.Players
         private readonly Dictionary<EntityId, RemotePlayer> _players = new Dictionary<EntityId, RemotePlayer>();
         private readonly List<EntityId> _removalBuffer = new List<EntityId>();
         private readonly Dictionary<EntityId, int> _appliedAppearance = new Dictionary<EntityId, int>();
+        private readonly Dictionary<EntityId, uint> _builtFromModel = new Dictionary<EntityId, uint>();
 
-        public RemotePlayerManager(IGameBridge bridge, LogBus log)
+        private readonly MissingContentTracker _missingContent;
+
+        public RemotePlayerManager(IGameBridge bridge, LogBus log, MissingContentTracker missingContent)
         {
             _bridge = bridge ?? throw new ArgumentNullException(nameof(bridge));
             _log = log ?? throw new ArgumentNullException(nameof(log));
+            _missingContent = missingContent ?? throw new ArgumentNullException(nameof(missingContent));
         }
 
         /// <summary>The local player's entity, which must never be given a remote ped.</summary>
@@ -80,8 +85,36 @@ namespace Gtamp.Client.Players
                     continue;
                 }
 
+                // GTA V cannot change a ped's model in place, so a model that no longer
+                // matches the one the ped was built from means destroy and rebuild.
+                //
+                // This is not a rare case. A player's model arrives in their first
+                // state update, which normally lands *after* the first snapshot that
+                // makes them visible — so the first ped is built from whatever the
+                // server had, usually nothing, and the bridge substitutes a default
+                // body. Without this check that default is permanent, and every remote
+                // player is the wrong character for the rest of the session.
+                if (player.PedHandle != 0
+                    && _builtFromModel.TryGetValue(player.EntityId, out uint builtFrom)
+                    && builtFrom != player.ModelHash)
+                {
+                    _bridge.DestroyRemotePed(player.PedHandle);
+                    player.PedHandle = 0;
+                    _builtFromModel.Remove(player.EntityId);
+                }
+
                 if (player.PedHandle == 0 || !_bridge.IsRemotePedValid(player.PedHandle))
                 {
+                    // A player is the one case where substituting beats hiding: an
+                    // invisible teammate is worse than one wearing the wrong body, and
+                    // the bridge falls back to a default model. That fallback is
+                    // recorded rather than allowed to pass as correct.
+                    if (_bridge.GetModelAvailability(player.ModelHash) == ModelAvailability.Unavailable)
+                    {
+                        _missingContent.Report(
+                            player.ModelHash, EntityType.Player, player.EntityId, substituted: true);
+                    }
+
                     // A ped can be culled by the game itself (streaming, a mod cleanup
                     // pass); recreating it is normal, not an error.
                     player.PedHandle = _bridge.CreateRemotePed(player.ModelHash, frame.Position, frame.Heading);
@@ -89,6 +122,8 @@ namespace Gtamp.Client.Players
                     {
                         continue;
                     }
+
+                    _builtFromModel[player.EntityId] = player.ModelHash;
 
                     // Force the appearance onto a freshly created ped.
                     _appliedAppearance.Remove(player.EntityId);
@@ -134,6 +169,7 @@ namespace Gtamp.Client.Players
 
             _players.Remove(id);
             _appliedAppearance.Remove(id);
+            _builtFromModel.Remove(id);
             _log.Info(LogCategory.Client, $"{player.Name} left ({id}).", $"entity:{id.Value}");
         }
 

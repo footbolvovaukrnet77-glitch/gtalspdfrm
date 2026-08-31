@@ -15,10 +15,37 @@ namespace Gtamp.Client.Core
     /// client without touching the networking code.
     /// </para>
     /// </summary>
+    /// <summary>
+    /// Whether a model hash can be turned into an entity on this client right now.
+    /// <para>
+    /// The three states are not interchangeable. <see cref="Loading"/> is normal and
+    /// resolves on a later frame; <see cref="Unavailable"/> never will, because the
+    /// asset is not installed. Collapsing them into one "not yet" is how a missing
+    /// mod becomes an entity that silently never appears.
+    /// </para>
+    /// </summary>
+    public enum ModelAvailability : byte
+    {
+        /// <summary>The hash names no model this client has. A mod is missing.</summary>
+        Unavailable = 0,
+
+        /// <summary>Known, streaming in. Retry on a later frame.</summary>
+        Loading = 1,
+
+        Available = 2,
+    }
+
     public interface IGameBridge
     {
         /// <summary>Game build string, e.g. "1.0.3095.0". Reported in bug reports.</summary>
         string GameVersion { get; }
+
+        /// <summary>
+        /// Whether this client can resolve a model hash. Called before creating a
+        /// replicated entity so an asset the player does not have is reported once
+        /// rather than retried forever.
+        /// </summary>
+        ModelAvailability GetModelAvailability(uint modelHash);
 
         /// <summary>True once the player is in a controllable state (not loading, not in a cutscene).</summary>
         bool IsPlayerReady { get; }

@@ -7,6 +7,7 @@ using Gtamp.Shared.Diagnostics;
 using Gtamp.Shared.Entities;
 using Gtamp.Shared.Mods;
 using Gtamp.Shared.Net;
+using Gtamp.Shared.Security;
 using Gtamp.Shared.World;
 using Xunit;
 
@@ -260,15 +261,39 @@ namespace Gtamp.Tests
         }
 
         [Fact]
-        public void UnimplementedSdkMembersStillFailLoudlyWithARoadmapPointer()
+        public void EverySdkRegistrationNameFromTheSpecIsNowImplemented()
         {
+            // This test used to assert that RegisterCustomWeapon threw with a phase
+            // number. It was the last of the fifteen names in master prompt section 21
+            // that did not exist, so its replacement asserts the opposite: none of them
+            // throws NotSupportedException any more.
             ModSdk sdk = CreateSdk(EntityRegistry.CreateDefault(), out _);
 
-            NotSupportedException weapon = Assert.Throws<NotSupportedException>(
-                () => sdk.RegisterCustomWeapon("w", new object()));
+            sdk.RegisterCustomWeapon("WEAPON_MYMOD_RAILGUN", null!);
 
-            Assert.Contains("Phase 9", weapon.Message);
-            Assert.Contains("ROADMAP.md", weapon.Message);
+            Assert.Contains("WEAPON_MYMOD_RAILGUN", sdk.DescribeWeapon(GameHash.Joaat("WEAPON_MYMOD_RAILGUN")));
+        }
+
+        [Fact]
+        public void ANamedWeaponIsReadableInsteadOfABareHash()
+        {
+            ModSdk sdk = CreateSdk(EntityRegistry.CreateDefault(), out _);
+            uint hash = GameHash.Joaat("WEAPON_MYMOD_RAILGUN");
+
+            // Before registration the console has nothing but the hash to show.
+            Assert.Equal($"0x{hash:X8}", sdk.DescribeWeapon(hash));
+
+            sdk.RegisterCustomWeapon("WEAPON_MYMOD_RAILGUN", new WeaponProfile("WEAPON_MYMOD_RAILGUN", 400, 900f));
+
+            Assert.Equal($"WEAPON_MYMOD_RAILGUN (0x{hash:X8})", sdk.DescribeWeapon(hash));
+            Assert.Equal("none", sdk.DescribeWeapon(0));
+        }
+
+        [Fact]
+        public void RegisteringAWeaponWithNoNameIsRefused()
+        {
+            ModSdk sdk = CreateSdk(EntityRegistry.CreateDefault(), out _);
+            Assert.Throws<ArgumentException>(() => sdk.RegisterCustomWeapon("  ", null!));
         }
 
         [Fact]

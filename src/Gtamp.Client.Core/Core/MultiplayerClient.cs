@@ -59,8 +59,9 @@ namespace Gtamp.Client.Core
             Registry = registry ?? EntityRegistry.CreateDefault();
             ReplicatedWorld = new ReplicatedWorld(Registry);
             Connection = new ClientConnection(_transport, Log);
-            RemotePlayers = new RemotePlayerManager(Bridge, Log);
-            RemoteEntities = new RemoteEntityManager(Bridge, Log);
+            MissingContent = new MissingContentTracker(Log);
+            RemotePlayers = new RemotePlayerManager(Bridge, Log, MissingContent);
+            RemoteEntities = new RemoteEntityManager(Bridge, Log, MissingContent);
             OwnedEntities = new OwnedEntityStreamer(Bridge, Registry, Log)
             {
                 Send = (type, payload, delivery) => Connection.Peer?.Send(type, payload, delivery),
@@ -128,6 +129,13 @@ namespace Gtamp.Client.Core
         public AdapterHost Adapters { get; }
 
         public ModEnvironment Environment { get; private set; } = new ModEnvironment();
+
+        /// <summary>
+        /// Model hashes this client could not resolve. Reported by /diagnostics,
+        /// /mods and the bug report, because the alternative is an entity that never
+        /// appears with nothing anywhere saying why.
+        /// </summary>
+        public MissingContentTracker MissingContent { get; }
 
         /// <summary>Entity id of the local player, assigned by the server at accept time.</summary>
         public EntityId LocalEntityId { get; private set; } = EntityId.None;

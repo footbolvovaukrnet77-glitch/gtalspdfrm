@@ -142,10 +142,26 @@ The two ⛔ rows are limits of what RPH and LSPDFR expose, not deferred work. Th
 are described in the integration documents rather than promised for a later
 phase.
 
-## Phase 9 — Other mods
+## Phase 9 — Other mods ✅ complete
 
-ScriptHookV/ASI observation, .NET script adapters, custom vehicles, peds, weapons,
-maps, MLO and DLC content negotiation.
+| Item | State |
+| --- | --- |
+| Custom weapons, authoritative half | ✅ `IServerModSdk.RegisterWeapon` and a `customWeapons` list in `server.json`, so an operator needs no C# |
+| Custom weapons, client half | ✅ `RegisterCustomWeapon` names a weapon locally. It grants no envelope and cannot — a client that could set its own damage ceiling would set any ceiling |
+| Content negotiation for mod models | ✅ `GetModelAvailability` separates "streaming" from "not installed"; `MissingContentTracker` records each unresolvable hash once |
+| Reporting it where a player looks | ✅ `/diagnostics`, `/mods` and the bug report |
+| ASI, script and LSPDFR-plugin detection | ✅ since Phase 1; the manifest comparison at join reports Missing, WrongVersion and HashMismatch |
+| Shipping the assets a client is missing | ⛔ **not possible** — the framework has no game files and neither does the server. It can name what is missing, not supply it |
+
+Two bugs surfaced while building this, both user-visible and both fixed:
+
+- **A remote player's ped was never rebuilt when their model changed.** GTA V
+  cannot change a ped's model in place, and the ped is created from the first
+  snapshot while the model arrives in the first state update — which lands after
+  it. So every remote player wore a default body for the whole session.
+  `AppearanceReplicationTests.APedIsRebuiltWhenThePlayersModelChanges`.
+- **An unresolvable model was retried every frame in silence.** Sixty attempts a
+  second, no log line, no diagnostic, and an entity that never appeared.
 
 ## Phase 10 — Security
 
@@ -170,9 +186,13 @@ Things that could have been faked and were not:
 
 - **Visual verification of ped locomotion.** The controller is tested; how it
   looks in the game is not, and cannot be from here.
-- **`RegisterRPC`, `RegisterMission`, `RegisterCustomWeapon`.** These throw with a
-  phase number rather than no-op'ing. A registration that appears to work and
-  never fires is worse than a loud failure.
+- **`RegisterRPC`, `RegisterMission`, `RegisterCustomWeapon`.** Until they were
+  built they threw with a phase number rather than no-op'ing. A registration that
+  appears to work and never fires is worse than a loud failure. All fifteen names
+  from master prompt section 21 are implemented as of Phase 9.
+- **Client-declared weapon envelopes.** `RegisterCustomWeapon` names a weapon and
+  stops there. Letting the client supply the damage ceiling its own hits are
+  checked against would have looked like a richer API and been worth nothing.
 - **A generic "replicate any RPH plugin" feature.** RPH exposes no way to
   enumerate or drive another plugin's objects, so there is nothing to read
   generically. The bridge publishes the plugin list and LSPDFR's documented API;

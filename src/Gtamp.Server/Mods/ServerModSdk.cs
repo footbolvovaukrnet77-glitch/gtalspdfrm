@@ -6,6 +6,7 @@ using Gtamp.Shared.Diagnostics;
 using Gtamp.Shared.Entities;
 using Gtamp.Shared.Net;
 using Gtamp.Shared.Protocol;
+using Gtamp.Shared.Security;
 
 namespace Gtamp.Server.Mods
 {
@@ -36,6 +37,23 @@ namespace Gtamp.Server.Mods
 
         /// <summary>Registers a procedure clients can call and get an answer from.</summary>
         void RegisterRpc(string name, Func<PlayerSession, byte[], byte[]> handler);
+
+        /// <summary>
+        /// Registers the validation envelope for a weapon this build does not know.
+        /// <para>
+        /// This is the authoritative half of <c>IModSdk.RegisterCustomWeapon</c>, and
+        /// the only half that can exist. Combat is arbitrated on the server, so a
+        /// client that could declare its own weapon's damage ceiling could declare
+        /// any ceiling it liked. A weapons mod that wants correct arbitration needs a
+        /// server-side registration or an entry in <c>customWeapons</c>.
+        /// </para>
+        /// <para>
+        /// Without one the weapon still works: an unprofiled weapon falls back to the
+        /// default ceiling and range, which is permissive rather than blocking. What
+        /// it loses is accuracy in both directions.
+        /// </para>
+        /// </summary>
+        void RegisterWeapon(WeaponProfile profile);
 
         /// <summary>Registers a handler for a mod event sent by a client.</summary>
         void RegisterNetworkEvent(string eventName, Action<PlayerSession, byte[]> handler);
@@ -77,12 +95,14 @@ namespace Gtamp.Server.Mods
             Gtamp.Server.World.ServerWorld world,
             ActivityManager activities,
             RpcDispatcher<PlayerSession> rpc,
+            CombatSettings combat,
             LogBus log)
         {
             _registry = registry ?? throw new ArgumentNullException(nameof(registry));
             World = world ?? throw new ArgumentNullException(nameof(world));
             Activities = activities ?? throw new ArgumentNullException(nameof(activities));
             Rpc = rpc ?? throw new ArgumentNullException(nameof(rpc));
+            Combat = combat ?? throw new ArgumentNullException(nameof(combat));
             Log = log ?? throw new ArgumentNullException(nameof(log));
         }
 
@@ -93,6 +113,9 @@ namespace Gtamp.Server.Mods
         public ActivityManager Activities { get; }
 
         public RpcDispatcher<PlayerSession> Rpc { get; }
+
+        /// <summary>The weapon envelopes damage claims are arbitrated against.</summary>
+        public CombatSettings Combat { get; }
 
         /// <summary>Set by the server so the SDK can reach connected players.</summary>
         public Func<uint, PlayerSession?>? ResolveSession { get; set; }
@@ -128,6 +151,21 @@ namespace Gtamp.Server.Mods
         }
 
         public void RegisterActivity(ActivityDefinition definition) => Activities.Register(definition);
+
+        public void RegisterWeapon(WeaponProfile profile)
+        {
+            if (profile == null)
+            {
+                throw new ArgumentNullException(nameof(profile));
+            }
+
+            Combat.Add(profile);
+            Log.Info(
+                LogCategory.Mod,
+                $"Registered weapon '{profile.Name}' (0x{profile.Hash:X8}): " +
+                $"at most {profile.MaxDamagePerHit} damage within {profile.MaxRange:0} m" +
+                (profile.IsMelee ? ", melee." : "."));
+        }
 
         public void RegisterRpc(string name, Func<PlayerSession, byte[], byte[]> handler) =>
             Rpc.RegisterHandler(name, handler);

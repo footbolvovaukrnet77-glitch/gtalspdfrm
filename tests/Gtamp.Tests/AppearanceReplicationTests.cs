@@ -1,3 +1,4 @@
+using System.Linq;
 using Gtamp.Shared.Entities;
 using Xunit;
 
@@ -11,6 +12,43 @@ namespace Gtamp.Tests
             client.Client.Connect("127.0.0.1", TestHarness.ServerEndPoint.Port);
             Assert.True(harness.AdvanceUntil(() => client.PlayerCount >= 1), $"{name} never connected");
             return client;
+        }
+
+        [Fact]
+        public void APedIsRebuiltWhenThePlayersModelChanges()
+        {
+            // GTA V cannot change a ped's model in place, so a stale model means a
+            // destroy and rebuild. Without it every remote player keeps whatever body
+            // they were first drawn with — and that is almost never the right one,
+            // because the ped is created from the first snapshot while the model
+            // arrives in the first state update, which lands after it.
+            using var harness = new TestHarness();
+
+            TestClient alice = Connected(harness, "alice");
+            TestClient bob = Connected(harness, "bob");
+            Assert.True(harness.AdvanceUntil(() => bob.PlayerCount == 2));
+            Assert.True(
+                harness.AdvanceUntil(() => bob.Bridge.Peds.Count > 0, timeoutSeconds: 5),
+                "bob never created a ped for alice");
+
+            int firstHandle = bob.Client.RemotePlayers.Players.Single().PedHandle;
+            Assert.NotEqual(0, firstHandle);
+
+            const uint FranklinModel = 0x9B810FA2;
+            alice.Bridge.Sample.ModelHash = FranklinModel;
+
+            Assert.True(
+                harness.AdvanceUntil(
+                    () => bob.Client.RemotePlayers.Players.Single().PedHandle != firstHandle,
+                    timeoutSeconds: 5),
+                "bob kept the old ped after alice's model changed");
+
+            Assert.Equal(FranklinModel, bob.Client.RemotePlayers.Players.Single().ModelHash);
+
+            // And it settles: an unchanged model must not rebuild the ped every frame.
+            int rebuiltHandle = bob.Client.RemotePlayers.Players.Single().PedHandle;
+            harness.Advance(1.0);
+            Assert.Equal(rebuiltHandle, bob.Client.RemotePlayers.Players.Single().PedHandle);
         }
 
         [Fact]

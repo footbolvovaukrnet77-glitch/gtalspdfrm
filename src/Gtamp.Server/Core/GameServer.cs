@@ -68,12 +68,26 @@ namespace Gtamp.Server.Core
             Combat.NpcDamage = config.NpcDamage;
             Combat.VehicleDamage = config.VehicleDamage;
             Combat.EnforceWeaponMatch = config.AntiCheat == AntiCheatLevel.Strict;
+
+            foreach (CustomWeaponSetting weapon in config.CustomWeapons)
+            {
+                if (!weapon.IsValid)
+                {
+                    Log.Warning(
+                        LogCategory.Server,
+                        $"Ignoring a customWeapons entry: name '{weapon.Name}', damage {weapon.MaxDamagePerHit}, " +
+                        $"range {weapon.MaxRange}. A weapon needs a name, a positive damage ceiling and a positive range.");
+                    continue;
+                }
+
+                Combat.Add(weapon.ToProfile());
+            }
             Entities = new NetworkedEntityManager(World, config, Log);
             Entities.OwnershipGranted += OnOwnershipGranted;
 
             Activities = new ActivityManager(World, Log);
             Rpc = new RpcDispatcher<PlayerSession>(Log);
-            Mods = new ServerModSdk(Registry, World, Activities, Rpc, Log)
+            Mods = new ServerModSdk(Registry, World, Activities, Rpc, Combat, Log)
             {
                 SendToSession = (session, type, payload, reliable) => session.Peer.Send(
                     type, payload, reliable ? DeliveryMethod.ReliableOrdered : DeliveryMethod.Unreliable),

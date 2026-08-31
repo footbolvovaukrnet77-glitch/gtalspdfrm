@@ -154,17 +154,30 @@ attribution — has to be rebuilt. That is the bulk of Phases 2 to 4.
   geometry. The framework can detect the mismatch and warn; it cannot fix it
   without server-side mod distribution, which is explicitly out of scope for v1.
 
-### 4.4 Mod content — *Phase 9*
+### 4.4 Mod content — *implemented in Phase 9*
 
 - **What is limited:** a mod-added vehicle, ped or weapon that one client has and
   another does not.
-- **Why:** models are resolved by hash against locally installed assets.
-- **Chosen:** hashes travel on the wire, never indices. A client that cannot
-  resolve a hash reports it instead of substituting silently — see
-  `ShvGameBridge.SetWeather`, which leaves the local weather alone rather than
-  forcing a wrong value when it does not recognise a weather hash.
-- **Cost:** a missing mod produces a visible gap for that one client, not a
-  desynchronised world for everyone.
+- **Why:** models are resolved by hash against locally installed assets. There is
+  no way to stream an asset the player does not have, and no way for the server to
+  supply one — it has no game files either.
+- **Chosen:** hashes travel on the wire, never indices, and a hash the client
+  cannot resolve is **reported rather than papered over**.
+  `IGameBridge.GetModelAvailability` separates "still streaming" from "not
+  installed", because collapsing them is what turns a missing mod into an entity
+  that is retried sixty times a second and never appears.
+  `MissingContentTracker` records each unresolvable hash once, counts the entities
+  that wanted it, and surfaces it through `/diagnostics`, `/mods` and the bug
+  report.
+- **Substitution policy, and why it differs by type:** a vehicle or object is not
+  substituted. Showing a different car than the one somebody is driving corrupts
+  every judgement a viewer makes about it, and unlike an absence it looks correct.
+  A player *is* substituted with a default body, because an invisible teammate is
+  worse than one wearing the wrong clothes — and the record says `substituted` so
+  the fallback is not mistaken for success.
+- **Cost:** a missing mod produces a visible, explained gap for that one client,
+  not a desynchronised world for everyone. What it does not do is fix anything: the
+  player still has to install the mod.
 
 ### 4.5 Anti-cheat — *Phase 10*
 

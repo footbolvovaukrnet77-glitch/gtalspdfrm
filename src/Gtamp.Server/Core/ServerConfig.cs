@@ -117,6 +117,24 @@ namespace Gtamp.Server.Core
         /// </summary>
         public List<string> RelayedModEvents { get; set; } = new List<string> { "lspdfr.event", "rph.event" };
 
+        /// <summary>
+        /// Weapon validation envelopes for weapons this build does not know about —
+        /// a weapons mod, or a DLC weapon added after this build shipped.
+        /// <para>
+        /// A weapon with no profile falls back to <c>DefaultMaxDamagePerHit</c> and
+        /// <c>DefaultMaxRange</c>, which is deliberately permissive so an unknown
+        /// weapon still works. Listing it here tightens that: a modded taser stops
+        /// being allowed to claim 250 damage, and a modded long-range rifle stops
+        /// having its legitimate hits rejected at 400 m.
+        /// </para>
+        /// <para>
+        /// These are ceilings the server enforces, never damage values — the game
+        /// decides what a hit actually does. An operator sets them; a client cannot,
+        /// for the obvious reason.
+        /// </para>
+        /// </summary>
+        public List<CustomWeaponSetting> CustomWeapons { get; set; } = new List<CustomWeaponSetting>();
+
         public string LogDirectory { get; set; } = "logs";
 
         public bool VerboseNetworkLogging { get; set; }
@@ -230,4 +248,26 @@ namespace Gtamp.Server.Core
                    && minutes is >= 0 and < 60;
         }
     }
+    /// <summary>
+    /// One operator-defined weapon envelope from <c>server.json</c>. Kept as a plain
+    /// settable type rather than reusing <c>WeaponProfile</c>, whose constructor
+    /// computes the hash and whose properties are read-only — a shape the JSON
+    /// deserialiser cannot fill.
+    /// </summary>
+    public sealed class CustomWeaponSetting
+    {
+        /// <summary>The game's weapon name, e.g. <c>WEAPON_MYMOD_RAILGUN</c>. Hashed with joaat.</summary>
+        public string Name { get; set; } = string.Empty;
+
+        public int MaxDamagePerHit { get; set; } = 100;
+
+        public float MaxRange { get; set; } = 200f;
+
+        public bool Melee { get; set; }
+
+        public bool IsValid => !string.IsNullOrWhiteSpace(Name) && MaxDamagePerHit > 0 && MaxRange > 0f;
+
+        public WeaponProfile ToProfile() => new WeaponProfile(Name.Trim(), MaxDamagePerHit, MaxRange, Melee);
+    }
+
 }

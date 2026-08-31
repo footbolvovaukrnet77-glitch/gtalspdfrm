@@ -53,6 +53,23 @@ namespace Gtamp.Client.Diagnostics
             }
 
             builder.AppendLine();
+            builder.AppendLine("MISSING CONTENT:");
+            if (client.MissingContent.IsEmpty)
+            {
+                builder.AppendLine("  (none — every replicated model resolved)");
+            }
+            else
+            {
+                // Near the top of the report on purpose. "The car is invisible" and
+                // "the model is not installed" look like two different bugs until
+                // these lines are in front of whoever is reading it.
+                foreach (string line in client.MissingContent.Describe())
+                {
+                    builder.AppendLine("  " + line);
+                }
+            }
+
+            builder.AppendLine();
             builder.AppendLine("DESCRIPTION:");
             builder.AppendLine("  " + (string.IsNullOrWhiteSpace(description) ? "(not provided)" : description.Trim()));
             builder.AppendLine();

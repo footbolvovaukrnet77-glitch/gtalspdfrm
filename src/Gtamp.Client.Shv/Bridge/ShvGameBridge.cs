@@ -56,6 +56,49 @@ namespace Gtamp.Client.Shv.Bridge
 
         public string GameVersion => Game.Version.ToString();
 
+        /// <summary>
+        /// Asks the streamer whether a hash names a model this installation has.
+        /// <para>
+        /// <c>Model.IsValid</c> answers whether the hash is in the game's model index
+        /// at all — which is exactly the question "is the mod that adds this car
+        /// installed?". A valid model that is not yet loaded is requested and will
+        /// resolve on a later frame, so the two cases are reported separately: one is
+        /// a missing asset, the other is normal streaming.
+        /// </para>
+        /// </summary>
+        public ModelAvailability GetModelAvailability(uint modelHash)
+        {
+            if (modelHash == 0)
+            {
+                return ModelAvailability.Unavailable;
+            }
+
+            try
+            {
+                var model = new Model(unchecked((int)modelHash));
+                if (!model.IsValid)
+                {
+                    return ModelAvailability.Unavailable;
+                }
+
+                if (model.IsLoaded)
+                {
+                    return ModelAvailability.Available;
+                }
+
+                model.Request();
+                return ModelAvailability.Loading;
+            }
+            catch (Exception exception)
+            {
+                // A throwing streamer query is not a reason to stop replicating.
+                // Treated as "loading" so the caller retries rather than recording a
+                // missing mod that may not be missing.
+                _log.Debug(LogCategory.Entity, $"Model query for 0x{modelHash:X8} threw: {exception.Message}");
+                return ModelAvailability.Loading;
+            }
+        }
+
         public bool IsPlayerReady
         {
             get

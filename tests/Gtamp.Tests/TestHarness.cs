@@ -50,6 +50,25 @@ namespace Gtamp.Tests
 
         public int ClockHours { get; private set; } = -1;
 
+        /// <summary>
+        /// Model hashes this fake client does not have, so a test can stage the
+        /// "your friend is driving a car you did not install" case.
+        /// </summary>
+        public HashSet<uint> UnavailableModels { get; } = new HashSet<uint>();
+
+        /// <summary>Hashes reported as still streaming in, to separate that from a missing asset.</summary>
+        public HashSet<uint> LoadingModels { get; } = new HashSet<uint>();
+
+        public ModelAvailability GetModelAvailability(uint modelHash)
+        {
+            if (UnavailableModels.Contains(modelHash))
+            {
+                return ModelAvailability.Unavailable;
+            }
+
+            return LoadingModels.Contains(modelHash) ? ModelAvailability.Loading : ModelAvailability.Available;
+        }
+
         public LocalPlayerSample SampleLocalPlayer() => Sample;
 
         public void ApplyLocalCorrection(NetVector3 position, float heading, int health, int armor)

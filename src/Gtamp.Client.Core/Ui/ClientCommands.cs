@@ -318,6 +318,15 @@ namespace Gtamp.Client.Ui
             builder.AppendLine($"RAGE Plugin Hook{(environment.RagePluginHook ? " " + environment.RagePluginHookVersion : " no")}");
             builder.AppendLine($"LSPDFR          {(environment.Lspdfr ? environment.LspdfrVersion : "no")}");
             builder.AppendLine($"adapters        {client.Adapters.Active.Count} active, {client.Adapters.Skipped.Count} inactive, {client.Adapters.Failed.Count} failed");
+            if (!client.MissingContent.IsEmpty)
+            {
+                builder.AppendLine($"missing content  {client.MissingContent.Count} model(s) this client cannot resolve:");
+                foreach (string line in client.MissingContent.Describe())
+                {
+                    builder.AppendLine("  " + line);
+                }
+            }
+
             builder.AppendLine("detected mods:");
             foreach (ModDescriptor mod in environment.Mods)
             {

@@ -76,6 +76,16 @@ namespace Gtamp.Client.Diagnostics
                 $"{environment.Mods.Count} detected " +
                 $"({environment.AsiPlugins.Count} ASI, {environment.Scripts.Count} scripts, {environment.LspdfrPlugins.Count} LSPDFR plugins)"));
 
+            // Reported as a warning, never a pass with a count: a player whose friend's
+            // car is invisible needs this line to be the one that stands out.
+            checks.Add(client.MissingContent.IsEmpty
+                ? new DiagnosticCheck("Mod content", CheckStatus.Pass, "every replicated model resolved")
+                : new DiagnosticCheck(
+                    "Mod content",
+                    CheckStatus.Warn,
+                    $"{client.MissingContent.Count} model(s) not installed here: " +
+                    string.Join(", ", new List<string>(client.MissingContent.Describe()).ToArray())));
+
             checks.Add(client.Adapters.Failed.Count == 0
                 ? new DiagnosticCheck("Adapters", CheckStatus.Pass, $"{client.Adapters.Active.Count} active, {client.Adapters.Skipped.Count} inactive")
                 : new DiagnosticCheck("Adapters", CheckStatus.Warn, $"{client.Adapters.Failed.Count} failed to load: {string.Join(", ", new List<string>(client.Adapters.Failed).ToArray())}"));

@@ -11,9 +11,8 @@ patching the framework.
 ## The section-21 mapping
 
 The master prompt lists fifteen `Register*` names. Here is what each one actually
-is today. Nothing in this table is a stub that silently does nothing: the three
-that are not implemented throw `NotSupportedException` naming the phase they land
-in.
+is today. As of Phase 9 all of them are implemented; nothing in this table is a
+stub that silently does nothing, and nothing throws a "not yet" any more.
 
 | Prompt name | Status | Notes |
 | --- | --- | --- |
@@ -30,12 +29,13 @@ in.
 | `RegisterInterior()` | **Implemented** | Names an interior id so it survives a restart |
 | `RegisterRPC()` | **Implemented** | Registers a procedure the other side can call and get an answer from |
 | `RegisterMission()` | **Implemented** | Registers the local half of an activity: blips, markers, UI |
-| `RegisterCustomWeapon()` | **Phase 9** | Throws; needs the wider weapon work |
+| `RegisterCustomWeapon()` | **Implemented** | Names a weapon locally; the envelope it is arbitrated against is a server-side registration — see [Custom weapons](#custom-weapons) |
 | `RegisterDeserializer()` | **Not separate** | A serializer declares both directions |
 
-Throwing rather than no-op'ing is deliberate. A registration that appears to
-succeed and then never fires is far harder to debug than a failure at load time
-that names the reason.
+Where a member was not yet implemented it threw with a phase number rather than
+no-op'ing, and that was deliberate: a registration that appears to succeed and
+then never fires is far harder to debug than a failure at load time naming the
+reason. The same rule still governs anything added later.
 
 ## Defining an entity
 
@@ -218,6 +218,66 @@ the value and what stops two mods quietly fighting over the same key.
 
 State written this way is replicated with the entity's next delta and persisted
 with it, including on a server that has never heard of the mod.
+
+## Custom weapons
+
+Combat is arbitrated on the server, so a weapon has two halves and only one of
+them is authoritative.
+
+**Server side — the half that decides.**
+
+```csharp
+serverSdk.RegisterWeapon(new WeaponProfile("WEAPON_MYMOD_RAILGUN", maxDamagePerHit: 400, maxRange: 1000f));
+```
+
+or, for an operator with no server-side mod, in `server.json`:
+
+```json
+"customWeapons": [
+  { "name": "WEAPON_MYMOD_RAILGUN", "maxDamagePerHit": 400, "maxRange": 1000, "melee": false }
+]
+```
+
+These are **validation ceilings, not damage values**. The game decides what a hit
+actually does; the profile bounds what a client is allowed to claim.
+
+**Client side — the half that names it.**
+
+```csharp
+sdk.RegisterCustomWeapon("WEAPON_MYMOD_RAILGUN", new WeaponProfile("WEAPON_MYMOD_RAILGUN", 400, 1000f));
+```
+
+This maps the joaat hash back to the name so `/entity`, the console and bug
+reports read `WEAPON_MYMOD_RAILGUN` instead of `0x3F2A91C4`. It grants no
+envelope, and it cannot: a client that could declare its own weapon's damage
+ceiling could declare any ceiling it liked.
+`ContentNegotiationTests.AClientCannotWidenTheEnvelopeItsOwnHitsAreCheckedAgainst`
+pins that.
+
+**Registering neither is not fatal.** An unprofiled weapon falls back to
+`defaultMaxDamagePerHit` (250) and `defaultMaxRange` (400 m), which is permissive
+rather than blocking — a modded weapon works out of the box. What it loses is
+accuracy in both directions: a modded taser is allowed to claim 250 damage, and a
+modded long-range rifle has its legitimate hits rejected past 400 m.
+
+## Mod content the other player does not have
+
+Models travel as hashes and resolve against locally installed assets, so a player
+without your vehicle mod has nothing to create. That case is reported rather than
+left silent:
+
+| Entity | What the other client does |
+| --- | --- |
+| Vehicle, object | Nothing is shown. A different car is worse than an absence, because it looks correct |
+| Player | A default body is used, and the record is marked `substituted` |
+
+Each unresolvable hash is recorded once — creation is retried every frame — and
+appears in `/diagnostics`, `/mods` and the bug report. See
+[ENGINE_ANALYSIS.md](ENGINE_ANALYSIS.md) §4.4.
+
+Nothing here installs anything. The framework cannot ship assets and does not
+pretend to; what it does is make "your friend's car is invisible" a line of text
+instead of a mystery.
 
 ## Mod requirement levels
 

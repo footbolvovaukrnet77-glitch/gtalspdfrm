@@ -2,11 +2,13 @@ using System;
 using System.Collections.Generic;
 using Gtamp.Client.Missions;
 using Gtamp.Client.Mods;
+using Gtamp.Shared.Core;
 using Gtamp.Shared.Diagnostics;
 using Gtamp.Shared.Entities;
 using Gtamp.Shared.Mods;
 using Gtamp.Shared.Net;
 using Gtamp.Shared.Protocol;
+using Gtamp.Shared.Security;
 
 namespace Gtamp.Client.Sdk
 {
@@ -80,6 +82,25 @@ namespace Gtamp.Client.Sdk
         /// </summary>
         void RegisterMission(string definitionId, IActivityHandler handler);
 
+        /// <summary>
+        /// Registers a weapon this build does not know about, locally.
+        /// <para>
+        /// <b>What this does:</b> maps the weapon's joaat hash back to its name, so
+        /// the console, the entity inspector and bug reports say
+        /// <c>WEAPON_MYMOD_RAILGUN</c> instead of <c>0x3F2A91C4</c>. Pass a
+        /// <see cref="WeaponProfile"/> as <paramref name="definition"/> to describe
+        /// its range and damage, or null to register the name alone.
+        /// </para>
+        /// <para>
+        /// <b>What this does not do, and cannot:</b> grant the weapon a damage or
+        /// range envelope. Combat is arbitrated on the server, and a client that
+        /// could declare its own weapon's ceiling could declare any ceiling it liked.
+        /// The authoritative registration is <c>IServerModSdk.RegisterWeapon</c>, or
+        /// a <c>customWeapons</c> entry in <c>server.json</c>. Registering here and
+        /// not there leaves the weapon working under the server's permissive default
+        /// envelope — see docs/MOD_SDK.md.
+        /// </para>
+        /// </summary>
         void RegisterCustomWeapon(string weaponId, object definition);
     }
 
@@ -93,6 +114,8 @@ namespace Gtamp.Client.Sdk
         private readonly Dictionary<string, uint> _dimensions = new Dictionary<string, uint>(StringComparer.OrdinalIgnoreCase);
         private readonly Dictionary<string, int> _interiors = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
         private readonly List<ModDescriptor> _mods = new List<ModDescriptor>();
+        private readonly Dictionary<uint, string> _customWeapons = new Dictionary<uint, string>();
+        private readonly Dictionary<uint, WeaponProfile> _localWeaponProfiles = new Dictionary<uint, WeaponProfile>();
 
         private byte _nextEntityTypeId = (byte)EntityType.ModDefinedFirst;
         private uint _nextDimension = 1;
@@ -324,10 +347,53 @@ namespace Gtamp.Client.Sdk
             Activities.RegisterHandler(definitionId, handler);
         }
 
-        public void RegisterCustomWeapon(string weaponId, object definition) => throw NotYet("RegisterCustomWeapon", 9);
+        public void RegisterCustomWeapon(string weaponId, object definition)
+        {
+            if (string.IsNullOrWhiteSpace(weaponId))
+            {
+                throw new ArgumentException("A weapon id must not be empty.", nameof(weaponId));
+            }
 
-        private static NotSupportedException NotYet(string member, int phase) => new NotSupportedException(
-            $"{member} is not implemented yet; it lands in Phase {phase}. " +
-            "See docs/ROADMAP.md. Use RegisterNetworkEvent for now.");
+            string name = weaponId.Trim();
+            uint hash = GameHash.Joaat(name);
+
+            _customWeapons[hash] = name;
+
+            if (definition is WeaponProfile profile)
+            {
+                _localWeaponProfiles[hash] = profile;
+                Log.Info(
+                    LogCategory.Mod,
+                    $"Registered weapon '{name}' (0x{hash:X8}) locally: {profile.MaxDamagePerHit} damage " +
+                    $"within {profile.MaxRange:0} m. The server arbitrates combat, so this describes the " +
+                    "weapon here — it does not set the envelope hits are validated against.");
+            }
+            else
+            {
+                Log.Info(LogCategory.Mod, $"Registered the name of weapon '{name}' (0x{hash:X8}).");
+            }
+        }
+
+        /// <summary>Names a weapon hash, falling back to the hash itself. Used by the console.</summary>
+        public string DescribeWeapon(uint weaponHash)
+        {
+            if (weaponHash == 0)
+            {
+                return "none";
+            }
+
+            return _customWeapons.TryGetValue(weaponHash, out string? name)
+                ? $"{name} (0x{weaponHash:X8})"
+                : $"0x{weaponHash:X8}";
+        }
+
+        /// <summary>Weapon hashes a mod has named on this client.</summary>
+        public IReadOnlyDictionary<uint, string> CustomWeapons => _customWeapons;
+
+        /// <summary>
+        /// Locally declared envelopes. Descriptive only — the server's table is the
+        /// one damage is validated against.
+        /// </summary>
+        public IReadOnlyDictionary<uint, WeaponProfile> LocalWeaponProfiles => _localWeaponProfiles;
     }
 }

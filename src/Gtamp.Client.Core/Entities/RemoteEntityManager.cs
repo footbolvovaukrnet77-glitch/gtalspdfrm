@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using Gtamp.Client.Core;
+using Gtamp.Client.Mods;
 using Gtamp.Shared.Diagnostics;
 using Gtamp.Shared.Entities;
 using Gtamp.Shared.World;
@@ -25,10 +26,13 @@ namespace Gtamp.Client.Entities
         private readonly Dictionary<EntityId, int> _appliedVehicleAppearance = new Dictionary<EntityId, int>();
         private readonly List<EntityId> _removalBuffer = new List<EntityId>();
 
-        public RemoteEntityManager(IGameBridge bridge, LogBus log)
+        private readonly MissingContentTracker _missingContent;
+
+        public RemoteEntityManager(IGameBridge bridge, LogBus log, MissingContentTracker missingContent)
         {
             _bridge = bridge ?? throw new ArgumentNullException(nameof(bridge));
             _log = log ?? throw new ArgumentNullException(nameof(log));
+            _missingContent = missingContent ?? throw new ArgumentNullException(nameof(missingContent));
         }
 
         /// <summary>Player id of this client, so entities it owns are left alone.</summary>
@@ -78,6 +82,14 @@ namespace Gtamp.Client.Entities
         {
             if (!_objects.TryGetValue(state.Id, out int handle) || !_bridge.IsRemoteObjectValid(handle))
             {
+                // An object has no sensible stand-in — a missing prop replaced by a
+                // different prop is worse than an absence, because it looks correct.
+                if (_bridge.GetModelAvailability(state.ModelHash) == ModelAvailability.Unavailable)
+                {
+                    _missingContent.Report(state.ModelHash, EntityType.Object, state.Id, substituted: false);
+                    return;
+                }
+
                 handle = _bridge.CreateRemoteObject(state.ModelHash, state.Position, state.Heading);
                 if (handle == 0)
                 {
@@ -138,6 +150,16 @@ namespace Gtamp.Client.Entities
 
                 if (vehicle.VehicleHandle == 0 || !_bridge.IsRemoteVehicleValid(vehicle.VehicleHandle))
                 {
+                    // No substitution for vehicles either: putting another player in a
+                    // different car than they are actually driving desynchronises every
+                    // judgement the viewer makes about it.
+                    if (_bridge.GetModelAvailability(vehicle.ModelHash) == ModelAvailability.Unavailable)
+                    {
+                        _missingContent.Report(
+                            vehicle.ModelHash, EntityType.Vehicle, vehicle.EntityId, substituted: false);
+                        continue;
+                    }
+
                     vehicle.VehicleHandle = _bridge.CreateRemoteVehicle(vehicle.ModelHash, frame.Position, frame.Heading);
                     if (vehicle.VehicleHandle == 0)
                     {

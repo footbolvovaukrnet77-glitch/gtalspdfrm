@@ -6,7 +6,7 @@ A server-authoritative multiplayer framework that turns single-player GTA V into
 shared world, with an entity system and mod SDK that third-party mods can extend
 without patching the framework.
 
-**Status: Phases 1 to 6 complete.** Two players share one world, movement replicates,
+**Status: phases 1 to 9 complete.** Two players share one world, movement replicates,
 and a player who disconnects and comes back receives the world as it is *now* —
 including their own character, across a server restart.
 
@@ -70,7 +70,14 @@ including their own character, across a server restart.
   LSPDFR. Callout *logic* is not shared, and cannot be; see
   [docs/LSPDFR_INTEGRATION.md](docs/LSPDFR_INTEGRATION.md).
 
-291 automated tests, all passing, covering everything except the ScriptHookVDotNet
+- **Mod content negotiation.** Models travel as hashes, so a player without your
+  vehicle mod has nothing to create. That is reported — once per hash, in
+  `/diagnostics`, `/mods` and the bug report — rather than left as an entity that
+  silently never appears. Custom weapons get a server-side validation envelope, an
+  operator-editable one in `server.json`, and a client-side name so the console
+  stops printing bare hashes.
+
+304 automated tests, all passing, covering everything except the ScriptHookVDotNet
 host layer and the two plugin-host bridges, which need a running game.
 
 ## What does not work yet
@@ -97,6 +104,9 @@ Stated plainly, because a framework that hides its gaps wastes your time:
   logic cannot be shared.** These are limits of what RPH and LSPDFR expose, not
   deferred work, and they are written down rather than promised:
   [RPH](docs/RPH_INTEGRATION.md), [LSPDFR](docs/LSPDFR_INTEGRATION.md).
+- **A missing mod is reported, not fixed.** The framework has no game files and
+  neither does the server, so it can tell you which model is missing and which
+  entity wanted it; installing it is still yours to do.
 - **The identity token is continuity, not authentication.** Phase 10.
 - **The protocol is plaintext.** Run trusted servers until Phase 12.
 
