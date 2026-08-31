@@ -122,6 +122,70 @@ Death is arbitrated the same way: while the server considers a player dead their
 reported health is ignored outright, so a trainer's heal key cannot cut the
 respawn timer short.
 
+## Health authority
+
+Server-arbitrated damage needs its own, narrower hold.
+
+When the server resolves a hit, the victim's client is still reporting the health
+it had before. Accepting that undoes the damage — the shot lands and then
+un-lands, once per snapshot, for as long as the firefight lasts. A full authority
+hold would fix it and would also freeze the victim's movement for a round trip
+every time they were hit, which is worse than the bug.
+
+So health and armour alone are held until the victim's client acknowledges the
+snapshot carrying the change. Position keeps flowing throughout.
+
+`DamageReplicationTests.SustainedDamageIsNotUndoneByTheVictimsOwnReports` fires
+four 30-point hits at a 200-health player over two seconds at 60 ms latency and
+asserts they end on 80.
+
+## Damage arbitration
+
+A hit arrives as a **claim**. The attacking client is the only party that knows it
+fired, because the server cannot raycast — it has no map.
+
+What the server does check:
+
+| Check | Behaviour |
+| --- | --- |
+| Target exists and is damageable | Rejected otherwise |
+| Attacker is alive, target is not already dead | Rejected otherwise |
+| Self-harm | Rejected |
+| PvP / NPC damage / vehicle damage rules | Rejected when the server has them off |
+| Range for the reported weapon | Rejected beyond it; melee is held to arm's length |
+| Damage ceiling for that weapon | **Clamped**, not rejected |
+| Weapon actually held | Rejected only at Strict |
+
+Two of those deserve their reasons stated.
+
+**Damage is clamped rather than rejected.** A legitimate headshot or explosive can
+exceed a weapon's base figure. More importantly, dropping an over-claimed hit
+entirely would let a cheat *deny* damage simply by claiming too much of it.
+
+**Weapon matching is off by default.** The shot and the attacker's last state
+update are two different packets. A player who switches weapons right after firing
+produces a mismatch legitimately, so enforcing it costs honest players hits. It
+belongs at Strict, where the operator has accepted that trade.
+
+**What is not checked: line of sight.** A client claiming a hit through a wall,
+within range and with the right weapon, is accepted. This is the same limitation
+as everywhere else in the framework — the server has no map geometry — and it is
+stated rather than implied.
+
+## Owned entities
+
+A client that owns a vehicle proposes its state; it does not decide it. Every
+update is decoded into a **fresh instance** and validated before it replaces the
+live entity: decoding straight into the entity and then rejecting would leave it
+half-written with attacker-chosen values, which is worse than the update the
+check was meant to stop.
+
+Checks: ownership, finite and in-bounds position, health within engine limits,
+occupant count, and the same replenishing movement budget used for players, with
+one speed limit covering every vehicle. Distinguishing a jet from a bicycle would
+need a model table the server does not have, and getting it wrong grounds honest
+pilots.
+
 ## Trust boundaries
 
 | Data | Trusted? |

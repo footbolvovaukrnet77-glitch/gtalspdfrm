@@ -1,3 +1,4 @@
+using Gtamp.Client.Entities;
 using Gtamp.Client.Players;
 using Gtamp.Shared.Core;
 using Gtamp.Shared.Entities;
@@ -51,6 +52,48 @@ namespace Gtamp.Client.Core
         void DestroyRemotePed(int handle);
 
         bool IsRemotePedValid(int handle);
+
+        // --- vehicles ------------------------------------------------------
+
+        /// <summary>Creates a vehicle representing a replicated one. Returns a handle, or 0 on failure.</summary>
+        int CreateRemoteVehicle(uint modelHash, NetVector3 position, float heading);
+
+        /// <summary>Drives one replicated vehicle for this frame.</summary>
+        void ApplyRemoteVehicle(int handle, in RemoteVehicleFrame frame);
+
+        /// <summary>Applies paint, livery, mods and plate. Called only when they change.</summary>
+        void ApplyRemoteVehicleAppearance(int handle, VehicleEntity state);
+
+        /// <summary>Reads a vehicle this client owns, so its state can be reported to the server.</summary>
+        bool TryReadVehicle(int handle, VehicleEntity into);
+
+        void DestroyRemoteVehicle(int handle);
+
+        bool IsRemoteVehicleValid(int handle);
+
+        /// <summary>
+        /// Handle of the vehicle the local player is currently in, or 0. This is how a
+        /// client notices it has something worth registering with the server.
+        /// </summary>
+        int GetLocalPlayerVehicleHandle();
+
+        /// <summary>Model hash of a local vehicle handle, or 0 when the handle is not valid.</summary>
+        uint GetVehicleModel(int handle);
+
+        /// <summary>Puts a ped into a seat of a replicated vehicle.</summary>
+        void SeatRemotePedInVehicle(int pedHandle, int vehicleHandle, sbyte seat);
+
+        // --- objects -------------------------------------------------------
+
+        int CreateRemoteObject(uint modelHash, NetVector3 position, float heading);
+
+        void ApplyRemoteObject(int handle, ObjectEntity state);
+
+        void DestroyRemoteObject(int handle);
+
+        bool IsRemoteObjectValid(int handle);
+
+        // --- world ---------------------------------------------------------
 
         void SetWeather(uint weatherHash, uint nextWeatherHash, float transition);
 

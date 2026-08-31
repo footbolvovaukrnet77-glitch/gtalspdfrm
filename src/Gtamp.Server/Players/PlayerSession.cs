@@ -91,6 +91,23 @@ namespace Gtamp.Server.Players
         /// <summary>Server time the hold gives up waiting, so lost packets cannot freeze a player forever.</summary>
         public double AuthorityHoldExpiry { get; set; }
 
+        /// <summary>
+        /// A narrower hold covering health and armour only.
+        /// <para>
+        /// When the server arbitrates a hit, the victim's client is still reporting the
+        /// health it had before. Accepting that undoes the damage the server just
+        /// applied — the shot lands and then un-lands, once per snapshot, for as long
+        /// as the firefight lasts. A full authority hold would fix it but would also
+        /// freeze the victim's movement for a round trip every time they were hit,
+        /// which is worse than the bug. So only health and armour are held.
+        /// </para>
+        /// </summary>
+        public bool PendingHealthHold { get; set; }
+
+        public uint HealthHoldSnapshot { get; set; }
+
+        public double HealthHoldExpiry { get; set; }
+
         /// <summary>Set once a disconnect has been decided, so the tick loop can reap the session.</summary>
         public bool PendingRemoval { get; set; }
 

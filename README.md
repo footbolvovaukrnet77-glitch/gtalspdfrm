@@ -4,7 +4,7 @@ A server-authoritative multiplayer framework that turns single-player GTA V into
 shared world, with an entity system and mod SDK that third-party mods can extend
 without patching the framework.
 
-**Status: Phases 1 and 2 complete.** Two players share one world, movement replicates,
+**Status: Phases 1 to 3 complete.** Two players share one world, movement replicates,
 and a player who disconnects and comes back receives the world as it is *now* —
 including their own character, across a server restart.
 
@@ -38,6 +38,9 @@ including their own character, across a server restart.
 - **Animated remote players.** Peds are driven through GTA V's task system at the
   right gait, with ragdoll handed to physics and corpses left where they fell.
 - **Clothing and props** replicated in three bytes when default.
+- **Vehicles, NPCs and objects** with server-assigned identities, client-driven
+  simulation and ownership that migrates when the owner leaves or drives away.
+- **Server-arbitrated combat** with per-weapon range and damage envelopes.
 - **Server-arbitrated death and respawn**, with an authority hold so a
   server-initiated move is not dragged back by the client's in-flight updates.
 - **SQLite persistence** that survives a real process restart.
@@ -51,7 +54,7 @@ including their own character, across a server restart.
   the adapters link against them; the adapters bind by reflection and report
   themselves inactive when the mod is absent.
 
-177 automated tests, all passing, covering everything except the ScriptHookVDotNet
+220 automated tests, all passing, covering everything except the ScriptHookVDotNet
 host layer, which needs a running game.
 
 ## What does not work yet
@@ -63,9 +66,11 @@ Stated plainly, because a framework that hides its gaps wastes your time:
   bridge drives the game's task system rather than writing coordinates. Whether
   it *looks* right in Los Santos has not been verified and cannot be from a build
   machine. Expect the thresholds to need tuning.
-- **No vehicles, peds or objects yet.** Player replication only. Their type ids
-  are reserved; the classes do not exist, because an empty `VehicleEntity` that
-  replicates nothing would look like support.
+- **Vehicles interpolate but do not predict.** A non-owned vehicle is replayed
+  behind the server clock rather than simulated forward, so it lags its owner's
+  view by the interpolation delay. Prediction and reconciliation are Phase 4.
+- **Vehicle body deformation is not replicated.** GTA V exposes deformation only
+  through natives that write into a vehicle, never read from one.
 - **RPH and LSPDFR state is not replicated.** The adapters detect, report and
   register their integration points and say so at warning level. The reason is a
   real one, and it is written down:

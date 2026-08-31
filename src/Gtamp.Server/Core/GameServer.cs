@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.Net;
+using Gtamp.Server.Entities;
 using Gtamp.Server.Persistence;
 using Gtamp.Server.Players;
 using Gtamp.Server.Replication;
@@ -58,6 +59,15 @@ namespace Gtamp.Server.Core
             Registry = registry ?? EntityRegistry.CreateDefault();
             World = new ServerWorld(Registry, Log);
             AntiCheat = new AntiCheatEngine(new AntiCheatSettings { Level = config.AntiCheat });
+            EntityValidator = new OwnedEntityValidator(AntiCheat.Settings);
+            Combat = CombatSettings.CreateDefault();
+            Combat.PlayerVersusPlayer = config.PlayerVersusPlayer;
+            Combat.FriendlyFire = config.FriendlyFire;
+            Combat.NpcDamage = config.NpcDamage;
+            Combat.VehicleDamage = config.VehicleDamage;
+            Combat.EnforceWeaponMatch = config.AntiCheat == AntiCheatLevel.Strict;
+            Entities = new NetworkedEntityManager(World, config, Log);
+            Entities.OwnershipGranted += OnOwnershipGranted;
             Manifest.SchemaHash = Registry.ComputeSchemaHash();
         }
 
@@ -72,6 +82,13 @@ namespace Gtamp.Server.Core
         public PlayerRegistry Players { get; } = new PlayerRegistry();
 
         public AntiCheatEngine AntiCheat { get; }
+
+        /// <summary>Validates state updates from the clients that own non-player entities.</summary>
+        public OwnedEntityValidator EntityValidator { get; }
+
+        public CombatSettings Combat { get; }
+
+        public NetworkedEntityManager Entities { get; }
 
         /// <summary>Mods the server itself declares. Compared against each client's manifest at join.</summary>
         public ModManifest Manifest { get; } = new ModManifest();
@@ -126,6 +143,7 @@ namespace Gtamp.Server.Core
             }
 
             UpdateDeaths();
+            Entities.UpdateOwnership(Players, now);
 
             if (now - _lastSnapshotTime >= Config.SnapshotIntervalSeconds)
             {
@@ -431,6 +449,42 @@ namespace Gtamp.Server.Core
                     break;
                 }
 
+                case NetMessageType.EntitySpawnRequest:
+                {
+                    EntitySpawnRequestMessage request = EntitySpawnRequestMessage.Deserialize(message.Payload);
+                    EntityEventMessage reply = Entities.HandleSpawnRequest(session, request, Players);
+                    session.Peer.Send(NetMessageType.EntityEvent, reply.Serialize(), DeliveryMethod.ReliableOrdered);
+
+                    if (reply.Kind == EntityEventKind.SpawnRejected)
+                    {
+                        Log.Warning(LogCategory.Entity, $"Refused a spawn from {session}: {reply.Detail}");
+                    }
+
+                    break;
+                }
+
+                case NetMessageType.OwnedEntityUpdate:
+                    Entities.HandleOwnedUpdate(
+                        session, OwnedEntityUpdateMessage.Deserialize(message.Payload), EntityValidator, _now);
+                    break;
+
+                case NetMessageType.EntityReleaseRequest:
+                {
+                    EntityEventMessage? reply = Entities.HandleRelease(
+                        session, EntityReleaseRequestMessage.Deserialize(message.Payload), Players);
+
+                    if (reply != null)
+                    {
+                        Broadcast(NetMessageType.EntityEvent, reply.Serialize(), DeliveryMethod.ReliableOrdered);
+                    }
+
+                    break;
+                }
+
+                case NetMessageType.DamageReport:
+                    HandleDamageReport(session, DamageReportMessage.Deserialize(message.Payload));
+                    break;
+
                 case NetMessageType.KeepAlive:
                     break;
 
@@ -525,8 +579,45 @@ namespace Gtamp.Server.Core
                 return;
             }
 
+            if (IsHealthHeld(session, update.AcknowledgedSnapshotId))
+            {
+                // Keep everything except the vitals the server has just decided.
+                entity.Flags = (update.Flags & ~PlayerFlags.Dead) | (entity.Flags & PlayerFlags.Dead);
+                return;
+            }
+
             entity.Health = update.Health;
             entity.Flags = update.Flags;
+        }
+
+        /// <summary>True while the client has not yet seen a health change the server made.</summary>
+        private bool IsHealthHeld(PlayerSession session, uint acknowledgedSnapshotId)
+        {
+            if (session.PendingHealthHold)
+            {
+                return true;
+            }
+
+            if (session.HealthHoldSnapshot == 0)
+            {
+                return false;
+            }
+
+            if (acknowledgedSnapshotId >= session.HealthHoldSnapshot || _now >= session.HealthHoldExpiry)
+            {
+                session.HealthHoldSnapshot = 0;
+                session.HealthHoldExpiry = 0;
+                return false;
+            }
+
+            return true;
+        }
+
+        /// <summary>Declares that the server has just changed a player's vitals.</summary>
+        private void HoldHealthAuthority(PlayerSession session)
+        {
+            session.PendingHealthHold = true;
+            session.HealthHoldSnapshot = 0;
         }
 
         /// <summary>Kills a player from the server side, e.g. an admin command.</summary>
@@ -545,6 +636,7 @@ namespace Gtamp.Server.Core
         private void Kill(PlayerSession session, PlayerEntity entity)
         {
             session.DiedAt = _now;
+            HoldHealthAuthority(session);
             entity.Health = 0;
             entity.SetFlag(PlayerFlags.Dead, true);
             entity.Velocity = NetVector3.Zero;
@@ -708,6 +800,76 @@ namespace Gtamp.Server.Core
             session.AuthorityHoldSnapshot = 0;
         }
 
+        /// <summary>
+        /// Resolves a hit one client claims to have landed.
+        /// <para>
+        /// The server cannot raycast — it has no map — so the shot itself is the
+        /// client's word. What the server can check is everything around it: that both
+        /// parties exist, that the attacker is alive, that the target is in range for
+        /// the weapon, that the damage is within what that weapon could do, and that
+        /// the server's own rules allow the hit at all.
+        /// </para>
+        /// </summary>
+        private void HandleDamageReport(PlayerSession session, DamageReportMessage report)
+        {
+            PlayerEntity? attacker = World.GetPlayer(session.EntityId);
+            if (attacker == null)
+            {
+                return;
+            }
+
+            World.TryGet(report.TargetId, out NetEntity target);
+
+            DamageResolution resolution = CombatArbiter.Resolve(
+                attacker, target, report.WeaponHash, report.Damage, Combat);
+
+            if (!resolution.Accepted)
+            {
+                Log.Debug(
+                    LogCategory.Security,
+                    $"{session} damage claim on {report.TargetId} refused: {resolution.Verdict} — {resolution.Detail}");
+
+                if (resolution.Verdict == DamageVerdict.RejectedOutOfRange
+                    || resolution.Verdict == DamageVerdict.RejectedWeaponNotHeld)
+                {
+                    session.Validation.Count(ViolationKind.DamageOutOfRange);
+                }
+
+                return;
+            }
+
+            if (resolution.Clamped)
+            {
+                Log.Warning(LogCategory.Security, $"{session}: {resolution.Detail}");
+                session.Validation.Count(ViolationKind.DamageOutOfRange);
+            }
+
+            CombatArbiter.Apply(target!, resolution);
+            World.Touch(target!);
+
+            if (target is PlayerEntity damaged
+                && Players.TryGetByPlayerId(damaged.PlayerId, out PlayerSession damagedSession))
+            {
+                // The victim's client still believes it is undamaged. Ignore its
+                // vitals until it has seen the hit, or it will report the damage away.
+                HoldHealthAuthority(damagedSession);
+            }
+
+            if (target is PlayerEntity victim && resolution.Fatal
+                && Players.TryGetByPlayerId(victim.PlayerId, out PlayerSession victimSession)
+                && !victimSession.IsDead)
+            {
+                Log.Info(LogCategory.Server, $"{victimSession.Name} was killed by {session.Name}.");
+                Kill(victimSession, victim);
+            }
+        }
+
+        private void OnOwnershipGranted(PlayerSession session, EntityId entityId)
+        {
+            var message = new EntityEventMessage { Kind = EntityEventKind.OwnershipGranted, EntityId = entityId };
+            session.Peer.Send(NetMessageType.EntityEvent, message.Serialize(), DeliveryMethod.ReliableOrdered);
+        }
+
         private void HandleViolations(PlayerSession session, ValidationOutcome outcome)
         {
             foreach (ViolationRecord violation in outcome.Violations)
@@ -769,6 +931,13 @@ namespace Gtamp.Server.Core
                     session.PendingAuthorityHold = false;
                     session.AuthorityHoldSnapshot = snapshotId;
                     session.AuthorityHoldExpiry = _now + AuthorityHoldTimeoutSeconds;
+                }
+
+                if (session.PendingHealthHold)
+                {
+                    session.PendingHealthHold = false;
+                    session.HealthHoldSnapshot = snapshotId;
+                    session.HealthHoldExpiry = _now + AuthorityHoldTimeoutSeconds;
                 }
 
                 SnapshotWriteResult result = SnapshotCodec.Write(
@@ -836,6 +1005,7 @@ namespace Gtamp.Server.Core
             }
 
             PersistPlayer(session);
+            Entities.ReleaseAllOwnedBy(session.PlayerId, Players);
 
             // The player's body leaves the world, but their saved state does not: a
             // reconnect restores it (master prompt section 25).

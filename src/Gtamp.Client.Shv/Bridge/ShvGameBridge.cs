@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using Gtamp.Client.Core;
+using Gtamp.Client.Entities;
 using Gtamp.Client.Players;
 using Gtamp.Shared.Core;
 using Gtamp.Shared.Diagnostics;
@@ -40,6 +41,7 @@ namespace Gtamp.Client.Shv.Bridge
         private const int AppearanceSampleIntervalMilliseconds = 1000;
 
         private readonly LogBus _log;
+        private readonly ShvVehicleBridge _vehicles;
         private readonly Dictionary<int, Ped> _remotePeds = new Dictionary<int, Ped>();
         private readonly Dictionary<int, PedDriveState> _driveState = new Dictionary<int, PedDriveState>();
         private readonly PedAppearance _localAppearance = new PedAppearance();
@@ -49,6 +51,7 @@ namespace Gtamp.Client.Shv.Bridge
         public ShvGameBridge(LogBus log)
         {
             _log = log ?? throw new ArgumentNullException(nameof(log));
+            _vehicles = new ShvVehicleBridge(_log);
         }
 
         public string GameVersion => Game.Version.ToString();
@@ -508,6 +511,40 @@ namespace Gtamp.Client.Shv.Bridge
             handle != 0 && _remotePeds.TryGetValue(handle, out Ped ped) && ped.Exists();
 
         // ------------------------------------------------------------------
+        // Vehicles and objects — delegated so this file stays about peds
+        // ------------------------------------------------------------------
+        public int CreateRemoteVehicle(uint modelHash, NetVector3 position, float heading) =>
+            _vehicles.CreateRemoteVehicle(modelHash, position, heading);
+
+        public void ApplyRemoteVehicle(int handle, in RemoteVehicleFrame frame) =>
+            _vehicles.ApplyRemoteVehicle(handle, in frame);
+
+        public void ApplyRemoteVehicleAppearance(int handle, VehicleEntity state) =>
+            _vehicles.ApplyRemoteVehicleAppearance(handle, state);
+
+        public bool TryReadVehicle(int handle, VehicleEntity into) => _vehicles.TryReadVehicle(handle, into);
+
+        public void DestroyRemoteVehicle(int handle) => _vehicles.DestroyRemoteVehicle(handle);
+
+        public bool IsRemoteVehicleValid(int handle) => _vehicles.IsRemoteVehicleValid(handle);
+
+        public int GetLocalPlayerVehicleHandle() => _vehicles.GetLocalPlayerVehicleHandle();
+
+        public uint GetVehicleModel(int handle) => _vehicles.GetVehicleModel(handle);
+
+        public void SeatRemotePedInVehicle(int pedHandle, int vehicleHandle, sbyte seat) =>
+            _vehicles.SeatRemotePedInVehicle(pedHandle, vehicleHandle, seat);
+
+        public int CreateRemoteObject(uint modelHash, NetVector3 position, float heading) =>
+            _vehicles.CreateRemoteObject(modelHash, position, heading);
+
+        public void ApplyRemoteObject(int handle, ObjectEntity state) => _vehicles.ApplyRemoteObject(handle, state);
+
+        public void DestroyRemoteObject(int handle) => _vehicles.DestroyRemoteObject(handle);
+
+        public bool IsRemoteObjectValid(int handle) => _vehicles.IsRemoteObjectValid(handle);
+
+        // ------------------------------------------------------------------
         // World
         // ------------------------------------------------------------------
         public void SetWeather(uint weatherHash, uint nextWeatherHash, float transition)
@@ -583,6 +620,7 @@ namespace Gtamp.Client.Shv.Bridge
 
             _remotePeds.Clear();
             _driveState.Clear();
+            _vehicles.CleanUp();
         }
 
         // ------------------------------------------------------------------

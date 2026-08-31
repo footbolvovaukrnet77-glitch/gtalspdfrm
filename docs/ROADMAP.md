@@ -48,22 +48,31 @@ Whether the resulting ped *looks* right in Los Santos cannot be tested here, and
 has not been. Expect the correction distance and re-task threshold to need tuning
 against the real game.
 
-## Phase 3 — World entities
+## Phase 3 — World entities ✅ complete
 
-| Item | Notes |
+| Item | State |
 | --- | --- |
-| `VehicleEntity` | Type id 2 reserved. The largest single field set in the project |
-| Ownership and migration | `OwnerId` exists; the migration policy does not |
-| `PedEntity` | Type id 3 reserved; requires suppressing ambient population |
-| `ObjectEntity` | Type id 4 reserved |
-| Weapons and combat | Server-arbitrated damage |
-| Physics correction | Client prediction with server reconciliation for vehicles |
+| `VehicleEntity` | ✅ 27 replicated fields: physics, drivetrain, health, doors, windows, tyres, paint, livery, plate, extras, neon, mods, occupants, trailer |
+| `PedEntity` | ✅ networked NPCs sharing the character field set with players |
+| `ObjectEntity` | ✅ props, including attachment to another entity |
+| Client-created entities | ✅ spawn request, server-assigned ids, correlated replies |
+| Owned-entity streaming | ✅ the owner reports through the entity's own serializer, so a mod type streams with no protocol change |
+| Ownership and migration | ✅ on disconnect, on distance, and back to the server when nobody is near |
+| Weapons and combat | ✅ server-arbitrated damage with per-weapon range and damage envelopes |
+| Physics correction | ⏸ vehicles interpolate; prediction and reconciliation are Phase 4 |
+
+**Not replicated, and why.** Body deformation and per-wheel suspension. GTA V
+exposes deformation only through natives that write into a vehicle, never read
+from one, so a faithful copy cannot be sampled at all. Body health plus the door,
+window and tyre states carry as much of it as the engine will give up.
 
 ## Phase 4 — Networking depth
 
 | Item | Notes |
 | --- | --- |
 | Client-side prediction for the local player | Today the local player is not predicted; it is simulated locally and corrected |
+| Vehicle prediction and reconciliation | Non-owned vehicles interpolate; they do not predict |
+| Ownership handover of an existing local entity | A client granted ownership of somebody else's vehicle has no local handle for it yet |
 | Animation and scenario replication | `AnimationHash` is on the wire and unused |
 | Per-entity baselines | Replaces the per-client view history; needed before entity counts reach the thousands |
 | Packet fragmentation | Today a single message must fit in one datagram |
@@ -133,5 +142,9 @@ Things that could have been faked and were not:
 - **RPH and LSPDFR state replication.** The adapters detect, report and register
   their integration points, and log at warning level that replication is not
   implemented.
-- **Vehicles, peds, objects.** Their type ids are reserved; the classes do not
-  exist. An empty `VehicleEntity` that replicates nothing would look like support.
+- **Vehicle deformation.** Not sampled, because the engine will not give it up —
+  stated rather than approximated with something that would look right and be
+  wrong.
+- **Line-of-sight checking on hits.** The server has no map, so a hit claimed
+  through a wall within range is accepted. Detecting it would need geometry the
+  server does not have.

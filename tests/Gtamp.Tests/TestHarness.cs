@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Net;
 using Gtamp.Client.Core;
+using Gtamp.Client.Entities;
 using Gtamp.Client.Players;
 using Gtamp.Client.Ui;
 using Gtamp.Server.Core;
@@ -105,6 +106,150 @@ namespace Gtamp.Tests
         public void ShowNotification(string text) => Notifications.Add(text);
 
         public void ShowSubtitle(string text, int durationMilliseconds) => Notifications.Add(text);
+
+        // --- vehicles and objects -----------------------------------------
+
+        /// <summary>Vehicles this fake game contains, keyed by handle.</summary>
+        public Dictionary<int, VehicleEntity> Vehicles { get; } = new Dictionary<int, VehicleEntity>();
+
+        /// <summary>The last frame applied to each replicated vehicle.</summary>
+        public Dictionary<int, RemoteVehicleFrame> VehicleFrames { get; } = new Dictionary<int, RemoteVehicleFrame>();
+
+        public Dictionary<int, ObjectEntity> Objects { get; } = new Dictionary<int, ObjectEntity>();
+
+        public Dictionary<int, int> VehicleAppearanceApplications { get; } = new Dictionary<int, int>();
+
+        /// <summary>Handle of the vehicle the local player is driving, or 0.</summary>
+        public int LocalVehicleHandle { get; set; }
+
+        /// <summary>Creates a vehicle the local player is driving, as if they had got into one.</summary>
+        public int PutLocalPlayerInVehicle(uint modelHash, NetVector3 position, float heading = 0f)
+        {
+            int handle = _nextHandle++;
+            Vehicles[handle] = new VehicleEntity(EntityId.None)
+            {
+                ModelHash = modelHash,
+                Position = position,
+                Heading = heading,
+                EngineHealth = 1000f,
+                BodyHealth = 1000f,
+                PetrolTankHealth = 1000f,
+                FuelLevel = 65f,
+            };
+
+            LocalVehicleHandle = handle;
+            return handle;
+        }
+
+        public int CreateRemoteVehicle(uint modelHash, NetVector3 position, float heading)
+        {
+            int handle = _nextHandle++;
+            Vehicles[handle] = new VehicleEntity(EntityId.None)
+            {
+                ModelHash = modelHash,
+                Position = position,
+                Heading = heading,
+            };
+
+            return handle;
+        }
+
+        public void ApplyRemoteVehicle(int handle, in RemoteVehicleFrame frame)
+        {
+            VehicleFrames[handle] = frame;
+            if (Vehicles.TryGetValue(handle, out VehicleEntity? vehicle))
+            {
+                vehicle.Position = frame.Position;
+                vehicle.Heading = frame.Heading;
+                vehicle.BodyHealth = frame.BodyHealth;
+                vehicle.EngineHealth = frame.EngineHealth;
+                vehicle.Flags = frame.Flags;
+                vehicle.Doors = frame.Doors;
+                vehicle.Tires = frame.Tires;
+            }
+        }
+
+        public void ApplyRemoteVehicleAppearance(int handle, VehicleEntity state)
+        {
+            VehicleAppearanceApplications.TryGetValue(handle, out int count);
+            VehicleAppearanceApplications[handle] = count + 1;
+
+            if (Vehicles.TryGetValue(handle, out VehicleEntity? vehicle))
+            {
+                vehicle.Colors = state.Colors;
+                vehicle.Livery = state.Livery;
+                vehicle.LicensePlate = state.LicensePlate;
+            }
+        }
+
+        public bool TryReadVehicle(int handle, VehicleEntity into)
+        {
+            if (!Vehicles.TryGetValue(handle, out VehicleEntity? vehicle))
+            {
+                return false;
+            }
+
+            into.ModelHash = vehicle.ModelHash;
+            into.Position = vehicle.Position;
+            into.Velocity = vehicle.Velocity;
+            into.Heading = vehicle.Heading;
+            into.EngineHealth = vehicle.EngineHealth;
+            into.BodyHealth = vehicle.BodyHealth;
+            into.PetrolTankHealth = vehicle.PetrolTankHealth;
+            into.FuelLevel = vehicle.FuelLevel;
+            into.Flags = vehicle.Flags;
+            into.Doors = vehicle.Doors;
+            into.Tires = vehicle.Tires;
+            into.Colors = vehicle.Colors;
+            into.LicensePlate = vehicle.LicensePlate;
+            return true;
+        }
+
+        public void DestroyRemoteVehicle(int handle)
+        {
+            Vehicles.Remove(handle);
+            VehicleFrames.Remove(handle);
+            VehicleAppearanceApplications.Remove(handle);
+        }
+
+        public bool IsRemoteVehicleValid(int handle) => Vehicles.ContainsKey(handle);
+
+        public int GetLocalPlayerVehicleHandle() => LocalVehicleHandle;
+
+        public uint GetVehicleModel(int handle) =>
+            Vehicles.TryGetValue(handle, out VehicleEntity? vehicle) ? vehicle.ModelHash : 0u;
+
+        public void SeatRemotePedInVehicle(int pedHandle, int vehicleHandle, sbyte seat)
+        {
+        }
+
+        public int CreateRemoteObject(uint modelHash, NetVector3 position, float heading)
+        {
+            int handle = _nextHandle++;
+            Objects[handle] = new ObjectEntity(EntityId.None)
+            {
+                ModelHash = modelHash,
+                Position = position,
+                Heading = heading,
+            };
+
+            return handle;
+        }
+
+        public void ApplyRemoteObject(int handle, ObjectEntity state)
+        {
+            if (Objects.TryGetValue(handle, out ObjectEntity? prop))
+            {
+                prop.Position = state.Position;
+                prop.Heading = state.Heading;
+                prop.Flags = state.Flags;
+                prop.Health = state.Health;
+            }
+        }
+
+        public void DestroyRemoteObject(int handle) => Objects.Remove(handle);
+
+        public bool IsRemoteObjectValid(int handle) => Objects.ContainsKey(handle);
     }
 
     /// <summary>One client plus the pieces a test wants to poke at.</summary>

@@ -20,6 +20,9 @@ namespace Gtamp.Shared.Entities
         {
             var registry = new EntityRegistry();
             registry.Register(new PlayerEntitySerializer());
+            registry.Register(new VehicleEntitySerializer());
+            registry.Register(new PedEntitySerializer());
+            registry.Register(new ObjectEntitySerializer());
             return registry;
         }
 

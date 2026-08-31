@@ -27,6 +27,18 @@ namespace Gtamp.Shared.Protocol
         SnapshotAck = 0x22,
         ResyncRequest = 0x23,
 
+        /// <summary>Client asks the server to give a locally created entity a network identity.</summary>
+        EntitySpawnRequest = 0x24,
+
+        /// <summary>The owning client streaming an entity it simulates.</summary>
+        OwnedEntityUpdate = 0x25,
+
+        /// <summary>Client asks to destroy, or give up ownership of, an entity.</summary>
+        EntityReleaseRequest = 0x26,
+
+        /// <summary>Client reports a hit it landed. The server decides whether it happened.</summary>
+        DamageReport = 0x27,
+
         // 0x30-0x3F — reliable world/entity events.
         EntityEvent = 0x30,
         ServerEvent = 0x31,

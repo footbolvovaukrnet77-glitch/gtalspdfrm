@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.Net;
+using Gtamp.Client.Entities;
 using Gtamp.Client.Mods;
 using Gtamp.Client.Network;
 using Gtamp.Client.Players;
@@ -58,6 +59,11 @@ namespace Gtamp.Client.Core
             ReplicatedWorld = new ReplicatedWorld(Registry);
             Connection = new ClientConnection(_transport, Log);
             RemotePlayers = new RemotePlayerManager(Bridge, Log);
+            RemoteEntities = new RemoteEntityManager(Bridge, Log);
+            OwnedEntities = new OwnedEntityStreamer(Bridge, Registry, Log)
+            {
+                Send = (type, payload, delivery) => Connection.Peer?.Send(type, payload, delivery),
+            };
             Sdk = new ModSdk(Registry, Log, SendModEvent);
             Adapters = new AdapterHost(Log);
 
@@ -83,6 +89,12 @@ namespace Gtamp.Client.Core
         public ClientConnection Connection { get; }
 
         public RemotePlayerManager RemotePlayers { get; }
+
+        /// <summary>Vehicles and objects simulated by somebody else.</summary>
+        public RemoteEntityManager RemoteEntities { get; }
+
+        /// <summary>Entities this client simulates and reports upward.</summary>
+        public OwnedEntityStreamer OwnedEntities { get; }
 
         public ModSdk Sdk { get; }
 
@@ -155,6 +167,8 @@ namespace Gtamp.Client.Core
 
             ReplicatedWorld.Reset();
             RemotePlayers.Clear();
+            RemoteEntities.Clear();
+            OwnedEntities.Clear();
 
             ModManifest manifest = Environment.ToManifest(Registry.ComputeSchemaHash());
             Registry.Lock();
@@ -167,6 +181,8 @@ namespace Gtamp.Client.Core
         {
             Connection.Disconnect(DisconnectReason.ClientQuit, reason, _now);
             RemotePlayers.Clear();
+            RemoteEntities.Clear();
+            OwnedEntities.Clear();
             ReplicatedWorld.Reset();
             LocalEntityId = EntityId.None;
         }
@@ -193,9 +209,16 @@ namespace Gtamp.Client.Core
                 SendLocalState(now);
                 SendPeriodicPing(now);
 
+                OwnedEntities.LocalPlayerId = LocalPlayerId;
+                OwnedEntities.ExpirePendingSpawns(now);
+                OwnedEntities.RegisterLocalVehicleIfNeeded(ReplicatedWorld.Current, now);
+                OwnedEntities.Stream(ReplicatedWorld.Current, now, ClientUpdateInterval);
+
                 // Rendered a fixed delay behind the estimated server clock, which is
                 // what turns 20 Hz snapshots into smooth frame-rate movement.
-                RemotePlayers.Render(EstimatedServerTime - Config.InterpolationDelay);
+                double renderTime = EstimatedServerTime - Config.InterpolationDelay;
+                RemotePlayers.Render(renderTime);
+                RemoteEntities.Render(renderTime);
             }
 
             Adapters.Update(now);
@@ -205,6 +228,7 @@ namespace Gtamp.Client.Core
         {
             Adapters.Shutdown();
             RemotePlayers.Clear();
+            RemoteEntities.Clear();
             Connection.Disconnect(DisconnectReason.ClientQuit, "client shutting down", _now);
             _transport.Dispose();
         }
@@ -244,6 +268,10 @@ namespace Gtamp.Client.Core
 
                         break;
                     }
+
+                    case NetMessageType.EntityEvent:
+                        OwnedEntities.HandleEntityEvent(EntityEventMessage.Deserialize(message.Payload));
+                        break;
 
                     case NetMessageType.Pong:
                         break;
@@ -287,6 +315,8 @@ namespace Gtamp.Client.Core
             SynchroniseServerClock(ReplicatedWorld.ServerTime);
             RemotePlayers.LocalEntityId = LocalEntityId;
             RemotePlayers.Sync(ReplicatedWorld.Current);
+            RemoteEntities.LocalPlayerId = LocalPlayerId;
+            RemoteEntities.Sync(ReplicatedWorld.Current);
             ApplyEnvironment();
             ApplyServerCorrection();
 
@@ -403,11 +433,41 @@ namespace Gtamp.Client.Core
             Connection.Peer?.Send(NetMessageType.ResyncRequest, request.Serialize(), DeliveryMethod.ReliableOrdered);
             ReplicatedWorld.Reset();
             RemotePlayers.Clear();
+            RemoteEntities.Clear();
+        }
+
+        /// <summary>Seconds between outbound state reports, as negotiated in the handshake.</summary>
+        public double ClientUpdateInterval =>
+            1d / Math.Max(1, Connection.Accept?.ClientUpdateRate ?? ProtocolConstants.DefaultClientUpdateRate);
+
+        /// <summary>
+        /// Reports a hit this client believes it landed. It is a claim: the server
+        /// decides whether it happened — see docs/SECURITY.md.
+        /// </summary>
+        public void ReportDamage(
+            EntityId target, uint weaponHash, int damage, NetVector3 hitPosition, short hitBone = -1, bool melee = false)
+        {
+            if (!Connection.IsConnected)
+            {
+                return;
+            }
+
+            var report = new DamageReportMessage
+            {
+                TargetId = target,
+                WeaponHash = weaponHash,
+                Damage = damage,
+                HitPosition = hitPosition,
+                HitBone = hitBone,
+                IsMelee = melee,
+            };
+
+            Connection.Peer!.Send(NetMessageType.DamageReport, report.Serialize(), DeliveryMethod.ReliableOrdered);
         }
 
         private void SendLocalState(double now)
         {
-            double interval = 1d / Math.Max(1, Connection.Accept?.ClientUpdateRate ?? ProtocolConstants.DefaultClientUpdateRate);
+            double interval = ClientUpdateInterval;
             if (now - _lastStateSendTime < interval || !Bridge.IsPlayerReady)
             {
                 return;
@@ -503,6 +563,8 @@ namespace Gtamp.Client.Core
         private void OnDisconnected(DisconnectReason reason, string text)
         {
             RemotePlayers.Clear();
+            RemoteEntities.Clear();
+            OwnedEntities.Clear();
             ReplicatedWorld.Reset();
             LocalEntityId = EntityId.None;
             Bridge.ShowNotification($"~r~Disconnected~s~: {text}");

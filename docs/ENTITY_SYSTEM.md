@@ -126,5 +126,26 @@ tasks — are **not present**. They are scheduled in
 [ROADMAP.md](ROADMAP.md) rather than stubbed to empty values, because a field that
 replicates nothing is worse than an absent one: it looks supported.
 
-`VehicleEntity`, `PedEntity` and `ObjectEntity` are Phase 3. Their type ids are
-already reserved so adding them does not renumber anything.
+**`CharacterEntity`** carries everything a player and a networked NPC have in
+common — body, weapon, vehicle seat, appearance — declared once in
+`CharacterFields`. Two hand-maintained copies of thirteen field declarations would
+drift, and a drift between them is a silent decode corruption rather than a
+compile error.
+
+**`VehicleEntity`** carries 27 replicated fields. Several are deliberately
+grouped: the six paint indices as one `Colors` field, livery and wheel type as
+`Styling`, plate text and type as `Plate`, RPM and gear as `Drivetrain`. They are
+set together in practice, and each separate field would cost a mask bit and its
+own presence on every delta that touched any of them. The nineteen vehicle
+booleans are one `VehicleFlags` bitfield for the same reason — three bytes as a
+varint instead of nineteen fields.
+
+Doors and tyres pack two states per index into one 16-bit word: bits 0-7 open or
+burst, bits 8-15 broken or punctured.
+
+**`PedEntity`** adds behaviour flags, alert level, task and scenario hashes, a
+combat target, a relationship group and a free-form group id, so a mod can keep a
+set of peds together without inventing its own registry.
+
+**`ObjectEntity`** adds model, rotation, health, flags and attachment to another
+entity.

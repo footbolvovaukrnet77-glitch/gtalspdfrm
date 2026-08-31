@@ -77,6 +77,17 @@ namespace Gtamp.Server.Core
         /// </summary>
         public double ServerMoveGraceSeconds { get; set; } = 3;
 
+        /// <summary>How many networked entities one player may own at once.</summary>
+        public int MaxEntitiesPerPlayer { get; set; } = 32;
+
+        /// <summary>
+        /// Beyond this distance an entity's owner is considered too far to simulate it
+        /// well, and it is handed to a closer player or back to the server.
+        /// </summary>
+        public float OwnershipHandoffDistance { get; set; } = 300f;
+
+        public double OwnershipCheckIntervalSeconds { get; set; } = 2;
+
         /// <summary>Reject connections whose mod set is missing a Required server mod.</summary>
         public bool EnforceRequiredMods { get; set; } = true;
 
@@ -157,6 +168,16 @@ namespace Gtamp.Server.Core
             if (RespawnDelaySeconds < 0 || RespawnDelaySeconds > 600)
             {
                 throw new InvalidDataException("respawnDelaySeconds must be between 0 and 600.");
+            }
+
+            if (MaxEntitiesPerPlayer < 1 || MaxEntitiesPerPlayer > 1024)
+            {
+                throw new InvalidDataException("maxEntitiesPerPlayer must be between 1 and 1024.");
+            }
+
+            if (OwnershipHandoffDistance < 25f)
+            {
+                throw new InvalidDataException("ownershipHandoffDistance must be at least 25.");
             }
         }
 

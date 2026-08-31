@@ -414,6 +414,220 @@ namespace Gtamp.Shared.Protocol
         }
     }
 
+    /// <summary>
+    /// A client asking the server to adopt something it created locally — the
+    /// vehicle it just got into, a prop a mod spawned.
+    /// <para>
+    /// The client cannot invent an entity id: ids are the server's, and a client
+    /// that could choose its own could collide with another player's or overwrite an
+    /// existing entity. So it describes what it made and correlates the answer
+    /// through <see cref="RequestTag"/>.
+    /// </para>
+    /// </summary>
+    public sealed class EntitySpawnRequestMessage
+    {
+        public EntityType Type { get; set; } = EntityType.Vehicle;
+
+        public uint ModelHash { get; set; }
+
+        public NetVector3 Position { get; set; }
+
+        public float Heading { get; set; }
+
+        public uint Dimension { get; set; }
+
+        /// <summary>Client-chosen correlation id, echoed in the reply.</summary>
+        public uint RequestTag { get; set; }
+
+        /// <summary>Full state written by the entity's own serializer, or empty.</summary>
+        public byte[] State { get; set; } = Array.Empty<byte>();
+
+        public byte[] Serialize()
+        {
+            var writer = new NetWriter(256);
+            writer.WriteByte((byte)Type);
+            writer.WriteUInt32(ModelHash);
+            writer.WriteQuantizedPosition(Position);
+            writer.WriteAngleDegrees(Heading);
+            writer.WriteVarUInt(Dimension);
+            writer.WriteUInt32(RequestTag);
+            writer.WriteByteArray(State);
+            return writer.ToArray();
+        }
+
+        public static EntitySpawnRequestMessage Deserialize(byte[] payload)
+        {
+            var reader = new NetReader(payload);
+            return new EntitySpawnRequestMessage
+            {
+                Type = (EntityType)reader.ReadByte(),
+                ModelHash = reader.ReadUInt32(),
+                Position = reader.ReadQuantizedPosition(),
+                Heading = reader.ReadAngleDegrees(),
+                Dimension = reader.ReadVarUInt(),
+                RequestTag = reader.ReadUInt32(),
+                State = reader.ReadByteArray(ProtocolConstants.MaxPacketSize),
+            };
+        }
+    }
+
+    /// <summary>
+    /// The owning client's report of an entity it simulates.
+    /// <para>
+    /// The payload is written by the entity type's own serializer, so a mod-defined
+    /// entity streams through this path with no protocol change. The server still
+    /// validates it — ownership grants the right to propose, not to decide.
+    /// </para>
+    /// </summary>
+    public sealed class OwnedEntityUpdateMessage
+    {
+        public EntityId EntityId { get; set; }
+
+        public byte[] State { get; set; } = Array.Empty<byte>();
+
+        public byte[] Serialize()
+        {
+            var writer = new NetWriter(State.Length + 8);
+            writer.WriteVarUInt(EntityId.Value);
+            writer.WriteByteArray(State);
+            return writer.ToArray();
+        }
+
+        public static OwnedEntityUpdateMessage Deserialize(byte[] payload)
+        {
+            var reader = new NetReader(payload);
+            return new OwnedEntityUpdateMessage
+            {
+                EntityId = new EntityId(reader.ReadVarUInt()),
+                State = reader.ReadByteArray(ProtocolConstants.MaxPacketSize),
+            };
+        }
+    }
+
+    public enum EntityReleaseKind : byte
+    {
+        /// <summary>Give up ownership; the server reassigns it.</summary>
+        ReleaseOwnership = 0,
+
+        /// <summary>Destroy the entity outright.</summary>
+        Destroy = 1,
+    }
+
+    public sealed class EntityReleaseRequestMessage
+    {
+        public EntityId EntityId { get; set; }
+
+        public EntityReleaseKind Kind { get; set; }
+
+        public byte[] Serialize()
+        {
+            var writer = new NetWriter(16);
+            writer.WriteVarUInt(EntityId.Value);
+            writer.WriteByte((byte)Kind);
+            return writer.ToArray();
+        }
+
+        public static EntityReleaseRequestMessage Deserialize(byte[] payload)
+        {
+            var reader = new NetReader(payload);
+            return new EntityReleaseRequestMessage
+            {
+                EntityId = new EntityId(reader.ReadVarUInt()),
+                Kind = (EntityReleaseKind)reader.ReadByte(),
+            };
+        }
+    }
+
+    public enum EntityEventKind : byte
+    {
+        SpawnAccepted = 0,
+        SpawnRejected = 1,
+        OwnershipGranted = 2,
+        OwnershipRevoked = 3,
+        Destroyed = 4,
+    }
+
+    /// <summary>Reliable notification about one entity's lifecycle or ownership.</summary>
+    public sealed class EntityEventMessage
+    {
+        public EntityEventKind Kind { get; set; }
+
+        public EntityId EntityId { get; set; }
+
+        /// <summary>Echo of the spawn request's tag, 0 when this is not a spawn reply.</summary>
+        public uint RequestTag { get; set; }
+
+        public string Detail { get; set; } = string.Empty;
+
+        public byte[] Serialize()
+        {
+            var writer = new NetWriter(128);
+            writer.WriteByte((byte)Kind);
+            writer.WriteVarUInt(EntityId.Value);
+            writer.WriteUInt32(RequestTag);
+            writer.WriteString(Detail);
+            return writer.ToArray();
+        }
+
+        public static EntityEventMessage Deserialize(byte[] payload)
+        {
+            var reader = new NetReader(payload);
+            return new EntityEventMessage
+            {
+                Kind = (EntityEventKind)reader.ReadByte(),
+                EntityId = new EntityId(reader.ReadVarUInt()),
+                RequestTag = reader.ReadUInt32(),
+                Detail = reader.ReadString(256),
+            };
+        }
+    }
+
+    /// <summary>
+    /// A hit one client believes it landed. It is a <em>claim</em>: the server
+    /// decides whether it happened, how much it was worth, and whether it killed.
+    /// </summary>
+    public sealed class DamageReportMessage
+    {
+        public EntityId TargetId { get; set; }
+
+        public uint WeaponHash { get; set; }
+
+        public int Damage { get; set; }
+
+        public NetVector3 HitPosition { get; set; }
+
+        /// <summary>GTA V bone index, for hit-location logic.</summary>
+        public short HitBone { get; set; }
+
+        public bool IsMelee { get; set; }
+
+        public byte[] Serialize()
+        {
+            var writer = new NetWriter(64);
+            writer.WriteVarUInt(TargetId.Value);
+            writer.WriteUInt32(WeaponHash);
+            writer.WriteVarInt(Damage);
+            writer.WriteQuantizedPosition(HitPosition);
+            writer.WriteInt16(HitBone);
+            writer.WriteBool(IsMelee);
+            return writer.ToArray();
+        }
+
+        public static DamageReportMessage Deserialize(byte[] payload)
+        {
+            var reader = new NetReader(payload);
+            return new DamageReportMessage
+            {
+                TargetId = new EntityId(reader.ReadVarUInt()),
+                WeaponHash = reader.ReadUInt32(),
+                Damage = reader.ReadVarInt(),
+                HitPosition = reader.ReadQuantizedPosition(),
+                HitBone = reader.ReadInt16(),
+                IsMelee = reader.ReadBool(),
+            };
+        }
+    }
+
     public sealed class SnapshotAckMessage
     {
         public uint SnapshotId { get; set; }
