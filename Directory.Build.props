@@ -1,6 +1,11 @@
 <Project>
   <PropertyGroup>
-    <LangVersion>latest</LangVersion>
+    <!-- Pinned, not `latest`. `latest` follows whatever SDK happens to be installed,
+         so installing a newer one silently changes the language the code is compiled
+         as: the .NET 10 SDK compiles this as C# 14, where `field` became a keyword
+         inside property accessors and an ordinary local variable stopped building.
+         Bumping this is a deliberate edit, which is the point. -->
+    <LangVersion>12.0</LangVersion>
     <Nullable>enable</Nullable>
     <ImplicitUsings>disable</ImplicitUsings>
     <GenerateDocumentationFile>false</GenerateDocumentationFile>

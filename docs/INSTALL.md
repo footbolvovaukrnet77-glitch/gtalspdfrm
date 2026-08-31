@@ -10,12 +10,18 @@ Concrete commands. Nothing here says "install the dependencies".
 
 ### Prerequisites
 
-- **.NET SDK 8.0 or newer** — https://dotnet.microsoft.com/download/dotnet/8.0
+- **.NET SDK 8.0.x** — https://dotnet.microsoft.com/download/dotnet/8.0
+  `global.json` pins the 8.0 band on purpose. A newer SDK compiles this as a
+  newer language — the .NET 10 SDK compiles it as C# 14, where `field` is a
+  keyword inside property accessors — and the tests target `net8.0`, so they
+  need the .NET 8 runtime the 8.0.x SDK carries. With the pin, a machine
+  without it fails at the first command with a message naming `global.json`,
+  instead of building against the wrong compiler and failing later.
 
 Verify:
 
 ```bash
-dotnet --version        # expect 8.0.x or newer
+dotnet --version        # expect 8.0.x — global.json pins the band
 ```
 
 The solution builds on Linux, macOS and Windows — including the `net48` GTA V

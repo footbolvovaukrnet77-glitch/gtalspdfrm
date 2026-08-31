@@ -19,7 +19,7 @@ if ! command -v dotnet >/dev/null 2>&1; then
 fi
 
 if ! command -v dotnet >/dev/null 2>&1; then
-  echo "error: the .NET SDK 8.0 or newer is required but 'dotnet' was not found on PATH." >&2
+  echo "error: the .NET SDK 8.0.x is required but 'dotnet' was not found on PATH." >&2
   echo "       install it from https://dotnet.microsoft.com/download/dotnet/8.0" >&2
   exit 1
 fi

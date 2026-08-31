@@ -5,9 +5,11 @@
 # named in docs/ROADMAP.md; CI does not pretend to cover it.
 name: CI
 
+# push is limited to main so a branch with an open pull request is not built
+# twice for the same commit -- the pull_request trigger already covers it.
 on:
   push:
-    branches: ['**']
+    branches: [main]
   pull_request:
   workflow_dispatch:
 
@@ -31,6 +33,9 @@ jobs:
       - name: Install the .NET SDK
         uses: actions/setup-dotnet@v4
         with:
+          # global.json pins the 8.0 band, so this must supply an 8.0.x SDK: the
+          # runner image also carries a newer one, and without the pin the build
+          # silently used it and compiled the code as a newer C#.
           dotnet-version: '8.0.x'
 
       - name: Restore

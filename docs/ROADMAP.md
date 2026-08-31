@@ -249,6 +249,34 @@ LSPDFR release. Those need Windows, GTA V, RPH and LSPDFR on the runner. A green
 CI badge on this repository means the code compiles clean and the suite passes —
 not that the mod works in the game.
 
+**CI found a real defect on its first run**, which is the argument for having it.
+The build failed on `ubuntu-latest` with six errors in `EntityInspector.cs` that
+had never appeared locally: `error CS9273: In language version 14.0, 'field' is a
+keyword within a property accessor`. Nothing was wrong with the machine — the
+toolchain was floating in two places at once. `Directory.Build.props` said
+`<LangVersion>latest</LangVersion>`, and with no `global.json` the SDK resolver
+picks the *highest* one installed. The runner carries the .NET 10 SDK, so `latest`
+meant C# 14 there and C# 12 here, and in C# 14 `field` became a contextual keyword
+inside a property accessor — where two `foreach` loops happened to use it as an
+ordinary variable name.
+
+Fixed in three places, because one would have left the trap set:
+
+| Fix | Why not just this one |
+| --- | --- |
+| The two loop variables renamed to `entry` | Correct, but the next identifier to collide with a new keyword would break the build again |
+| `<LangVersion>12.0</LangVersion>`, pinned | Stops the language drifting, but leaves the SDK itself unpinned |
+| `global.json` pinning the 8.0 band, `rollForward: latestFeature` | Fails immediately and legibly on a machine without an 8.0.x SDK, rather than building against a newer compiler and then aborting at `dotnet test` — the tests target `net8.0` and need the runtime the 8.0.x SDK carries |
+
+The failure was **reproduced before it was fixed**: the .NET 10 SDK was installed
+locally, it produced the same six errors byte for byte, and the fix was then
+verified against both SDKs — build and 360 tests clean on 8.0.424, build clean on
+10.0.400.
+
+This is the sixth defect the project has found in itself, and the only one no
+amount of local testing would have surfaced: the bug was in the assumption that
+*my* SDK is *the* SDK.
+
 **The documentation checker is itself checked.** It was run against a
 deliberately broken tree — a link to a missing file, an anchor naming a heading
 that does not exist, and a Russian document removed — and reported all three and

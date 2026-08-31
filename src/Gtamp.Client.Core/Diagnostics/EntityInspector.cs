@@ -80,9 +80,9 @@ namespace Gtamp.Client.Diagnostics
             get
             {
                 int count = 0;
-                foreach (FieldComparison field in Fields)
+                foreach (FieldComparison entry in Fields)
                 {
-                    if (field.Outcome == ComparisonOutcome.Differs)
+                    if (entry.Outcome == ComparisonOutcome.Differs)
                     {
                         count++;
                     }
@@ -97,9 +97,9 @@ namespace Gtamp.Client.Diagnostics
             get
             {
                 int count = 0;
-                foreach (FieldComparison field in Fields)
+                foreach (FieldComparison entry in Fields)
                 {
-                    if (field.Outcome == ComparisonOutcome.NotReadable)
+                    if (entry.Outcome == ComparisonOutcome.NotReadable)
                     {
                         count++;
                     }
