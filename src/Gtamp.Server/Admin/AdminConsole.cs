@@ -47,6 +47,9 @@ namespace Gtamp.Server.Admin
                 "entity" => Entity(args),
                 "entities" => Entities(),
                 "kick" => Kick(args),
+                "teleport" or "tp" => Teleport(args),
+                "kill" => Kill(args),
+                "respawn" => RespawnCommand(args),
                 "say" => Say(args),
                 "time" => Time(args),
                 "weather" => Weather(args),
@@ -67,6 +70,9 @@ namespace Gtamp.Server.Admin
             "  entity <id>         full state of one entity",
             "  net                 per-connection network counters",
             "  kick <playerId>     disconnect a player",
+            "  teleport <id> <x> <y> <z> [heading]   move a player",
+            "  kill <playerId>     kill a player",
+            "  respawn <playerId>  respawn a dead player immediately",
             "  say <text>          broadcast a chat message as the server",
             "  time <HH:MM>        set the world clock",
             "  weather <name>      set the weather (e.g. EXTRASUNNY, RAIN, THUNDER)",
@@ -211,6 +217,69 @@ namespace Gtamp.Server.Admin
 
             _server.Kick(session, DisconnectReason.Kicked, "kicked from the server console");
             return $"Kicked {session.Name}.";
+        }
+
+        private string Teleport(string[] args)
+        {
+            if (args.Length < 4
+                || !uint.TryParse(args[0], out uint playerId)
+                || !float.TryParse(args[1], NumberStyles.Float, CultureInfo.InvariantCulture, out float x)
+                || !float.TryParse(args[2], NumberStyles.Float, CultureInfo.InvariantCulture, out float y)
+                || !float.TryParse(args[3], NumberStyles.Float, CultureInfo.InvariantCulture, out float z))
+            {
+                return "Usage: teleport <playerId> <x> <y> <z> [heading]";
+            }
+
+            float heading = 0f;
+            if (args.Length > 4)
+            {
+                float.TryParse(args[4], NumberStyles.Float, CultureInfo.InvariantCulture, out heading);
+            }
+
+            if (!_server.Players.TryGetByPlayerId(playerId, out PlayerSession session))
+            {
+                return $"No player with id {playerId}.";
+            }
+
+            return _server.TeleportPlayer(session, new NetVector3(x, y, z), heading)
+                ? $"Moved {session.Name} to ({x}, {y}, {z})."
+                : $"{session.Name} has no entity to move.";
+        }
+
+        private string Kill(string[] args)
+        {
+            if (args.Length < 1 || !uint.TryParse(args[0], out uint playerId))
+            {
+                return "Usage: kill <playerId>";
+            }
+
+            if (!_server.Players.TryGetByPlayerId(playerId, out PlayerSession session))
+            {
+                return $"No player with id {playerId}.";
+            }
+
+            return _server.KillPlayer(session) ? $"Killed {session.Name}." : $"{session.Name} is already dead.";
+        }
+
+        private string RespawnCommand(string[] args)
+        {
+            if (args.Length < 1 || !uint.TryParse(args[0], out uint playerId))
+            {
+                return "Usage: respawn <playerId>";
+            }
+
+            if (!_server.Players.TryGetByPlayerId(playerId, out PlayerSession session))
+            {
+                return $"No player with id {playerId}.";
+            }
+
+            if (!session.IsDead)
+            {
+                return $"{session.Name} is not dead.";
+            }
+
+            _server.Respawn(session);
+            return $"Respawned {session.Name}.";
         }
 
         private string Say(string[] args)

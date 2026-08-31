@@ -41,6 +41,16 @@ namespace Gtamp.Client.Players
 
         public uint ModelHash { get; set; }
 
+        /// <summary>Latest replicated appearance.</summary>
+        public PedAppearance Appearance { get; } = new PedAppearance();
+
+        /// <summary>
+        /// Incremented whenever the appearance changes. The manager compares it with
+        /// what it last applied, so clothing is written to the ped on change rather
+        /// than every frame — applying component variations is not cheap.
+        /// </summary>
+        public int AppearanceVersion { get; private set; }
+
         public int SampleCount => _samples.Count;
 
         public double NewestSampleTime => _samples.Count > 0 ? _samples[_samples.Count - 1].Time : 0d;
@@ -56,6 +66,12 @@ namespace Gtamp.Client.Players
             _samples.Add(new Sample(serverTime, state));
             Name = state.Name;
             ModelHash = state.ModelHash;
+
+            if (!Appearance.ValueEquals(state.Appearance))
+            {
+                Appearance.CopyFrom(state.Appearance);
+                AppearanceVersion++;
+            }
 
             // Two samples either side of the render time are enough; keep a little
             // slack for jitter and drop the rest.

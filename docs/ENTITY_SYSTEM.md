@@ -115,8 +115,14 @@ ragdoll, dead, aim, shoot, reload, melee, in-vehicle, entering-vehicle, parachut
 cover, invincible), locomotion state, current weapon, ammo, aim position, vehicle
 and seat, wanted level, animation hash, dimension and interior.
 
-The remaining items from master prompt section 9 — clothing components, props,
-full inventory, scenario tasks — are **not present**. They are scheduled in
+Clothing components and props were added in Phase 2. `PedAppearance` carries the
+twelve component slots (drawable, texture, palette) and eight prop slots, encoded
+behind presence masks so a default character costs three bytes rather than the 46
+a fixed layout would need. It is one replicated field written whole, because
+appearance changes at spawn and when a player changes clothes — not per frame.
+
+The remaining items from master prompt section 9 — full inventory, scenario
+tasks — are **not present**. They are scheduled in
 [ROADMAP.md](ROADMAP.md) rather than stubbed to empty values, because a field that
 replicates nothing is worse than an absent one: it looks supported.
 

@@ -4,7 +4,7 @@ A server-authoritative multiplayer framework that turns single-player GTA V into
 shared world, with an entity system and mod SDK that third-party mods can extend
 without patching the framework.
 
-**Status: Phase 1 complete.** Two players share one world, movement replicates,
+**Status: Phases 1 and 2 complete.** Two players share one world, movement replicates,
 and a player who disconnects and comes back receives the world as it is *now* —
 including their own character, across a server restart.
 
@@ -35,6 +35,11 @@ including their own character, across a server restart.
   delta is always decoded against exactly the state it was written for.
 - **Reconnect and resync.** A returning player gets a full snapshot of the current
   world plus their persisted character.
+- **Animated remote players.** Peds are driven through GTA V's task system at the
+  right gait, with ragdoll handed to physics and corpses left where they fell.
+- **Clothing and props** replicated in three bytes when default.
+- **Server-arbitrated death and respawn**, with an authority hold so a
+  server-initiated move is not dragged back by the client's in-flight updates.
 - **SQLite persistence** that survives a real process restart.
 - **Optional anti-cheat**, five levels, with protocol guards that stay on even at
   `Off`.
@@ -46,17 +51,18 @@ including their own character, across a server restart.
   the adapters link against them; the adapters bind by reflection and report
   themselves inactive when the mod is absent.
 
-139 automated tests, all passing, covering everything except the ScriptHookVDotNet
+177 automated tests, all passing, covering everything except the ScriptHookVDotNet
 host layer, which needs a running game.
 
 ## What does not work yet
 
 Stated plainly, because a framework that hides its gaps wastes your time:
 
-- **Remote players slide instead of walking.** Position, heading, health and
-  armour are correct; gait is not. GTA V drives locomotion from its task system,
-  which writing coordinates does not touch. Phase 2 — see
-  [docs/ENGINE_ANALYSIS.md](docs/ENGINE_ANALYSIS.md) §4.1.
+- **Ped locomotion is implemented but never watched.** The decision logic —
+  gait, when to correct, ragdoll and death handling — is unit-tested, and the
+  bridge drives the game's task system rather than writing coordinates. Whether
+  it *looks* right in Los Santos has not been verified and cannot be from a build
+  machine. Expect the thresholds to need tuning.
 - **No vehicles, peds or objects yet.** Player replication only. Their type ids
   are reserved; the classes do not exist, because an empty `VehicleEntity` that
   replicates nothing would look like support.

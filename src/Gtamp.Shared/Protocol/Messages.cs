@@ -211,6 +211,9 @@ namespace Gtamp.Shared.Protocol
 
         public uint AnimationHash { get; set; }
 
+        /// <summary>Clothing and props, as the client currently has them.</summary>
+        public PedAppearance Appearance { get; } = new PedAppearance();
+
         public byte[] Serialize()
         {
             var writer = new NetWriter(128);
@@ -230,13 +233,14 @@ namespace Gtamp.Shared.Protocol
             writer.WriteQuantizedPosition(AimPosition);
             writer.WriteVarInt(InteriorId);
             writer.WriteUInt32(AnimationHash);
+            Appearance.Write(writer);
             return writer.ToArray();
         }
 
         public static ClientStateUpdateMessage Deserialize(byte[] payload)
         {
             var reader = new NetReader(payload);
-            return new ClientStateUpdateMessage
+            var message = new ClientStateUpdateMessage
             {
                 ClientTick = reader.ReadVarUInt(),
                 ClientTime = reader.ReadDouble(),
@@ -255,6 +259,9 @@ namespace Gtamp.Shared.Protocol
                 InteriorId = reader.ReadVarInt(),
                 AnimationHash = reader.ReadUInt32(),
             };
+
+            message.Appearance.Read(reader);
+            return message;
         }
     }
 
@@ -294,6 +301,8 @@ namespace Gtamp.Shared.Protocol
         PlayerReconnected = 2,
         Announcement = 3,
         WorldReset = 4,
+        PlayerDied = 5,
+        PlayerRespawned = 6,
     }
 
     public sealed class ServerEventMessage

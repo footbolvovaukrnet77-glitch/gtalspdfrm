@@ -53,6 +53,9 @@ Type these at the running server's prompt.
 | `entity <id>` | Full state of one entity |
 | `net` | Per-connection counters: ping, RTT variance, packets, loss, retransmits |
 | `kick <playerId>` | Disconnect a player |
+| `teleport <id> <x> <y> <z> [heading]` | Move a player; holds their authority until they confirm |
+| `kill <playerId>` | Kill a player |
+| `respawn <playerId>` | Respawn a dead player immediately |
 | `say <text>` | Broadcast a chat message as the server |
 | `time <HH:MM>` | Set the world clock |
 | `weather <name>` | `EXTRASUNNY`, `CLEAR`, `RAIN`, `THUNDER`, `SNOW`, ... |

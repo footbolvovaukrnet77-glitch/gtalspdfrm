@@ -29,6 +29,9 @@ namespace Gtamp.Server.Core
         /// <summary>Legion Square. Used when a player has no stored position.</summary>
         public static readonly NetVector3 DefaultSpawn = new NetVector3(215.0f, -810.0f, 30.7f);
 
+        /// <summary>How long an authority hold waits for its acknowledgement before giving up.</summary>
+        public const double AuthorityHoldTimeoutSeconds = 10d;
+
         private readonly IDatagramTransport _transport;
         private readonly IPersistenceStore _persistence;
         private readonly Random _random = new Random();
@@ -121,6 +124,8 @@ namespace Gtamp.Server.Core
                 _lastTickTime = now;
                 World.AdvanceTick(delta);
             }
+
+            UpdateDeaths();
 
             if (now - _lastSnapshotTime >= Config.SnapshotIntervalSeconds)
             {
@@ -306,6 +311,11 @@ namespace Gtamp.Server.Core
 
             Players.Add(session);
 
+            // The player is being placed into the world by the server, at a position
+            // their client has not simulated towards — their persisted one, or the
+            // default spawn. Their in-flight updates describe somewhere else entirely.
+            HoldClientAuthority(session);
+
             var accept = new ConnectAcceptMessage
             {
                 SessionId = sessionId,
@@ -445,6 +455,11 @@ namespace Gtamp.Server.Core
                 return;
             }
 
+            if (IsAuthorityHeld(session, update.AcknowledgedSnapshotId))
+            {
+                return;
+            }
+
             var proposal = new PlayerStateProposal
             {
                 Position = update.Position,
@@ -470,9 +485,7 @@ namespace Gtamp.Server.Core
             entity.Position = update.Position;
             entity.Velocity = update.Velocity;
             entity.Heading = update.Heading;
-            entity.Health = update.Health;
             entity.Armor = update.Armor;
-            entity.Flags = update.Flags;
             entity.Movement = update.Movement;
             entity.ModelHash = update.ModelHash;
             entity.CurrentWeaponHash = update.CurrentWeaponHash;
@@ -480,7 +493,219 @@ namespace Gtamp.Server.Core
             entity.AimPosition = update.AimPosition;
             entity.InteriorId = update.InteriorId;
             entity.AnimationHash = update.AnimationHash;
+            entity.Appearance.CopyFrom(update.Appearance);
+
+            ApplyHealth(session, entity, update);
             World.Touch(entity);
+        }
+
+        /// <summary>
+        /// Health and the death flag are arbitrated, not copied.
+        /// <para>
+        /// A dead player's client keeps sending updates, and the client is not allowed
+        /// to decide when it stops being dead — otherwise a trainer's "heal" key
+        /// resurrects instantly and the respawn timer means nothing. So while the
+        /// server considers a player dead, their reported health is ignored entirely
+        /// and only <see cref="Respawn"/> brings them back.
+        /// </para>
+        /// </summary>
+        private void ApplyHealth(PlayerSession session, PlayerEntity entity, ClientStateUpdateMessage update)
+        {
+            if (session.IsDead)
+            {
+                entity.Health = 0;
+                entity.SetFlag(PlayerFlags.Dead, true);
+                return;
+            }
+
+            bool clientReportsDeath = update.Health <= 0 || (update.Flags & PlayerFlags.Dead) != 0;
+            if (clientReportsDeath)
+            {
+                Kill(session, entity);
+                return;
+            }
+
+            entity.Health = update.Health;
+            entity.Flags = update.Flags;
+        }
+
+        /// <summary>Kills a player from the server side, e.g. an admin command.</summary>
+        public bool KillPlayer(PlayerSession session)
+        {
+            PlayerEntity? entity = World.GetPlayer(session.EntityId);
+            if (entity == null || session.IsDead)
+            {
+                return false;
+            }
+
+            Kill(session, entity);
+            return true;
+        }
+
+        private void Kill(PlayerSession session, PlayerEntity entity)
+        {
+            session.DiedAt = _now;
+            entity.Health = 0;
+            entity.SetFlag(PlayerFlags.Dead, true);
+            entity.Velocity = NetVector3.Zero;
+            World.Touch(entity);
+
+            Log.Info(LogCategory.Server, $"{session.Name} died at {entity.Position}.");
+            BroadcastServerEvent(ServerEventKind.PlayerDied, session.PlayerId, $"{session.Name} died.", null);
+        }
+
+        private void UpdateDeaths()
+        {
+            foreach (PlayerSession session in Players.Sessions)
+            {
+                if (!session.IsDead || session.PendingRemoval)
+                {
+                    continue;
+                }
+
+                if (_now - session.DiedAt < Config.RespawnDelaySeconds)
+                {
+                    continue;
+                }
+
+                Respawn(session);
+            }
+        }
+
+        /// <summary>
+        /// Moves a player somewhere the server chose.
+        /// <para>
+        /// Writing <see cref="NetEntity.Position"/> directly is not enough: the client
+        /// keeps reporting where it thinks it is, and the next update it sends drags
+        /// the player straight back. Any server-initiated move has to hold the client's
+        /// authority until it has seen the move, which is what this does.
+        /// </para>
+        /// </summary>
+        public bool TeleportPlayer(PlayerSession session, NetVector3 position, float heading, uint dimension = 0, int interiorId = 0)
+        {
+            PlayerEntity? entity = World.GetPlayer(session.EntityId);
+            if (entity == null)
+            {
+                return false;
+            }
+
+            entity.Position = position;
+            entity.Heading = heading;
+            entity.Velocity = NetVector3.Zero;
+            entity.Dimension = dimension;
+            entity.InteriorId = interiorId;
+            World.Touch(entity);
+
+            HoldClientAuthority(session);
+            Log.Info(LogCategory.Server, $"{session.Name} was moved to {position}.");
+            return true;
+        }
+
+        /// <summary>Moves a dead player to the nearest hospital and restores them.</summary>
+        public void Respawn(PlayerSession session)
+        {
+            PlayerEntity? entity = World.GetPlayer(session.EntityId);
+            if (entity == null)
+            {
+                session.DiedAt = 0;
+                return;
+            }
+
+            RespawnPoint point = RespawnPoints.Nearest(entity.Position);
+
+            session.DiedAt = 0;
+            entity.Position = point.Position;
+            entity.Heading = point.Heading;
+            entity.Velocity = NetVector3.Zero;
+            entity.Health = entity.MaxHealth;
+            entity.Armor = 0;
+            entity.SetFlag(PlayerFlags.Dead, false);
+            entity.SetFlag(PlayerFlags.Ragdoll, false);
+            entity.InteriorId = 0;
+            World.Touch(entity);
+
+            // The server just teleported the player and refilled their health. Their
+            // client is still reporting a corpse where they fell; ignore it until they
+            // have seen the respawn.
+            HoldClientAuthority(session);
+
+            Log.Info(LogCategory.Server, $"{session.Name} respawned at {point.Name}.");
+            BroadcastServerEvent(
+                ServerEventKind.PlayerRespawned, session.PlayerId, $"{session.Name} respawned at {point.Name}.", null);
+        }
+
+        /// <summary>
+        /// True while this particular update predates the client seeing a
+        /// server-initiated move.
+        /// <para>
+        /// The test is against the id carried by <em>this</em> update, not against the
+        /// session's high-water mark. Snapshot acknowledgements travel in their own
+        /// unreliable message as well as piggybacked here, so a standalone
+        /// acknowledgement can overtake a state update sent before it. Releasing on the
+        /// high-water mark would then let that older update through, and it still
+        /// describes the position the server just moved the player out of.
+        /// </para>
+        /// </summary>
+        private bool IsAuthorityHeld(PlayerSession session, uint acknowledgedSnapshotId)
+        {
+            // The move has happened but the snapshot announcing it has not gone out
+            // yet, so there is no id for the client to acknowledge. Anything arriving
+            // in this window necessarily predates the move.
+            if (session.PendingAuthorityHold)
+            {
+                return true;
+            }
+
+            if (session.AuthorityHoldSnapshot == 0)
+            {
+                return false;
+            }
+
+            if (acknowledgedSnapshotId >= session.AuthorityHoldSnapshot)
+            {
+                ReleaseAuthorityHold(session, "acknowledged");
+                return false;
+            }
+
+            if (_now >= session.AuthorityHoldExpiry)
+            {
+                // The acknowledgement never arrived. Holding forever would leave the
+                // player unable to move at all, which is worse than accepting a
+                // possibly stale update and correcting from there.
+                Log.Warning(
+                    LogCategory.Network,
+                    $"{session} never acknowledged snapshot {session.AuthorityHoldSnapshot}; releasing the authority hold.");
+
+                ReleaseAuthorityHold(session, "timed out");
+                return false;
+            }
+
+            return true;
+        }
+
+        private void ReleaseAuthorityHold(PlayerSession session, string reason)
+        {
+            session.AuthorityHoldSnapshot = 0;
+            session.AuthorityHoldExpiry = 0;
+
+            // The client is about to resume from a position the server chose, so the
+            // movement budget and health baseline both restart from here.
+            session.Validation.GrantGrace(_now, Config.ServerMoveGraceSeconds);
+
+            if (Config.VerboseNetworkLogging)
+            {
+                Log.Debug(LogCategory.Network, $"Authority hold on {session} released ({reason}).");
+            }
+        }
+
+        /// <summary>
+        /// Declares that the server has just moved this player, so their in-flight
+        /// updates must be ignored until they have seen it.
+        /// </summary>
+        private void HoldClientAuthority(PlayerSession session)
+        {
+            session.PendingAuthorityHold = true;
+            session.AuthorityHoldSnapshot = 0;
         }
 
         private void HandleViolations(PlayerSession session, ValidationOutcome outcome)
@@ -536,6 +761,16 @@ namespace Gtamp.Server.Core
                     World.State.Entities, viewer, World.Tick, session.Replication, EntityId.None);
 
                 uint snapshotId = session.Replication.AllocateSnapshotId();
+
+                if (session.PendingAuthorityHold)
+                {
+                    // This is the snapshot that carries the server's move, so it is the
+                    // one the client has to acknowledge before it regains authority.
+                    session.PendingAuthorityHold = false;
+                    session.AuthorityHoldSnapshot = snapshotId;
+                    session.AuthorityHoldExpiry = _now + AuthorityHoldTimeoutSeconds;
+                }
+
                 SnapshotWriteResult result = SnapshotCodec.Write(
                     World.State, baseline, Registry, order, snapshotId, Config.SnapshotByteBudget);
 

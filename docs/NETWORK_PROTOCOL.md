@@ -1,6 +1,6 @@
 # Network protocol
 
-Transport: UDP. Byte order: little-endian. Protocol version: **1**
+Transport: UDP. Byte order: little-endian. Protocol version: **2**
 (`ProtocolConstants.ProtocolVersion`); a mismatch is rejected during the
 handshake with a readable message.
 

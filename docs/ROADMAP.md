@@ -29,20 +29,24 @@ disconnects → B keeps playing → A reconnects → A receives the *current* wo
 
 ---
 
-## Phase 2 — Players 🔜 next
+## Phase 2 — Players ✅ complete
 
-The client bridge is the whole of this phase; the protocol already carries what it
-needs.
-
-| Item | Notes |
+| Item | State |
 | --- | --- |
-| Task-driven remote locomotion | The current bridge writes coordinates, so remote peds slide. Drive the task system from `MovementState` and correct on error. See ENGINE_ANALYSIS §4.1 |
-| Ragdoll replication | Flag is already on the wire; the client needs to apply and blend out of it |
-| Clothing components and props | New `PlayerEntity` fields; protocol change |
-| Scenario and animation tasks | `AnimationHash` is on the wire and unused by the bridge |
-| Aim and shoot pose | `AimPosition` and the flags are on the wire and unused |
-| Death and respawn flow | Needs server arbitration, not just a flag |
-| Interior and room tracking | `InteriorId` is replicated; the bridge does not read it yet |
+| Task-driven remote locomotion | ✅ `RemotePedController` decides gait and when to correct; the bridge tasks the ped. **Not visually verified** — see the caveat below |
+| Ragdoll replication | ✅ handed to physics, not corrected while ragdolling |
+| Clothing components and props | ✅ 12 components, 8 prop slots, mask-encoded (3 bytes when default) |
+| Aim pose | ✅ real aim target from the gameplay camera, applied with `TASK_AIM_GUN_AT_COORD` |
+| Death and respawn | ✅ server-arbitrated; nearest-hospital respawn; a dead client cannot heal itself |
+| Interior tracking | ✅ read from `GET_INTERIOR_FROM_ENTITY` and replicated |
+| Server-initiated moves | ✅ authority hold, so a teleport or respawn is not dragged back by in-flight client updates |
+| Scenario and animation tasks | ⏸ `AnimationHash` is replicated and still unused by the bridge — moved to Phase 9 with the wider animation work |
+
+**Caveat that matters.** The locomotion *decision* is unit-tested — 13 tests over
+gait selection, correction thresholds, stale flags, ragdoll and death precedence.
+Whether the resulting ped *looks* right in Los Santos cannot be tested here, and
+has not been. Expect the correction distance and re-task threshold to need tuning
+against the real game.
 
 ## Phase 3 — World entities
 
@@ -60,6 +64,7 @@ needs.
 | Item | Notes |
 | --- | --- |
 | Client-side prediction for the local player | Today the local player is not predicted; it is simulated locally and corrected |
+| Animation and scenario replication | `AnimationHash` is on the wire and unused |
 | Per-entity baselines | Replaces the per-client view history; needed before entity counts reach the thousands |
 | Packet fragmentation | Today a single message must fit in one datagram |
 | Bandwidth shaping per client | Today the budget is global |
@@ -120,7 +125,8 @@ throughput, and stress testing beyond 32 players.
 
 Things that could have been faked and were not:
 
-- **Remote ped locomotion animation.** Peds slide. Documented, not hidden.
+- **Visual verification of ped locomotion.** The controller is tested; how it
+  looks in the game is not, and cannot be from here.
 - **`RegisterRPC`, `RegisterMission`, `RegisterCustomWeapon`.** These throw with a
   phase number rather than no-op'ing. A registration that appears to work and
   never fires is worse than a loud failure.

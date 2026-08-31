@@ -121,6 +121,25 @@ namespace Gtamp.Shared.Security
         /// <summary>Metres of movement currently banked. Negative means the budget has never been primed.</summary>
         public double MovementBudget { get; set; } = -1d;
 
+        /// <summary>
+        /// Behavioural checks are skipped until this time.
+        /// <para>
+        /// The server itself moves players — a respawn teleports them across the map
+        /// and restores their health in one step. Without a grace window the server's
+        /// own action would be flagged as a teleport and a health hack, and the player
+        /// would be rejected out of the position the server just put them in.
+        /// </para>
+        /// </summary>
+        public double GraceUntil { get; set; }
+
+        /// <summary>Suspends behavioural checks for <paramref name="seconds"/> and re-primes the movement budget.</summary>
+        public void GrantGrace(double now, double seconds)
+        {
+            GraceUntil = now + seconds;
+            MovementBudget = -1d;
+            LastUpdateTime = 0d;
+        }
+
         public int UpdatesInWindow { get; set; }
 
         public double WindowStart { get; set; }
@@ -197,7 +216,7 @@ namespace Gtamp.Shared.Security
                 return outcome;
             }
 
-            if (Settings.Level == AntiCheatLevel.Off)
+            if (Settings.Level == AntiCheatLevel.Off || now < state.GraceUntil)
             {
                 state.LastUpdateTime = now;
                 return outcome;

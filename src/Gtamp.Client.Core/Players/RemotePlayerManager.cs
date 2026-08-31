@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using Gtamp.Client.Core;
 using Gtamp.Shared.Diagnostics;
+using Gtamp.Shared.Core;
 using Gtamp.Shared.Entities;
 using Gtamp.Shared.World;
 
@@ -17,6 +18,7 @@ namespace Gtamp.Client.Players
         private readonly LogBus _log;
         private readonly Dictionary<EntityId, RemotePlayer> _players = new Dictionary<EntityId, RemotePlayer>();
         private readonly List<EntityId> _removalBuffer = new List<EntityId>();
+        private readonly Dictionary<EntityId, int> _appliedAppearance = new Dictionary<EntityId, int>();
 
         public RemotePlayerManager(IGameBridge bridge, LogBus log)
         {
@@ -87,9 +89,34 @@ namespace Gtamp.Client.Players
                     {
                         continue;
                     }
+
+                    // Force the appearance onto a freshly created ped.
+                    _appliedAppearance.Remove(player.EntityId);
                 }
 
-                _bridge.UpdateRemotePed(player.PedHandle, in frame);
+                ApplyAppearanceIfChanged(player);
+
+                NetVector3 pedPosition = _bridge.TryGetRemotePedPosition(player.PedHandle, out NetVector3 position)
+                    ? position
+                    : frame.Position;
+
+                RemotePedCommand command = RemotePedController.Decide(in frame, pedPosition);
+                _bridge.ApplyRemotePedCommand(player.PedHandle, in command);
+            }
+        }
+
+        private void ApplyAppearanceIfChanged(RemotePlayer player)
+        {
+            if (_appliedAppearance.TryGetValue(player.EntityId, out int applied)
+                && applied == player.AppearanceVersion)
+            {
+                return;
+            }
+
+            _appliedAppearance[player.EntityId] = player.AppearanceVersion;
+            if (!player.Appearance.IsDefault)
+            {
+                _bridge.ApplyRemotePedAppearance(player.PedHandle, player.Appearance);
             }
         }
 
@@ -106,6 +133,7 @@ namespace Gtamp.Client.Players
             }
 
             _players.Remove(id);
+            _appliedAppearance.Remove(id);
             _log.Info(LogCategory.Client, $"{player.Name} left ({id}).", $"entity:{id.Value}");
         }
 
@@ -120,6 +148,7 @@ namespace Gtamp.Client.Players
             }
 
             _players.Clear();
+            _appliedAppearance.Clear();
         }
     }
 }

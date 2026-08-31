@@ -49,6 +49,13 @@ namespace Gtamp.Client.Core
         /// </summary>
         public double CorrectionThreshold { get; set; } = 3.0;
 
+        /// <summary>
+        /// How far the local health may differ from the server's before the client
+        /// snaps to it. Set above the damage a player can plausibly take between two
+        /// snapshots, or ordinary combat produces constant corrections.
+        /// </summary>
+        public int HealthCorrectionThreshold { get; set; } = 20;
+
         public bool ShowNetworkOverlay { get; set; }
 
         public bool VerboseLogging { get; set; }
@@ -111,6 +118,7 @@ namespace Gtamp.Client.Core
                 $"ConsoleKey={ConsoleKey.ToString(CultureInfo.InvariantCulture)}",
                 $"InterpolationDelay={InterpolationDelay.ToString("0.###", CultureInfo.InvariantCulture)}",
                 $"CorrectionThreshold={CorrectionThreshold.ToString("0.###", CultureInfo.InvariantCulture)}",
+                $"HealthCorrectionThreshold={HealthCorrectionThreshold.ToString(CultureInfo.InvariantCulture)}",
                 $"ShowNetworkOverlay={ShowNetworkOverlay}",
                 $"VerboseLogging={VerboseLogging}",
                 $"AutoConnectOnStart={AutoConnectOnStart}",
@@ -160,6 +168,13 @@ namespace Gtamp.Client.Core
                     if (double.TryParse(value, NumberStyles.Float, CultureInfo.InvariantCulture, out double threshold))
                     {
                         CorrectionThreshold = threshold;
+                    }
+
+                    break;
+                case "healthcorrectionthreshold":
+                    if (int.TryParse(value, NumberStyles.Integer, CultureInfo.InvariantCulture, out int healthThreshold))
+                    {
+                        HealthCorrectionThreshold = healthThreshold;
                     }
 
                     break;

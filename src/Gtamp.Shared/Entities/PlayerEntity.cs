@@ -86,6 +86,9 @@ namespace Gtamp.Shared.Entities
         /// <summary>Hash of the currently played animation or scenario, 0 when none.</summary>
         public uint AnimationHash { get; set; }
 
+        /// <summary>Clothing components and props. Changes rarely; replicated whole when it does.</summary>
+        public PedAppearance Appearance { get; } = new PedAppearance();
+
         public bool IsAlive => Health > 0 && (Flags & PlayerFlags.Dead) == 0;
 
         public bool HasFlag(PlayerFlags flag) => (Flags & flag) == flag;
@@ -123,6 +126,7 @@ namespace Gtamp.Shared.Entities
                 AnimationHash = AnimationHash,
             };
 
+            clone.Appearance.CopyFrom(Appearance);
             CopyBaseTo(clone);
             return clone;
         }
@@ -214,7 +218,12 @@ namespace Gtamp.Shared.Entities
                     "AnimationHash",
                     (a, b) => a.AnimationHash != b.AnimationHash,
                     (w, e) => w.WriteUInt32(e.AnimationHash),
-                    (r, e) => e.AnimationHash = r.ReadUInt32());
+                    (r, e) => e.AnimationHash = r.ReadUInt32())
+                .Add(
+                    "Appearance",
+                    (a, b) => !a.Appearance.ValueEquals(b.Appearance),
+                    (w, e) => e.Appearance.Write(w),
+                    (r, e) => e.Appearance.Read(r));
         }
     }
 }

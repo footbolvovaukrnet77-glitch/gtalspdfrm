@@ -36,6 +36,10 @@ namespace Gtamp.Client.Core
         private double _lastUpdateTime;
         private double _now;
 
+        private NetVector3 _lastReportedPosition;
+        private int _lastReportedHealth;
+        private bool _hasReportedState;
+
         public MultiplayerClient(
             ClientConfig config,
             IGameBridge bridge,
@@ -228,7 +232,16 @@ namespace Gtamp.Client.Core
                     {
                         ServerEventMessage serverEvent = ServerEventMessage.Deserialize(message.Payload);
                         Log.Info(LogCategory.Server, serverEvent.Text);
-                        Bridge.ShowNotification(serverEvent.Text);
+
+                        if (serverEvent.Kind == ServerEventKind.PlayerDied && serverEvent.PlayerId == LocalPlayerId)
+                        {
+                            Bridge.ShowSubtitle("~r~You are dead.~s~ Waiting to respawn...", 5000);
+                        }
+                        else
+                        {
+                            Bridge.ShowNotification(serverEvent.Text);
+                        }
+
                         break;
                     }
 
@@ -335,8 +348,28 @@ namespace Gtamp.Client.Core
             }
 
             LocalPlayerSample local = Bridge.SampleLocalPlayer();
-            float drift = NetVector3.Distance(local.Position, authoritative.Position);
-            if (drift <= Config.CorrectionThreshold)
+
+            // Compared against what was last *reported*, not against where the player
+            // is *now*.
+            //
+            // The server's snapshot answers an earlier report, so measuring against the
+            // current local state means every metre walked and every point of damage
+            // taken since that report reads as disagreement. Correcting on that would
+            // rubber-band an honest player at any real latency, and would undo damage
+            // the server has simply not confirmed yet. Measuring against the reported
+            // values isolates the only thing that matters: whether the server changed
+            // what the client told it.
+            NetVector3 referencePosition = _hasReportedState ? _lastReportedPosition : local.Position;
+            int referenceHealth = _hasReportedState ? _lastReportedHealth : local.Health;
+
+            float drift = NetVector3.Distance(referencePosition, authoritative.Position);
+            int healthGap = Math.Abs(referenceHealth - authoritative.Health);
+
+            // Health is corrected as well as position, because the server arbitrates
+            // death and respawn: a respawn refills health and moves the player, and a
+            // rejected update leaves the server's health standing. Position drift alone
+            // would miss a death that happened where the player was already standing.
+            if (drift <= Config.CorrectionThreshold && healthGap <= Config.HealthCorrectionThreshold)
             {
                 return;
             }
@@ -344,10 +377,16 @@ namespace Gtamp.Client.Core
             CorrectionsApplied++;
             Log.Debug(
                 LogCategory.Network,
-                $"Server correction: local position was {drift:0.##} m from the authoritative one.");
+                $"Server correction: position off by {drift:0.##} m, health off by {healthGap}.");
 
             Bridge.ApplyLocalCorrection(
                 authoritative.Position, authoritative.Heading, authoritative.Health, authoritative.Armor);
+
+            // The correction is now what the server believes, so the next comparison
+            // must be against it rather than against the report it superseded.
+            _lastReportedPosition = authoritative.Position;
+            _lastReportedHealth = authoritative.Health;
+            _hasReportedState = true;
         }
 
         private void RequestResync(string reason)
@@ -396,7 +435,16 @@ namespace Gtamp.Client.Core
                 AnimationHash = sample.AnimationHash,
             };
 
+            if (sample.Appearance != null)
+            {
+                update.Appearance.CopyFrom(sample.Appearance);
+            }
+
             Connection.Peer?.Send(NetMessageType.ClientStateUpdate, update.Serialize(), DeliveryMethod.Unreliable);
+
+            _lastReportedPosition = sample.Position;
+            _lastReportedHealth = sample.Health;
+            _hasReportedState = true;
         }
 
         private void SendPeriodicPing(double now)
@@ -437,6 +485,7 @@ namespace Gtamp.Client.Core
         {
             LocalEntityId = accept.PlayerEntityId;
             LocalPlayerId = accept.PlayerId;
+            _hasReportedState = false;
             RemotePlayers.LocalEntityId = accept.PlayerEntityId;
             EstimatedServerTime = accept.ServerTime;
 

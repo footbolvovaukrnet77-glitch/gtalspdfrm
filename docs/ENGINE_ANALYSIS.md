@@ -93,10 +93,10 @@ attribution — has to be rebuilt. That is the bulk of Phases 2 to 4.
 
 ## 4. Named limitations
 
-### 4.1 Remote player locomotion — *partially solved, Phase 2*
+### 4.1 Remote player locomotion — *implemented in Phase 2, not visually verified*
 
-- **What is limited:** a remote player's ped is positionally correct but plays an
-  idle animation while it moves. It slides.
+- **What is limited:** a ped driven purely by coordinates is positionally correct
+  but plays an idle animation while it moves. It slides.
 - **Why:** GTA V drives locomotion from the ped's *task system*, not from its
   coordinates. Writing `SET_ENTITY_COORDS_NO_OFFSET` every frame moves the ped
   without telling the animation system anything.
@@ -108,11 +108,19 @@ attribution — has to be rebuilt. That is the bulk of Phases 2 to 4.
   with coordinate correction when error exceeds a threshold, plus explicit
   animation state (crouch, sprint, ragdoll, swim) from the replicated
   `PlayerFlags` and `MovementState`.
-- **Chosen:** (a) for Phase 1, (c) for Phase 2. The replicated state that (c)
-  needs — `MovementState`, `PlayerFlags`, `AnimationHash` — is already on the
-  wire, so Phase 2 is a client-side change with no protocol break.
-- **Cost of the Phase 1 choice:** remote players look wrong in motion. It is
-  visible and it is documented rather than hidden.
+- **Chosen:** (c). `RemotePedController` picks the gait from `MovementState`,
+  refined by the replicated velocity so a stale flag does not leave a ped
+  sprinting on the spot or standing still while it drifts. The bridge issues
+  `TASK_GO_STRAIGHT_TO_COORD` at the matching move-blend ratio, re-issuing only
+  when the destination moves more than 0.75 m — re-tasking every frame restarts
+  the animation and produces a ped that jitters in place. Beyond 8 m of error the
+  ped is placed outright, because walking that off takes seconds of visibly
+  running through scenery.
+- **Cost:** two costs, both real. Tasking gives up exact positional agreement
+  between the correction points, so a remote ped is approximately, not exactly,
+  where the server says. And the thresholds above are reasoned, not measured:
+  the decision logic is unit-tested but nobody has watched the result in Los
+  Santos, so expect them to need tuning.
 
 ### 4.2 Vehicle physics — *Phase 3*
 

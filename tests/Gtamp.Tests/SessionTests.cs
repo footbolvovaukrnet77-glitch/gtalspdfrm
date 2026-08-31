@@ -80,7 +80,7 @@ namespace Gtamp.Tests
             Assert.Single(bob.Bridge.Peds);
             foreach (var ped in bob.Bridge.Peds.Values)
             {
-                Assert.InRange(ped.Position.X, 230f, 258f);
+                Assert.InRange(ped.TargetPosition.X, 230f, 258f);
             }
         }
 
@@ -114,7 +114,7 @@ namespace Gtamp.Tests
 
                 foreach (var ped in bob.Bridge.Peds.Values)
                 {
-                    renderedPositions.Add(ped.Position.X);
+                    renderedPositions.Add(ped.TargetPosition.X);
                 }
             }
 

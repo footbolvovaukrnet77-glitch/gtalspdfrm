@@ -67,6 +67,16 @@ namespace Gtamp.Server.Core
         /// </summary>
         public double KeepDisconnectedBodySeconds { get; set; }
 
+        /// <summary>Seconds a dead player waits before the server respawns them.</summary>
+        public double RespawnDelaySeconds { get; set; } = 8;
+
+        /// <summary>
+        /// Seconds of anti-cheat grace granted after the server moves a player itself
+        /// (join, respawn). Must comfortably exceed one network round trip, or the
+        /// client's in-flight updates from before the move get flagged.
+        /// </summary>
+        public double ServerMoveGraceSeconds { get; set; } = 3;
+
         /// <summary>Reject connections whose mod set is missing a Required server mod.</summary>
         public bool EnforceRequiredMods { get; set; } = true;
 
@@ -142,6 +152,11 @@ namespace Gtamp.Server.Core
             if (SnapshotByteBudget < 256 || SnapshotByteBudget > 64 * 1024)
             {
                 throw new InvalidDataException("snapshotByteBudget must be between 256 and 65536.");
+            }
+
+            if (RespawnDelaySeconds < 0 || RespawnDelaySeconds > 600)
+            {
+                throw new InvalidDataException("respawnDelaySeconds must be between 0 and 600.");
             }
         }
 

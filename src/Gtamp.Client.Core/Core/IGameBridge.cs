@@ -1,3 +1,4 @@
+using Gtamp.Client.Players;
 using Gtamp.Shared.Core;
 using Gtamp.Shared.Entities;
 
@@ -32,7 +33,20 @@ namespace Gtamp.Client.Core
         /// <summary>Creates a ped representing another player. Returns a handle, or 0 on failure.</summary>
         int CreateRemotePed(uint modelHash, NetVector3 position, float heading);
 
-        void UpdateRemotePed(int handle, in RemotePedFrame frame);
+        /// <summary>
+        /// Drives one remote ped for this frame. The decision of *what* to do lives in
+        /// <see cref="RemotePedController"/>; this only executes it.
+        /// </summary>
+        void ApplyRemotePedCommand(int handle, in RemotePedCommand command);
+
+        /// <summary>Applies clothing and props. Called only when the appearance actually changes.</summary>
+        void ApplyRemotePedAppearance(int handle, PedAppearance appearance);
+
+        /// <summary>
+        /// Where the ped currently is in the game. The controller needs this to decide
+        /// between tasking it to walk and correcting it outright.
+        /// </summary>
+        bool TryGetRemotePedPosition(int handle, out NetVector3 position);
 
         void DestroyRemotePed(int handle);
 
@@ -64,6 +78,9 @@ namespace Gtamp.Client.Core
         public NetVector3 AimPosition;
         public int InteriorId;
         public uint AnimationHash;
+
+        /// <summary>Clothing and props. Null when the bridge could not read them this frame.</summary>
+        public PedAppearance? Appearance;
     }
 
     /// <summary>Interpolated state applied to another player's ped this frame.</summary>

@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Net;
 using Gtamp.Client.Core;
+using Gtamp.Client.Players;
 using Gtamp.Client.Ui;
 using Gtamp.Server.Core;
 using Gtamp.Server.Persistence;
@@ -18,6 +19,7 @@ namespace Gtamp.Tests
     /// </summary>
     public sealed class FakeGameBridge : IGameBridge
     {
+        private readonly Dictionary<int, NetVector3> _pedPositions = new Dictionary<int, NetVector3>();
         private int _nextHandle = 1;
 
         public string GameVersion => "test-build";
@@ -32,7 +34,12 @@ namespace Gtamp.Tests
             ModelHash = 0x9B22DBAF,
         };
 
-        public Dictionary<int, RemotePedFrame> Peds { get; } = new Dictionary<int, RemotePedFrame>();
+        public Dictionary<int, RemotePedCommand> Peds { get; } = new Dictionary<int, RemotePedCommand>();
+
+        /// <summary>How many times each ped has had its clothing written.</summary>
+        public Dictionary<int, int> AppearanceApplications { get; } = new Dictionary<int, int>();
+
+        public Dictionary<int, PedAppearance> PedAppearances { get; } = new Dictionary<int, PedAppearance>();
 
         public List<string> Notifications { get; } = new List<string>();
 
@@ -56,13 +63,38 @@ namespace Gtamp.Tests
         public int CreateRemotePed(uint modelHash, NetVector3 position, float heading)
         {
             int handle = _nextHandle++;
-            Peds[handle] = new RemotePedFrame { Position = position, Heading = heading };
+            Peds[handle] = new RemotePedCommand(
+                RemotePedAction.Idle, position, heading, 0f, true, false, position, 200, 0);
             return handle;
         }
 
-        public void UpdateRemotePed(int handle, in RemotePedFrame frame) => Peds[handle] = frame;
+        public void ApplyRemotePedCommand(int handle, in RemotePedCommand command)
+        {
+            Peds[handle] = command;
 
-        public void DestroyRemotePed(int handle) => Peds.Remove(handle);
+            // A fake ped follows its instruction exactly: placed, or walked at the
+            // blend ratio. That is enough for the tests to see whether the controller
+            // is issuing sensible instructions.
+            _pedPositions[handle] = command.TargetPosition;
+        }
+
+        public void ApplyRemotePedAppearance(int handle, PedAppearance appearance)
+        {
+            AppearanceApplications.TryGetValue(handle, out int count);
+            AppearanceApplications[handle] = count + 1;
+            PedAppearances[handle] = appearance.Clone();
+        }
+
+        public bool TryGetRemotePedPosition(int handle, out NetVector3 position) =>
+            _pedPositions.TryGetValue(handle, out position);
+
+        public void DestroyRemotePed(int handle)
+        {
+            Peds.Remove(handle);
+            _pedPositions.Remove(handle);
+            AppearanceApplications.Remove(handle);
+            PedAppearances.Remove(handle);
+        }
 
         public bool IsRemotePedValid(int handle) => Peds.ContainsKey(handle);
 

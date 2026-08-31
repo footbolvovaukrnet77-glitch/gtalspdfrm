@@ -63,6 +63,34 @@ namespace Gtamp.Server.Players
 
         public double LastStateUpdateAt { get; set; }
 
+        /// <summary>Server time the player died, or 0 while alive.</summary>
+        public double DiedAt { get; set; }
+
+        public bool IsDead => DiedAt > 0;
+
+        /// <summary>
+        /// Set when the server has moved the player itself and the snapshot carrying
+        /// that move has not been sent yet.
+        /// </summary>
+        public bool PendingAuthorityHold { get; set; }
+
+        /// <summary>
+        /// Snapshot id the client must acknowledge before its own state updates are
+        /// accepted again, or 0 when there is no hold.
+        /// <para>
+        /// After the server moves a player — a join placing them at their persisted
+        /// position, or a respawn — the client is still reporting where it thinks it
+        /// is. Those reports are in flight and describe a world that no longer exists;
+        /// accepting them would drag the player straight back out of the position the
+        /// server just put them in. The hold ends the moment the client confirms it has
+        /// seen the move.
+        /// </para>
+        /// </summary>
+        public uint AuthorityHoldSnapshot { get; set; }
+
+        /// <summary>Server time the hold gives up waiting, so lost packets cannot freeze a player forever.</summary>
+        public double AuthorityHoldExpiry { get; set; }
+
         /// <summary>Set once a disconnect has been decided, so the tick loop can reap the session.</summary>
         public bool PendingRemoval { get; set; }
 

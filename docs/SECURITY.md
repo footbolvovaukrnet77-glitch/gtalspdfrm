@@ -85,6 +85,43 @@ That loop is what makes server authority real. Without the client-side correctio
 half, the server would "reject" a movement while the player kept walking in a world
 that no longer agreed with them.
 
+## Server-initiated moves and the authority hold
+
+When the server moves a player itself — placing them at their persisted position
+on join, or respawning them at a hospital — the client is still reporting where it
+thinks it is. Those reports are in flight and describe a world that no longer
+exists.
+
+Accepting them drags the player straight back out of the position the server just
+chose. Rejecting them trips the teleport check, and because the server's position
+then never advances, *every* subsequent update fails: the player is wedged.
+
+So neither. The server records the snapshot id that carries the move and ignores
+that client's state updates until one arrives acknowledging it:
+
+```
+server moves the player   → PendingAuthorityHold
+next snapshot allocated   → AuthorityHoldSnapshot = that id
+client update arrives     → its own acknowledged id < hold ? ignore : release
+```
+
+Two details that are not optional:
+
+- The test is against the id carried by **that update**, not the session's
+  high-water mark. Snapshot acknowledgements also travel in their own unreliable
+  message, so a standalone acknowledgement can overtake a state update sent
+  before it; releasing on the high-water mark lets that older update through.
+- The window between the move and the next snapshot has no id to acknowledge yet,
+  so anything arriving in it is held unconditionally.
+
+The hold expires after ten seconds. A client whose acknowledgement is lost
+entirely would otherwise be unable to move at all, which is worse than accepting
+a stale update and correcting from there.
+
+Death is arbitrated the same way: while the server considers a player dead their
+reported health is ignored outright, so a trainer's heal key cannot cut the
+respawn timer short.
+
 ## Trust boundaries
 
 | Data | Trusted? |
