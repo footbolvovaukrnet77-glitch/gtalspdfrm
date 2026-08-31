@@ -46,8 +46,8 @@ including their own character, across a server restart.
   the adapters link against them; the adapters bind by reflection and report
   themselves inactive when the mod is absent.
 
-138 automated tests, all passing, covering everything except the ~400 lines that
-call GTA V natives.
+139 automated tests, all passing, covering everything except the ScriptHookVDotNet
+host layer, which needs a running game.
 
 ## What does not work yet
 

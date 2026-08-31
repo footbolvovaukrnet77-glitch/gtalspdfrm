@@ -43,7 +43,7 @@
 | `Gtamp.Client.Shv` | `net48` | The ScriptHookVDotNet host. Deliberately thin — a bridge implementation, a console renderer and a tick pump. |
 | `Gtamp.Adapters.Rph` | `net48` | Optional RAGE Plugin Hook integration, loaded only when RPH is present. |
 | `Gtamp.Adapters.Lspdfr` | `net48` | Optional LSPDFR integration, same rule. |
-| `Gtamp.Tests` | `net8.0` | xUnit. Covers everything except the ~400 lines that touch GTA V natives. |
+| `Gtamp.Tests` | `net8.0` | xUnit. Covers everything except the ScriptHookVDotNet host layer, which needs a running game. |
 
 ## The three seams
 
@@ -52,11 +52,11 @@ category of problem out of the rest of the system.
 
 ### 1. `IGameBridge` — the engine seam
 
-Everything GTA V-specific is behind one interface with fourteen members. Above it
+Everything GTA V-specific is behind one interface with twelve members. Above it
 nothing knows what a `Ped` is.
 
 This is what makes the client testable: `FakeGameBridge` in the test project
-implements it in 60 lines, and the full session tests — connect, replicate, move,
+implements it in under 60 lines, and the full session tests — connect, replicate, move,
 disconnect, reconnect — run with no game process anywhere.
 
 It also means a second host (ScriptHookVDotNetCore, or an RPH-hosted build) is a
@@ -105,7 +105,7 @@ Snapshot tick (20 Hz), per client
   → ReplicatedWorld.TryApply          decoded against the named baseline view
   → RemotePlayerManager.Sync          into interpolation buffers
   → ApplyServerCorrection             local player snaps if it has drifted
-  → RemotePlayerManager.Render        every frame, at serverTime − delay
+  → RemotePlayerManager.Render        every frame, at estimatedServerTime − delay
 ```
 
 ### Reliable events

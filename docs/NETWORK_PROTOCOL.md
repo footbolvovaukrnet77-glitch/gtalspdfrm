@@ -207,6 +207,28 @@ silently appears somewhere plausible.
 The position bound is asserted over 5,000 random samples in
 `SerializationTests.QuantizedPositionStaysWithinTheDocumentedErrorBound`.
 
+## Interpolation timeline
+
+Remote players are rendered a fixed delay behind the client's **estimate** of the
+server clock, not behind the last snapshot's timestamp.
+
+The estimate advances with every frame and is nudged towards the authoritative
+value when a snapshot arrives — gradually for small differences, snapped for large
+ones (a stall, or a fresh connection). Correcting hard on every snapshot would make
+the render timeline jump with network jitter, which shows up as remote players
+twitching.
+
+Driving the timeline straight from the last snapshot instead would make it a 20 Hz
+staircase, so a remote ped would step once per snapshot however fast the game
+renders — which defeats interpolating at all.
+`SessionTests.RemotePlayersAreInterpolatedAtFrameRateNotAtSnapshotRate` measures
+this directly: 16 distinct rendered positions per second with the staircase, over
+40 with the estimated clock.
+
+`InterpolationDelay` (default 120 ms, roughly two snapshot intervals plus a jitter
+margin) trades responsiveness against smoothness. Lower it and remote players
+stutter; raise it and they lag further behind their real position.
+
 ## Resync
 
 A client requests a resync when it cannot decode a delta:

@@ -32,8 +32,8 @@ namespace Gtamp.Client.Core
         private readonly IDatagramTransport _transport;
 
         private double _lastStateSendTime;
-        private double _lastEnvironmentApplyTime;
         private double _lastPingTime;
+        private double _lastUpdateTime;
         private double _now;
 
         public MultiplayerClient(
@@ -95,7 +95,17 @@ namespace Gtamp.Client.Core
 
         public double Now => _now;
 
-        /// <summary>Server clock estimate, used as the timeline for interpolation.</summary>
+        /// <summary>
+        /// Local estimate of the server clock, and the timeline remote players are
+        /// interpolated on.
+        /// <para>
+        /// It advances with every frame rather than only when a snapshot lands.
+        /// Driving interpolation straight from the last snapshot's timestamp would
+        /// make the render time a 20 Hz staircase, so remote players would step once
+        /// per snapshot no matter how fast the game renders — which defeats the point
+        /// of interpolating at all.
+        /// </para>
+        /// </summary>
         public double EstimatedServerTime { get; private set; }
 
         public int SnapshotsApplied => ReplicatedWorld.SnapshotsApplied;
@@ -169,17 +179,19 @@ namespace Gtamp.Client.Core
                 HandleMessage(message);
             }
 
+            double frameDelta = _lastUpdateTime > 0 ? now - _lastUpdateTime : 0d;
+            _lastUpdateTime = now;
+
             if (Connection.IsConnected)
             {
-                EstimatedServerTime += now - (_lastEnvironmentApplyTime > 0 ? _lastEnvironmentApplyTime : now);
-                _lastEnvironmentApplyTime = now;
+                EstimatedServerTime += frameDelta;
 
                 SendLocalState(now);
                 SendPeriodicPing(now);
 
-                // Remote players are rendered a fixed delay behind the newest snapshot,
-                // which is what turns 20 Hz snapshots into smooth 60 Hz movement.
-                RemotePlayers.Render(ReplicatedWorld.ServerTime - Config.InterpolationDelay);
+                // Rendered a fixed delay behind the estimated server clock, which is
+                // what turns 20 Hz snapshots into smooth frame-rate movement.
+                RemotePlayers.Render(EstimatedServerTime - Config.InterpolationDelay);
             }
 
             Adapters.Update(now);
@@ -259,7 +271,7 @@ namespace Gtamp.Client.Core
                 return;
             }
 
-            EstimatedServerTime = ReplicatedWorld.ServerTime;
+            SynchroniseServerClock(ReplicatedWorld.ServerTime);
             RemotePlayers.LocalEntityId = LocalEntityId;
             RemotePlayers.Sync(ReplicatedWorld.Current);
             ApplyEnvironment();
@@ -274,6 +286,28 @@ namespace Gtamp.Client.Core
                     LogCategory.Network,
                     $"Applied full snapshot {header.SnapshotId}: {header.CreatedIds.Count} entities.");
             }
+        }
+
+        /// <summary>
+        /// Nudges the local clock estimate towards the authoritative one.
+        /// <para>
+        /// A hard assignment on every snapshot would make the render timeline jump
+        /// backwards and forwards with network jitter, which shows up as remote
+        /// players twitching. Small differences are corrected gradually; a large one
+        /// means the estimate is genuinely wrong (a stall, or a fresh connection) and
+        /// is snapped.
+        /// </para>
+        /// </summary>
+        private void SynchroniseServerClock(double authoritative)
+        {
+            double error = authoritative - EstimatedServerTime;
+            if (Math.Abs(error) > 0.5d)
+            {
+                EstimatedServerTime = authoritative;
+                return;
+            }
+
+            EstimatedServerTime += error * 0.1d;
         }
 
         /// <summary>
@@ -405,7 +439,6 @@ namespace Gtamp.Client.Core
             LocalPlayerId = accept.PlayerId;
             RemotePlayers.LocalEntityId = accept.PlayerEntityId;
             EstimatedServerTime = accept.ServerTime;
-            _lastEnvironmentApplyTime = _now;
 
             Bridge.ShowNotification($"Connected to ~g~{accept.ServerName}~s~ as {Config.PlayerName}.");
 

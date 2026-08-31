@@ -85,6 +85,48 @@ namespace Gtamp.Tests
         }
 
         [Fact]
+        public void RemotePlayersAreInterpolatedAtFrameRateNotAtSnapshotRate()
+        {
+            // The server sends 20 snapshots a second. If the render timeline only
+            // advanced when a snapshot landed, a remote ped would step 20 times a
+            // second no matter how fast the game rendered, and interpolating would
+            // buy nothing.
+            using var harness = new TestHarness();
+            TestClient alice = harness.CreateClient("alice");
+            TestClient bob = harness.CreateClient("bob");
+
+            alice.Client.Connect("127.0.0.1", TestHarness.ServerEndPoint.Port);
+            bob.Client.Connect("127.0.0.1", TestHarness.ServerEndPoint.Port);
+            Assert.True(harness.AdvanceUntil(() => alice.PlayerCount == 2 && bob.PlayerCount == 2));
+
+            // Fill alice's interpolation buffer on bob's side with continuous motion.
+            harness.Walk(alice, metres: 12f);
+
+            var renderedPositions = new System.Collections.Generic.HashSet<float>();
+            for (int frame = 0; frame < 60; frame++)
+            {
+                alice.Bridge.Sample.Position = new NetVector3(
+                    alice.Bridge.Sample.Position.X + 0.1f,
+                    alice.Bridge.Sample.Position.Y,
+                    alice.Bridge.Sample.Position.Z);
+
+                harness.Advance(1d / 60d, 1d / 60d);
+
+                foreach (var ped in bob.Bridge.Peds.Values)
+                {
+                    renderedPositions.Add(ped.Position.X);
+                }
+            }
+
+            // One second at 60 fps against 20 snapshots: a snapshot-driven timeline
+            // would produce at most ~21 distinct positions.
+            Assert.True(
+                renderedPositions.Count > 40,
+                $"only {renderedPositions.Count} distinct rendered positions over 60 frames — " +
+                "the render timeline is not advancing between snapshots");
+        }
+
+        [Fact]
         public void HealthAndFlagsAreReplicated()
         {
             using var harness = new TestHarness();
