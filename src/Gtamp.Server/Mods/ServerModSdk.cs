@@ -40,6 +40,20 @@ namespace Gtamp.Server.Mods
         /// <summary>Registers a handler for a mod event sent by a client.</summary>
         void RegisterNetworkEvent(string eventName, Action<PlayerSession, byte[]> handler);
 
+        /// <summary>
+        /// Declares that a client-sent event of this name is forwarded verbatim to
+        /// every other connected player.
+        /// <para>
+        /// The server does not parse the payload and cannot validate it, so a relayed
+        /// event carries no authority: it is one client telling the others something,
+        /// with the server acting as the postbox. Anything a mod needs the server to
+        /// vouch for must go through <see cref="RegisterNetworkEvent"/> or an RPC
+        /// instead. The relay exists because without it two clients running the same
+        /// mod have no way to talk at all on a server that knows nothing about it.
+        /// </para>
+        /// </summary>
+        void RegisterRelay(string eventName);
+
         /// <summary>Sends a mod event to one client.</summary>
         bool SendNetworkEvent(PlayerSession session, string eventName, byte[] payload, bool reliable = true);
 
@@ -56,6 +70,7 @@ namespace Gtamp.Server.Mods
         private readonly EntityRegistry _registry;
         private readonly Dictionary<string, Action<PlayerSession, byte[]>> _eventHandlers =
             new Dictionary<string, Action<PlayerSession, byte[]>>(StringComparer.OrdinalIgnoreCase);
+        private readonly HashSet<string> _relayed = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
 
         public ServerModSdk(
             EntityRegistry registry,
@@ -87,6 +102,9 @@ namespace Gtamp.Server.Mods
 
         /// <summary>Set by the server: (messageType, payload, reliable).</summary>
         public Action<NetMessageType, byte[], bool>? SendToAll { get; set; }
+
+        /// <summary>Set by the server: (sender to exclude, messageType, payload, reliable).</summary>
+        public Action<PlayerSession, NetMessageType, byte[], bool>? SendToOthers { get; set; }
 
         public byte RegisterEntity(INetEntitySerializer serializer)
         {
@@ -124,6 +142,25 @@ namespace Gtamp.Server.Mods
             _eventHandlers[eventName] = handler ?? throw new ArgumentNullException(nameof(handler));
             Log.Info(LogCategory.Mod, $"Registered server network event '{eventName}'.");
         }
+
+        public void RegisterRelay(string eventName)
+        {
+            if (string.IsNullOrWhiteSpace(eventName))
+            {
+                throw new ArgumentException("Event name must not be empty.", nameof(eventName));
+            }
+
+            if (_relayed.Add(eventName))
+            {
+                Log.Info(
+                    LogCategory.Mod,
+                    $"Relaying mod event '{eventName}' between clients. The server does not interpret its payload.");
+            }
+        }
+
+        public bool IsEventRelayed(string eventName) => _relayed.Contains(eventName);
+
+        public IReadOnlyCollection<string> RelayedEvents => _relayed;
 
         public bool SendNetworkEvent(PlayerSession session, string eventName, byte[] payload, bool reliable = true)
         {
@@ -167,21 +204,36 @@ namespace Gtamp.Server.Mods
         /// <summary>Routes an inbound mod event to its handler. Returns false when the name is unknown.</summary>
         public bool Dispatch(string eventName, PlayerSession sender, byte[] payload)
         {
-            if (!_eventHandlers.TryGetValue(eventName, out Action<PlayerSession, byte[]>? handler))
+            byte[] body = payload ?? Array.Empty<byte>();
+            bool handled = false;
+
+            if (_relayed.Contains(eventName) && SendToOthers != null)
             {
-                return false;
+                var relay = new ModEventMessage
+                {
+                    Name = eventName,
+                    SenderPlayerId = sender.PlayerId,
+                    Payload = body,
+                };
+                SendToOthers(sender, NetMessageType.ModEvent, relay.Serialize(), true);
+                handled = true;
             }
 
-            try
+            if (_eventHandlers.TryGetValue(eventName, out Action<PlayerSession, byte[]>? handler))
             {
-                handler(sender, payload);
-            }
-            catch (Exception exception)
-            {
-                Log.Error(LogCategory.Mod, $"Handler for mod event '{eventName}' threw.", exception);
+                try
+                {
+                    handler(sender, body);
+                }
+                catch (Exception exception)
+                {
+                    Log.Error(LogCategory.Mod, $"Handler for mod event '{eventName}' threw.", exception);
+                }
+
+                handled = true;
             }
 
-            return true;
+            return handled;
         }
 
         public bool IsEventRegistered(string eventName) => _eventHandlers.ContainsKey(eventName);

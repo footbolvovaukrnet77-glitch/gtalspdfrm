@@ -110,11 +110,50 @@ GTA V root.
 You launched `GTA5.exe` directly rather than `RAGEPluginHook.exe`. Detection is
 correct; RPH simply is not in the process.
 
-**Symptom:** LSPDFR callouts do not replicate.
+**Symptom:** `/diagnostics` says `waiting for the RPH bridge`, or, after ten
+seconds, `the RPH bridge never answered`.
 
-Expected. Callout, pursuit and police-AI replication is Phase 8 — the adapter says
-so at warning level on startup. See
-[docs/LSPDFR_INTEGRATION.md](docs/LSPDFR_INTEGRATION.md) for why.
+The RPH half of the integration is a separate assembly that RPH loads itself. Two
+causes, and the warning in the client log names both:
+
+1. The game was not started through `RAGEPluginHook.exe`. RPH is installed but not
+   in the process, so there is nothing to answer.
+2. `Gtamp.RphBridge.dll` is not in `GTA V\Plugins\`. It does **not** go in
+   `GTA V\scripts\` — that folder belongs to ScriptHookVDotNet, and RPH will
+   never look there. Re-run `tools/package-client.sh` and copy
+   `dist/client/RagePluginHook-plugins/*` into `GTA V\Plugins\`.
+
+Check `RagePluginHook.log` for `[GTAMP] RPH bridge` lines; if none appear, RPH
+never loaded the plugin. `Gtamp.Shared.dll` must sit next to it in `Plugins\`,
+because RPH resolves a plugin's dependencies from its own folder.
+
+**Symptom:** the bridge is connected but LSPDFR state never changes.
+
+`/diagnostics` shows the LSPDFR line with a reflection-miss count. A non-zero
+count means probes failed to bind by name — usually an LSPDFR update that renamed
+a method on `API.Functions`. The client log names each missed probe. Nothing is
+silently assumed to work; that is the point of counting them.
+
+If the miss count is zero and the state still never changes, check that you are
+actually on duty: every probe reads the player's LSPDFR state, and off duty most
+of them legitimately return nothing.
+
+**Symptom:** LSPDFR state does not reach the other players.
+
+The server forwards `lspdfr.event` between clients only when its name is in
+`relayedModEvents` in `server.json`. It is there by default; an operator may have
+removed it deliberately, in which case the state stays local — that is the switch
+working, not a fault.
+
+**Symptom:** LSPDFR callout *scripts* do not run for the other players.
+
+Expected, and not a roadmap item. What crosses the wire is who is on duty, who has
+a callout running and which one, who is in a pursuit or a traffic stop — the
+observable facts. The peds and vehicles a callout spawns replicate normally, so
+you do see each other's suspects and units. The callout's own objectives and
+completion state exist only on the machine running it, because LSPDFR exposes no
+way to drive another player's callout. See
+[docs/LSPDFR_INTEGRATION.md](docs/LSPDFR_INTEGRATION.md).
 
 ---
 

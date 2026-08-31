@@ -1,6 +1,6 @@
 # Roadmap
 
-Status as of the Phase 1 commit. "Working" means implemented *and* covered by a
+Status as of the Phase 8 commit. "Working" means implemented *and* covered by a
 test that would fail if it broke.
 
 ---
@@ -109,17 +109,36 @@ than the game already running underneath it.
 | Mod events routed by name | ✅ replaced id-by-registration-order, which only worked while both sides registered identically |
 | `RegisterCustomWeapon` | ⏸ Phase 9, with the wider weapon work |
 
-## Phase 7 — RAGE Plugin Hook
+## Phase 7 — RAGE Plugin Hook ✅ complete
 
-Blocked on writing `Gtamp.RphBridge.dll`, the RPH-loaded half of the in-process
-channel. See [RPH_INTEGRATION.md](RPH_INTEGRATION.md) for why an SHVDN-side
-adapter cannot reach RPH state directly.
+| Item | State |
+| --- | --- |
+| In-process channel between the two plugin hosts | ✅ bytes under a topic name, bounded and non-blocking, so neither scheduler can block the other |
+| `Gtamp.RphBridge.dll`, the RPH-loaded half | ✅ RPH plugin on a `GameFiber`, 50 ms poll, answers `describe`, reports `state=stopped` on shutdown |
+| Fan-out to more than one adapter | ✅ `BridgeLink` routes by topic; two adapters on one channel no longer steal each other's messages |
+| Adapter free of RPH types | ✅ `Gtamp.Adapters.Rph` names no `Rage` type at all |
+| Live RPH plugin list in the mod manifest | ✅ read from each assembly's `PluginAttribute`, a public surface rather than an RPH internal |
+| Missing-bridge reporting | ✅ named at warning level after 10 s, with both causes |
+| Replicating an arbitrary RPH plugin's internal state | ⛔ **not possible** — RPH exposes no way to enumerate or drive another plugin's objects. A plugin sends its own state over `rph.event` |
 
-## Phase 8 — LSPDFR
+Not verified on real RPH: no Windows, no GTA V, no RPH on the build machine. See
+[RPH_INTEGRATION.md](RPH_INTEGRATION.md) for exactly what was and was not tested.
 
-Callouts, pursuits, suspects, arrests, police units. Depends on Phase 7's channel.
-See [LSPDFR_INTEGRATION.md](LSPDFR_INTEGRATION.md) for the scope that
-`API.Functions` actually permits.
+## Phase 8 — LSPDFR ✅ complete
+
+| Item | State |
+| --- | --- |
+| Live LSPDFR state of the local player | ✅ `LspdfrObserver` on the bridge, six probes on the documented `API.Functions` surface |
+| Unbound probes reported rather than assumed | ✅ counted and surfaced through `/diagnostics` |
+| That state replicated to the other players | ✅ forwarded as `lspdfr.event`, relayed by the server, attributed per player |
+| Change suppression | ✅ only what actually changed is sent, so a steady pursuit costs no packets |
+| Operator switch | ✅ `relayedModEvents` in `server.json`; emptying it stops clients passing each other opaque bytes |
+| Callout entities visible to other players | ✅ already, through the ordinary entity system — a callout's peds and vehicles are peds and vehicles |
+| Sharing callout scripts, suspect AI, pursuit behaviour | ⛔ **not possible** — `API.Functions` exposes whether a callout runs, not the decisions inside it, and nothing can drive another player's LSPDFR into a callout state |
+
+The two ⛔ rows are limits of what RPH and LSPDFR expose, not deferred work. They
+are described in the integration documents rather than promised for a later
+phase.
 
 ## Phase 9 — Other mods
 

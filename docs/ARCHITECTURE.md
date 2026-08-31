@@ -43,11 +43,12 @@
 | `Gtamp.Client.Shv` | `net48` | The ScriptHookVDotNet host. Deliberately thin — a bridge implementation, a console renderer and a tick pump. |
 | `Gtamp.Adapters.Rph` | `net48` | Optional RAGE Plugin Hook integration, loaded only when RPH is present. |
 | `Gtamp.Adapters.Lspdfr` | `net48` | Optional LSPDFR integration, same rule. |
+| `Gtamp.RphBridge` | `net48` | The other half of the RPH integration, loaded by RAGE Plugin Hook rather than by ScriptHookVDotNet. It is the only assembly here that references RPH, and nothing in the client references it. |
 | `Gtamp.Tests` | `net8.0` | xUnit. Covers everything except the ScriptHookVDotNet host layer, which needs a running game. |
 
-## The three seams
+## The four seams
 
-The design rests on three deliberate boundaries. Each one exists to keep a
+The design rests on four deliberate boundaries. Each one exists to keep a
 category of problem out of the rest of the system.
 
 ### 1. `IGameBridge` — the engine seam
@@ -78,6 +79,29 @@ type is indistinguishable from `PlayerEntity` to every layer above it, which is
 what makes "add an entity type without rewriting the networking layer" a fact
 rather than a claim. `ModSdkTests.AModDefinedEntityReplicatesThroughTheOrdinarySnapshotPath`
 is the proof.
+
+### 4. `InProcessChannel` — the plugin-host seam
+
+RAGE Plugin Hook and ScriptHookVDotNet are two .NET hosts inside one GTA V
+process, each with its own loader and its own scheduler, and there is no supported
+path between them. `Gtamp.Shared.Interop.InProcessChannel` is that path: two
+bounded `ConcurrentQueue<byte[]>` instances published through `AppDomain` data,
+carrying **bytes under a topic name** and never objects.
+
+The byte-only rule is not caution, it is necessity: the two hosts may load
+different copies of the same assembly, in which case a type from one is not the
+same type to the other and any shared object is uncastable. Only framework types
+and byte layouts are guaranteed to agree.
+
+The non-blocking rule is the same kind of necessity: RPH work runs on a
+`GameFiber` and core work on the script thread, so a blocking call from either
+into the other deadlocks the game. A full queue drops its oldest message and
+counts it — freshness lost, not a frame.
+
+`Gtamp.Client.Mods.BridgeLink` sits on the core side and fans messages out by
+topic, because `OpenCoreSide()` returns a view onto one queue pair rather than a
+private one and two adapters draining it directly would steal each other's
+messages.
 
 ## Data flow
 
@@ -123,6 +147,11 @@ no shared mutable state across threads and no locking on the hot path.
 `LogBus` is the exception: it is lock-guarded because sinks are added from one
 thread and written from another, and a clipboard write is dispatched to a
 short-lived STA thread.
+
+The RPH bridge is the second exception, and the reason the channel between them is
+a queue rather than a call. It runs on RPH's `GameFiber`, which is a different
+scheduler entirely; the two sides never call into each other, they only enqueue
+and drain.
 
 This is a deliberate choice. Concurrency bugs in a replication layer are
 extraordinarily hard to reproduce, and a 60 Hz tick over a few dozen players does

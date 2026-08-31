@@ -38,12 +38,21 @@ namespace Gtamp.Shared.Protocol
     {
         public string Name { get; set; } = string.Empty;
 
+        /// <summary>
+        /// Who the event came from, on the server-to-client leg. Zero means the
+        /// server itself. Ignored on the client-to-server leg, where the sender is
+        /// the session the packet arrived on and a client-supplied value would be
+        /// worth nothing.
+        /// </summary>
+        public uint SenderPlayerId { get; set; }
+
         public byte[] Payload { get; set; } = Array.Empty<byte>();
 
         public byte[] Serialize()
         {
             var writer = new NetWriter(Payload.Length + 32);
             writer.WriteString(Name);
+            writer.WriteVarUInt(SenderPlayerId);
             writer.WriteByteArray(Payload);
             return writer.ToArray();
         }
@@ -54,6 +63,7 @@ namespace Gtamp.Shared.Protocol
             return new ModEventMessage
             {
                 Name = reader.ReadString(128),
+                SenderPlayerId = reader.ReadVarUInt(),
                 Payload = reader.ReadByteArray(NetPeer.MaxFragmentedMessage),
             };
         }

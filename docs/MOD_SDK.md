@@ -22,7 +22,7 @@ in.
 | `RegisterObject()` | **Implemented** | as above |
 | `RegisterComponent()` | **Implemented as `RegisterState`** | Components are string-keyed state on an entity |
 | `RegisterState()` | **Implemented** | Declares a `CustomData` key so `/entity` can describe it |
-| `RegisterNetworkEvent()` | **Implemented** | Allocates a message id in the `0xF0`–`0xFF` range |
+| `RegisterNetworkEvent()` | **Implemented** | Routed by name over `ModEvent` (`0x2A`); see [Relayed events](#relayed-events) for reaching other clients |
 | `RegisterOwner()` | **Implemented as `NetEntity.OwnerId`** | Ownership is a field, not a registration |
 | `RegisterDimension()` | **Implemented** | Allocates a dimension id so two mods cannot collide |
 | `RegisterInterior()` | **Implemented** | Names an interior id so it survives a restart |
@@ -96,6 +96,41 @@ bytes per event and remove both that coupling and the sixteen-event ceiling.
 
 Names are case-insensitive, so two mods cannot disagree over capitalisation.
 Sending an unregistered event throws rather than silently dropping.
+
+### Where a client's event goes
+
+By default, **to the server and no further**. `SendNetworkEvent` from a client
+reaches a server-side handler registered with
+`IServerModSdk.RegisterNetworkEvent`, and stops there. That is the right default:
+the server can validate, rate-limit, or act on the event with its own authority.
+
+### Relayed events
+
+A server that knows nothing about your mod has no handler to register, and
+without one two clients running the same mod cannot talk at all. For that case
+the server can forward an event verbatim:
+
+```csharp
+// server side
+sdk.RegisterRelay("mymod.pursuit");
+```
+
+or, for an operator with no server-side mod, by name in `server.json`:
+
+```json
+"relayedModEvents": [ "lspdfr.event", "rph.event" ]
+```
+
+The server does not parse the payload and cannot validate it, so **a relayed
+event carries no authority**. It is one client telling the others something, with
+the server acting as the postbox. The receiving handler gets the origin player's
+id as `senderPlayerId`, and `0` when the event came from the server itself.
+
+Anything a mod needs the server to vouch for — a score, a spawn, a permission —
+must go through a server-side handler or an RPC instead. An operator who does not
+want clients passing each other opaque bytes empties `relayedModEvents`; mods that
+rely on relaying then stop crossing between clients, which is the intended effect
+and not a fault.
 
 ## Remote procedure calls
 

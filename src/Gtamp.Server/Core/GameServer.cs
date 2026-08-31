@@ -79,8 +79,15 @@ namespace Gtamp.Server.Core
                     type, payload, reliable ? DeliveryMethod.ReliableOrdered : DeliveryMethod.Unreliable),
                 SendToAll = (type, payload, reliable) => Broadcast(
                     type, payload, reliable ? DeliveryMethod.ReliableOrdered : DeliveryMethod.Unreliable),
+                SendToOthers = (sender, type, payload, reliable) => Broadcast(
+                    type, payload, reliable ? DeliveryMethod.ReliableOrdered : DeliveryMethod.Unreliable, sender),
                 ResolveSession = playerId => Players.TryGetByPlayerId(playerId, out PlayerSession session) ? session : null,
             };
+
+            foreach (string relayed in config.RelayedModEvents)
+            {
+                Mods.RegisterRelay(relayed);
+            }
 
             Manifest.SchemaHash = Registry.ComputeSchemaHash();
         }

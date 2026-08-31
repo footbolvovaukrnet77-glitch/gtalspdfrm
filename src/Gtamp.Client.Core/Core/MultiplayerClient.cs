@@ -318,7 +318,8 @@ namespace Gtamp.Client.Core
                     case NetMessageType.ModEvent:
                     {
                         ModEventMessage modEvent = ModEventMessage.Deserialize(message.Payload);
-                        if (!Sdk.Dispatch(modEvent.Name, 0, modEvent.Payload) && Config.VerboseLogging)
+                        if (!Sdk.Dispatch(modEvent.Name, modEvent.SenderPlayerId, modEvent.Payload)
+                            && Config.VerboseLogging)
                         {
                             Log.Debug(LogCategory.Mod, $"No handler for mod event '{modEvent.Name}'.");
                         }

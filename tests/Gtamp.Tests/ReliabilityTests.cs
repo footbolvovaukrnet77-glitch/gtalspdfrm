@@ -35,6 +35,105 @@ namespace Gtamp.Tests
         }
 
         [Fact]
+        public void AReliableMessageSentBeforeThePeerExistsIsStillDelivered()
+        {
+            // The defect this guards against, found while wiring the LSPDFR relay.
+            // A peer's remote sequence starts at zero, so its very first packet used
+            // to carry ack = 0, and the other side read that as an acknowledgement of
+            // its own packet 0. The reliable message in that packet was dropped from
+            // the retransmission list and never resent; because delivery is ordered,
+            // every later reliable message then queued behind a sequence that would
+            // never arrive and the channel wedged in silence for the rest of the
+            // connection.
+            //
+            // The shape below is the one that actually happens: the server queues a
+            // join notification the instant it accepts a client, but the client's peer
+            // only exists once it has processed the connect-accept, so that first
+            // packet lands on nobody — and the client's first state update, carrying
+            // ack = 0, arrives before the retransmission timer fires.
+            var network = new LoopbackNetwork(7);
+            IDatagramTransport serverTransport = network.CreateTransport(Left);
+            IDatagramTransport clientTransport = network.CreateTransport(Right);
+
+            var server = new NetPeer(serverTransport, Right, Session, 0);
+            server.Send(NetMessageType.ServerEvent, Body("welcome"), DeliveryMethod.ReliableOrdered);
+            server.Flush(network.Now);
+            network.Advance(0.001);
+
+            while (clientTransport.TryReceive(out IPEndPoint _, out byte[] _))
+            {
+                // Delivered to a peer that does not exist yet, and therefore lost.
+            }
+
+            var client = new NetPeer(clientTransport, Left, Session, 0);
+            client.Send(NetMessageType.ClientStateUpdate, Body("hello"), DeliveryMethod.Unreliable);
+
+            var received = new List<string>();
+            for (double elapsed = 0; elapsed < 2.0; elapsed += 0.02)
+            {
+                double now = network.Now;
+                server.Flush(now);
+                client.Flush(now);
+                network.Advance(0.02);
+
+                while (serverTransport.TryReceive(out IPEndPoint _, out byte[] toServer))
+                {
+                    server.HandleDatagram(toServer, network.Now);
+                }
+
+                while (clientTransport.TryReceive(out IPEndPoint _, out byte[] toClient))
+                {
+                    client.HandleDatagram(toClient, network.Now);
+                }
+
+                while (client.TryDequeue(out ReceivedMessage message))
+                {
+                    received.Add(Encoding.UTF8.GetString(message.Payload));
+                }
+            }
+
+            Assert.Equal(new[] { "welcome" }, received);
+
+            // And the channel still works afterwards, rather than staying wedged
+            // behind a sequence number that was never delivered.
+            server.Send(NetMessageType.ChatMessage, Body("second"), DeliveryMethod.ReliableOrdered);
+            for (double elapsed = 0; elapsed < 1.0; elapsed += 0.02)
+            {
+                double now = network.Now;
+                server.Flush(now);
+                client.Flush(now);
+                network.Advance(0.02);
+
+                while (clientTransport.TryReceive(out IPEndPoint _, out byte[] toClient))
+                {
+                    client.HandleDatagram(toClient, network.Now);
+                }
+
+                while (serverTransport.TryReceive(out IPEndPoint _, out byte[] toServer))
+                {
+                    server.HandleDatagram(toServer, network.Now);
+                }
+
+                while (client.TryDequeue(out ReceivedMessage message))
+                {
+                    received.Add(Encoding.UTF8.GetString(message.Payload));
+                }
+            }
+
+            Assert.Equal(new[] { "welcome", "second" }, received);
+        }
+
+        [Fact]
+        public void PacketSequenceNumbersNeverUseTheReservedZero()
+        {
+            var harness = new ReliableHarness();
+            harness.A.Send(NetMessageType.ChatMessage, Body("first"), DeliveryMethod.ReliableOrdered);
+            harness.Run(0.1);
+
+            Assert.True(harness.B.RemoteSequence > 0, "packet sequence 0 is reserved for 'nothing received yet'");
+        }
+
+        [Fact]
         public void ReliableMessagesSurviveHeavyLossAndArriveInOrder()
         {
             var harness = new ReliableHarness(loss: 0.4, latency: 0.03, jitter: 0.02);

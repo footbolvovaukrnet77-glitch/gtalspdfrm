@@ -55,11 +55,21 @@ including their own character, across a server restart.
   path with no change to the networking layer, plus RPC in both directions and a
   universal activity system for missions, callouts and jobs.
 - **RAGE Plugin Hook and LSPDFR are genuinely optional.** Neither the client nor
-  the adapters link against them; the adapters bind by reflection and report
-  themselves inactive when the mod is absent.
+  the adapters link against them; the adapters report themselves inactive when
+  the mod is absent.
+- **A bridge into RAGE Plugin Hook.** RPH and ScriptHookVDotNet are two hosts in
+  one process with no supported path between them, so `Gtamp.RphBridge.dll` runs
+  under RPH and talks to the client over an in-process channel — bytes under a
+  topic name, bounded and non-blocking, so neither scheduler can block the other.
+  It publishes RPH's live plugin list into the mod manifest.
+- **LSPDFR state shared between players.** On duty, callout running and which one,
+  traffic stop, pursuit — read from LSPDFR's documented `API.Functions` surface on
+  the bridge and relayed to the other players by a server that has never heard of
+  LSPDFR. Callout *logic* is not shared, and cannot be; see
+  [docs/LSPDFR_INTEGRATION.md](docs/LSPDFR_INTEGRATION.md).
 
-267 automated tests, all passing, covering everything except the ScriptHookVDotNet
-host layer, which needs a running game.
+291 automated tests, all passing, covering everything except the ScriptHookVDotNet
+host layer and the two plugin-host bridges, which need a running game.
 
 ## What does not work yet
 
@@ -72,12 +82,18 @@ Stated plainly, because a framework that hides its gaps wastes your time:
   machine. Expect the thresholds to need tuning.
 - **Vehicles interpolate but do not predict.** A non-owned vehicle is replayed
   behind the server clock rather than simulated forward, so it lags its owner's
-  view by the interpolation delay. Prediction and reconciliation are Phase 4.
+  view by the interpolation delay.
 - **Vehicle body deformation is not replicated.** GTA V exposes deformation only
   through natives that write into a vehicle, never read from one.
-- **RPH and LSPDFR state is not replicated.** The adapters detect, report and
-  register their integration points and say so at warning level. The reason is a
-  real one, and it is written down:
+- **The RPH bridge has never run inside a real game.** It compiles against
+  RagePluginHook 1.124.0 and its channel half is covered by tests, but RPH's
+  loader and `GameFiber` timing cannot be exercised without Windows, GTA V and
+  RPH. Same for whether each LSPDFR probe binds against a given LSPDFR release —
+  which is why unbound probes are counted and reported rather than assumed to
+  work.
+- **An arbitrary RPH plugin's internal state cannot be replicated, and callout
+  logic cannot be shared.** These are limits of what RPH and LSPDFR expose, not
+  deferred work, and they are written down rather than promised:
   [RPH](docs/RPH_INTEGRATION.md), [LSPDFR](docs/LSPDFR_INTEGRATION.md).
 - **The identity token is continuity, not authentication.** Phase 10.
 - **The protocol is plaintext.** Run trusted servers until Phase 12.
@@ -112,8 +128,8 @@ Full walkthrough, including prerequisites and how to uninstall:
 | [docs/WORLD_STATE.md](docs/WORLD_STATE.md) | The full-state rule and how it is enforced structurally |
 | [docs/ENTITY_SYSTEM.md](docs/ENTITY_SYSTEM.md) | Entity model, field declarations, type ids, schema hashing |
 | [docs/MOD_SDK.md](docs/MOD_SDK.md) | Writing a mod or an adapter; the section-21 API mapping |
-| [docs/RPH_INTEGRATION.md](docs/RPH_INTEGRATION.md) | Why cross-host integration is hard and what Phase 7 will do |
-| [docs/LSPDFR_INTEGRATION.md](docs/LSPDFR_INTEGRATION.md) | Why reflection, and the scope `API.Functions` permits |
+| [docs/RPH_INTEGRATION.md](docs/RPH_INTEGRATION.md) | The two-host problem, the in-process channel, and the RPH limit that is not a roadmap item |
+| [docs/LSPDFR_INTEGRATION.md](docs/LSPDFR_INTEGRATION.md) | What is read, how it travels, and why callout logic cannot be shared |
 | [docs/PERSISTENCE.md](docs/PERSISTENCE.md) | Schema, opaque mod blobs, restart flow |
 | [docs/SECURITY.md](docs/SECURITY.md) | What is defensible, the movement budget, trust boundaries |
 | [docs/DEVELOPER_CONSOLE.md](docs/DEVELOPER_CONSOLE.md) | Console, colours, commands, bug reports |
@@ -141,6 +157,7 @@ src/Gtamp.Client.Core     netstandard2.0  client logic, no GTA V dependency
 src/Gtamp.Client.Shv      net48           ScriptHookVDotNet host
 src/Gtamp.Adapters.Rph    net48           optional RPH integration
 src/Gtamp.Adapters.Lspdfr net48           optional LSPDFR integration
+src/Gtamp.RphBridge       net48           RPH-loaded plugin; the other half of the bridge
 tests/Gtamp.Tests         net8.0          xUnit
 tools/                                    build, test, run, package scripts
 docs/                                     architecture and design documents

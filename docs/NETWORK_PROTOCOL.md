@@ -1,6 +1,6 @@
 # Network protocol
 
-Transport: UDP. Byte order: little-endian. Protocol version: **2**
+Transport: UDP. Byte order: little-endian. Protocol version: **3**
 (`ProtocolConstants.ProtocolVersion`); a mismatch is rejected during the
 handshake with a readable message.
 
@@ -27,8 +27,8 @@ bytes    payload
 u32      magic
 u8       kind = 1
 u32      sessionId
-u16      sequence        this packet's id
-u16      ack             highest packet id received from the peer
+u16      sequence        this packet's id; 1..65535, never 0
+u16      ack             highest packet id received from the peer, or 0 for none
 u32      ackBits         bitfield: bit i acknowledges (ack - 1 - i)
 message* until end of datagram
 ```
@@ -67,6 +67,28 @@ messages.
 - **Loss accounting**: a packet that falls out of the 32-packet acknowledgement
   window without being acknowledged is counted lost exactly once. This is the
   figure the network debugger shows.
+
+### Packet sequence 0 is reserved
+
+A peer's remote sequence starts at zero, so its very first packet has nothing to
+acknowledge. Sending `ack = 0` in that packet, with 0 also being a valid packet
+id, means the other side reads it as an acknowledgement of its own first packet.
+
+That is not cosmetic. The acknowledged packet's reliable messages are retired
+from the retransmission list and never sent again; because delivery is ordered,
+every later reliable message then queues behind a sequence number that will never
+arrive, and the channel wedges — silently, permanently, for the life of the
+connection. The shape that triggers it is completely ordinary: the server queues
+a join notification the instant it accepts a client, before the client's peer
+exists to receive it, and the client's first state update carries `ack = 0` back
+before the retransmission timer fires.
+
+So packet ids start at 1 and skip 0 on wraparound, and `ack = 0` means "I have not
+received anything from you yet" and acknowledges nothing. The cost is one ack bit
+every 65536 packets, which shows up as a single spurious retransmission.
+
+Regression test:
+`ReliabilityTests.AReliableMessageSentBeforeThePeerExistsIsStillDelivered`.
 
 ### Acknowledgement delay
 
@@ -127,12 +149,20 @@ live session.
 | `0x03` | ConnectReject | connectionless | S → C |
 | `0x04` | Disconnect | reliable | both |
 | `0x05` | KeepAlive | unreliable | both |
+| `0x06` | Fragment | reliable | both |
 | `0x10` | Ping | unreliable | C → S |
 | `0x11` | Pong | unreliable | S → C |
 | `0x20` | ClientStateUpdate | unreliable | C → S |
 | `0x21` | Snapshot | unreliable | S → C |
 | `0x22` | SnapshotAck | unreliable | C → S |
 | `0x23` | ResyncRequest | reliable | C → S |
+| `0x24` | EntitySpawnRequest | reliable | C → S |
+| `0x25` | OwnedEntityUpdate | unreliable | C → S |
+| `0x26` | EntityReleaseRequest | reliable | C → S |
+| `0x27` | DamageReport | reliable | C → S |
+| `0x28` | ModRpcRequest | reliable | both |
+| `0x29` | ModRpcResponse | reliable | both |
+| `0x2A` | ModEvent | either | both |
 | `0x30` | EntityEvent | reliable | S → C |
 | `0x31` | ServerEvent | reliable | S → C |
 | `0x32` | ChatMessage | reliable | both |
@@ -141,6 +171,25 @@ live session.
 | `0x50` | AdminCommand | reliable | C → S |
 | `0x51` | SecurityNotice | reliable | S → C |
 | `0xF0`–`0xFF` | reserved for the Mod SDK | either | both |
+
+### ModEvent (`0x2A`)
+
+```
+string   name            routed by name, not by a registration-order id
+varuint  senderPlayerId  server → client only; 0 means the server itself
+bytes    payload         opaque; neither side interprets it
+```
+
+Routing by name rather than by an id assigned in registration order is
+deliberate: two clients that load their mods in a different order would otherwise
+route each other's events to the wrong handler, and it removes the ceiling on how
+many events a mod may register.
+
+`senderPlayerId` exists because the server can forward a client's event to the
+other players (see [MOD_SDK.md](MOD_SDK.md#relayed-events)). A relayed event that
+lost its origin would be useless for anything per-player. On the client-to-server
+leg the field is ignored — the sender is the session the packet arrived on, and a
+client-supplied value would be worth nothing.
 
 ## Snapshots
 

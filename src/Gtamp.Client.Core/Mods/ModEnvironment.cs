@@ -77,6 +77,30 @@ namespace Gtamp.Client.Mods
             return environment;
         }
 
+        /// <summary>
+        /// Adds a mod an adapter discovered at runtime rather than by scanning files —
+        /// an RPH plugin, say, which is only visible once RPH has loaded it.
+        /// Replaces an existing entry with the same id.
+        /// </summary>
+        public void AddDetectedMod(ModDescriptor descriptor)
+        {
+            if (descriptor == null || string.IsNullOrEmpty(descriptor.Id))
+            {
+                return;
+            }
+
+            for (int i = 0; i < Mods.Count; i++)
+            {
+                if (string.Equals(Mods[i].Id, descriptor.Id, StringComparison.OrdinalIgnoreCase))
+                {
+                    Mods[i] = descriptor;
+                    return;
+                }
+            }
+
+            Mods.Add(descriptor);
+        }
+
         /// <summary>Builds the manifest sent to the server during the handshake.</summary>
         public ModManifest ToManifest(uint schemaHash)
         {

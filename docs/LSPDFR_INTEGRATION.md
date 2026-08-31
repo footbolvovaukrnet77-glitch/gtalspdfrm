@@ -7,7 +7,12 @@
 | Detection and version reporting | **Working** |
 | Callout plugin enumeration | **Working** |
 | Registration points (state keys, network event) | **Working** |
-| Callout, pursuit, suspect and police-AI replication | Phase 8 |
+| Live LSPDFR state of the local player, read from the process | **Working** |
+| That state replicated to the other players on the server | **Working** |
+| Callout scripts, suspect AI and pursuit behaviour shared between players | **Not possible** — see below |
+
+The last row is not a roadmap entry. It is a limit of what LSPDFR exposes, and it
+is described rather than promised.
 
 ## LSPDFR is not required
 
@@ -18,45 +23,110 @@ The adapter lives in its own assembly, loaded only when LSPDFR is detected. The
 Multiplayer Core has no knowledge of it. Nothing in the core references anything
 police-related — that separation is the point of the adapter model.
 
-## Why reflection, specifically
+## Why nothing references LSPDFR at compile time
 
 LSPDFR ships no redistributable SDK. `LSPD First Response.dll` is installed with
-the mod and its licence does not permit redistributing it, so this adapter
-**cannot reference it at compile time** — there is no package to reference, and
+the mod and its licence does not permit redistributing it, so **no assembly in
+this repository can reference it** — there is no package to reference, and
 vendoring the DLL would be a licence violation.
 
-Everything it reads is therefore bound by name at runtime through
-`ReflectionProbe`, which records every lookup that misses and surfaces the count
-through `/diagnostics` instead of throwing.
+**The cost, stated:** everything is bound by name at runtime, so a rename inside
+LSPDFR turns into a runtime miss rather than a compile error. That is why every
+missed binding is recorded and reported through `/diagnostics` instead of being
+ignored or throwing.
 
-**The cost, stated:** reflection binds by name, so a rename inside LSPDFR turns
-into a runtime miss rather than a compile error. That is why misses are counted
-and reported rather than ignored.
+## Where the reading actually happens
 
-## The second problem
+Not in `Gtamp.Adapters.Lspdfr`. LSPDFR is on RPH's `GameFiber`, so reading it from
+the ScriptHookVDotNet script thread would be unsafe even if the assembly resolved.
+The reading is done by `LspdfrObserver` inside `Gtamp.RphBridge.dll`, which RPH
+loads, and the result crosses the in-process channel as text.
 
-Beyond RPH's host isolation, LSPDFR's public API surface is not versioned. Its
-`API.Functions` class is the supported entry point, but the state a multiplayer
-framework actually needs — live callout instances, pursuit membership, suspect
-role assignment — is behind internals that change between releases.
+```
+LSPD First Response.dll
+        ▲  reflection, on RPH's GameFiber
+        │
+Gtamp.RphBridge.dll  ──gtamp.lspdfr.event──►  Gtamp.Adapters.Lspdfr
+                          (in-process)              │
+                                                    │ lspdfr.event
+                                                    ▼
+                                                 server (relay)
+                                                    │
+                                                    ▼
+                                        other players' adapters
+```
 
-Binding to those internals by name would produce an integration that works
+### What the observer polls
+
+Only public, parameterless methods on `LSPD_First_Response.Mod.API.Functions` —
+the documented surface, never internals:
+
+| Key | Bound to |
+| --- | --- |
+| `onDuty` | `IsPlayerAvailable()` |
+| `callout.running` | `IsCalloutRunning()` |
+| `callout.current` | `GetCurrentCallout()` |
+| `pullover.current` | `GetCurrentPullover()` |
+| `pursuit.active` | `GetActivePursuit()` |
+| `player.state` | `GetPlayerState()` |
+
+Anything that fails to bind is listed in `MissingProbes` and reported, so an
+LSPDFR update that renames a method produces a visible diagnostic rather than
+silence.
+
+**Why polling rather than event subscription.** LSPDFR's event hooks take
+delegates whose signatures use LSPDFR's own types. Those types cannot be named at
+compile time (see above), and a delegate synthesised by reflection to match them
+breaks silently the moment a signature changes — subscribing appears to succeed
+and no event ever fires. Polling a parameterless method either returns a value or
+visibly fails to bind. The cost is up to 50 ms of latency and no access to
+event-only information such as the reason a pursuit ended.
+
+## How the state travels
+
+The observer sends **only what changed**, as `key=value;key=value`. The adapter
+merges it into the local state, and forwards the same bytes to the server through
+the `lspdfr.event` network event. The server relays them verbatim to every other
+player — it does not parse them and has never heard of LSPDFR — and each receiving
+adapter merges them into a per-player state map keyed by the sender's player id.
+
+Two consequences worth being explicit about:
+
+- **An unchanged value costs nothing.** A poll that finds the same pursuit still
+  running produces no packet and no log line.
+- **A relayed event carries no server authority.** It is one client's client
+  telling the others what its own LSPDFR reported. An operator who does not want
+  clients passing each other opaque bytes can empty `relayedModEvents` in
+  `server.json`; the local state still works, it simply does not leave the
+  machine.
+
+## The limit that is not a roadmap item
+
+**Callout logic cannot be shared.** `API.Functions` exposes *whether* a callout is
+running and which one — not the decisions inside it, and there is no supported way
+to drive another player's LSPDFR into the same callout state. Building that would
+mean binding to LSPDFR internals by name, producing an integration that works
 against one LSPDFR build and breaks on the next, silently, in the middle of a
 callout.
 
-**Chosen route for Phase 8:** an LSPDFR-side plugin, loaded by LSPDFR itself,
-consuming the supported `API.Functions` surface and the public event hooks, and
-publishing state across the same in-process channel Phase 7 builds. Not reflection
-into internals.
+So what crosses the wire is the observable facts, not the simulation:
 
-**Compromise:** only what `API.Functions` exposes can be replicated. Some callout
-internals will not be reachable, and those will be listed here as they are found —
-not worked around by reaching into private state.
+- who is on duty;
+- who has a callout running, and its name;
+- who is in a pursuit or a traffic stop;
+- the reported player state.
 
-## Registration points available today
+**What players still see of each other's callouts.** The peds and vehicles a
+callout spawns replicate normally — as peds and vehicles, through the ordinary
+entity system, owned by the client that spawned them. Two officers on one server
+see each other's suspects, each other's police units, and each other's pursuit
+traffic. They do not share callout scripts, so the callout's own objectives,
+dialogue and completion state exist only on the machine running it.
 
-The adapter declares these now so mod authors can use them and so `/entity` can
-describe them:
+## Registration points
+
+Declared by the adapter so mod authors can use them and so `/entity` can describe
+them:
 
 | Key | Meaning |
 | --- | --- |
@@ -65,23 +135,22 @@ describe them:
 | `lspdfr.pursuit` | Identifier of the pursuit an entity is part of |
 | `lspdfr.arrested` | Set when a suspect has been arrested |
 
-Plus the `lspdfr.event` network event for opaque payloads.
+These are entity `CustomData`: they travel with the entity in every delta and are
+stored verbatim, even on a server that has never heard of LSPDFR. A callout script
+that marks the ped it spawned as its suspect gets replication and persistence for
+free.
 
-These are already replicated and persisted: `CustomData` travels with the entity
-in every delta, and is stored verbatim, even on a server that has never heard of
-LSPDFR.
+Plus the `lspdfr.event` network event, which is the channel described above and is
+also open to any mod that wants to send its own payloads under that name.
 
-## Planned scope for Phase 8
+## What is not verified here
 
-From master prompt section 18, in the order they will be attempted:
-
-1. Callout lifecycle — start, state, objectives, completion, failure, cancellation
-2. Callout participants — suspects, victims, witnesses, with roles
-3. Pursuits — membership, state, and the ending
-4. Traffic stops and arrests
-5. Police units, backup and emergency-vehicle state (lights, sirens)
-6. Warrants and evidence
-7. Officer state and police AI
-
-Each will be listed here with what was achievable through `API.Functions` and what
-was not, as it is built.
+The reflection targets are named from LSPDFR's documented `API.Functions` surface.
+**They have not been executed against a real LSPDFR install** — that requires
+Windows, GTA V, RPH and LSPDFR, none of which exist on the machine this was built
+on. What was verified: the payload format, the merge that suppresses unchanged
+values, the fan-out on the channel, the relay through the server, per-player
+attribution of the received state, and the operator switch that turns relaying
+off. What is unverified is whether each probe binds against any given LSPDFR
+release — which is exactly why unbound probes are counted and reported instead of
+being assumed to work.

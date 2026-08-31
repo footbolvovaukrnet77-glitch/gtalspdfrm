@@ -62,7 +62,20 @@ namespace Gtamp.Shared.Net
         private readonly Dictionary<ushort, FragmentSet> _fragments = new Dictionary<ushort, FragmentSet>();
 
         private ushort _nextFragmentGroup;
-        private ushort _nextPacketSequence;
+        /// <summary>
+        /// Packet sequence numbers start at 1. Zero is reserved for "I have not
+        /// received anything from you yet".
+        /// <para>
+        /// Without that reservation a freshly created peer sends its very first
+        /// packet carrying <c>ack = 0</c> — its uninitialised remote sequence — and
+        /// the other side reads that as an acknowledgement of its packet 0. Anything
+        /// reliable in that packet is then dropped from the retransmission list and
+        /// never sent again; because reliable delivery is ordered, every later
+        /// reliable message queues behind a sequence that will never arrive and the
+        /// channel wedges silently for the life of the connection.
+        /// </para>
+        /// </summary>
+        private ushort _nextPacketSequence = 1;
         private ushort _nextReliableSequence;
         private ushort _nextOrderedDelivery;
         private ushort _remoteSequence;
@@ -298,6 +311,14 @@ namespace Gtamp.Shared.Net
                 }
 
                 _nextPacketSequence++;
+                if (_nextPacketSequence == 0)
+                {
+                    // Skip the reserved value on wraparound. The cost is one ack bit
+                    // every 65536 packets, which shows up as a single spurious
+                    // retransmission and nothing else.
+                    _nextPacketSequence = 1;
+                }
+
                 RecordSentPacket(sequence, now, carried);
                 _transport.Send(Remote, _writer.Buffer, 0, _writer.Length);
                 Stats.PacketsSent++;
@@ -491,6 +512,13 @@ namespace Gtamp.Shared.Net
 
         private void ProcessIncomingAcks(ushort ack, uint ackBits, double now)
         {
+            if (ack == 0)
+            {
+                // The remote has not received a packet from us yet, so it is not
+                // acknowledging anything and nothing is stale. See _nextPacketSequence.
+                return;
+            }
+
             AckPacket(ack, now);
             for (int i = 0; i < 32; i++)
             {

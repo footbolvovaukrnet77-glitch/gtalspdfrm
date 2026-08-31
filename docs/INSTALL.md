@@ -145,6 +145,8 @@ dist/client/scripts/Gtamp.Client.Core.dll
 dist/client/scripts/Gtamp.Shared.dll
 dist/client/Gtamp/Adapters/Gtamp.Adapters.Rph.dll
 dist/client/Gtamp/Adapters/Gtamp.Adapters.Lspdfr.dll
+dist/client/RagePluginHook-plugins/Gtamp.RphBridge.dll
+dist/client/RagePluginHook-plugins/Gtamp.Shared.dll
 ```
 
 ### Copy them in
@@ -155,6 +157,18 @@ Given a GTA V directory of `D:\Games\Grand Theft Auto V`:
 dist/client/scripts/*        →  D:\Games\Grand Theft Auto V\scripts\
 dist/client/Gtamp/           →  D:\Games\Grand Theft Auto V\Gtamp\
 ```
+
+**Only if you play through RAGE Plugin Hook**, also copy:
+
+```
+dist/client/RagePluginHook-plugins/*  →  D:\Games\Grand Theft Auto V\Plugins\
+```
+
+That folder is RPH's own plugin folder, not GTA V's `scripts`. The two halves are
+loaded by two different hosts, which is the whole reason there are two of them —
+see [RPH_INTEGRATION.md](RPH_INTEGRATION.md). Skip this step if you do not use RPH:
+everything else still works, and the RPH and LSPDFR adapters simply report that
+they have no live state to read.
 
 The result:
 
@@ -175,6 +189,17 @@ D:\Games\Grand Theft Auto V\
     └── Adapters\
         ├── Gtamp.Adapters.Rph.dll
         └── Gtamp.Adapters.Lspdfr.dll
+```
+
+With RAGE Plugin Hook, additionally:
+
+```
+D:\Games\Grand Theft Auto V\
+├── RAGEPluginHook.exe
+└── Plugins\
+    ├── LSPD First Response.dll         (LSPDFR, installed by you)
+    ├── Gtamp.RphBridge.dll
+    └── Gtamp.Shared.dll
 ```
 
 ### Configure the client
@@ -223,6 +248,21 @@ verify the pipeline:
 For a real two-player test, a second machine (or a second GTA V installation)
 connects to the same address. Both clients bind an ephemeral source port, so two
 instances on one machine also work.
+
+### If you installed the RPH bridge
+
+Start the game **through `RAGEPluginHook.exe`**, then in the F8 console:
+
+```
+diagnostics
+```
+
+The RPH line should read `bridge <version>, RPH <version>, N plugin(s)`. If it
+reads `waiting for the RPH bridge` for more than ten seconds, the client log says
+which of the two causes it is: the game was not started through RPH, or
+`Gtamp.RphBridge.dll` is not in `GTA V\Plugins\`. With LSPDFR installed and on
+duty, the LSPDFR line shows how many state keys it is reading and how many other
+players it has heard from.
 
 ---
 

@@ -13,5 +13,7 @@
     <ProjectReference Include="..\..\src\Gtamp.Shared\Gtamp.Shared.csproj" />
     <ProjectReference Include="..\..\src\Gtamp.Client.Core\Gtamp.Client.Core.csproj" />
     <ProjectReference Include="..\..\src\Gtamp.Server\Gtamp.Server.csproj" />
+    <ProjectReference Include="..\..\src\Gtamp.Adapters.Rph\Gtamp.Adapters.Rph.csproj" />
+    <ProjectReference Include="..\..\src\Gtamp.Adapters.Lspdfr\Gtamp.Adapters.Lspdfr.csproj" />
   </ItemGroup>
 </Project>

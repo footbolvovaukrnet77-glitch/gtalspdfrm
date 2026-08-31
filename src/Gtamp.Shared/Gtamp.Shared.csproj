@@ -4,4 +4,12 @@
     <RootNamespace>Gtamp.Shared</RootNamespace>
     <AssemblyName>Gtamp.Shared</AssemblyName>
   </PropertyGroup>
+  <ItemGroup>
+    <!-- The channel framing and the LSPDFR payload merge are internal on purpose:
+         they are a wire contract between two hosts, not an API for mods. The test
+         project checks them directly rather than only through their callers. -->
+    <AssemblyAttribute Include="System.Runtime.CompilerServices.InternalsVisibleToAttribute">
+      <_Parameter1>Gtamp.Tests</_Parameter1>
+    </AssemblyAttribute>
+  </ItemGroup>
 </Project>

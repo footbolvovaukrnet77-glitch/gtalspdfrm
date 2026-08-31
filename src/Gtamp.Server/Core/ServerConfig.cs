@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.IO;
 using System.Text.Json;
 using System.Text.Json.Serialization;
@@ -102,6 +103,19 @@ namespace Gtamp.Server.Core
 
         /// <summary>Reject connections whose mod set is missing a Required server mod.</summary>
         public bool EnforceRequiredMods { get; set; } = true;
+
+        /// <summary>
+        /// Mod event names the server forwards verbatim from the sender to every
+        /// other player, without interpreting the payload.
+        /// <para>
+        /// This is how two clients running the same mod talk on a server that knows
+        /// nothing about that mod. It carries no server authority — see
+        /// <c>IServerModSdk.RegisterRelay</c> — so an operator who does not want
+        /// clients passing each other opaque bytes can empty this list. The defaults
+        /// are the two events the shipped adapters register.
+        /// </para>
+        /// </summary>
+        public List<string> RelayedModEvents { get; set; } = new List<string> { "lspdfr.event", "rph.event" };
 
         public string LogDirectory { get; set; } = "logs";
 
