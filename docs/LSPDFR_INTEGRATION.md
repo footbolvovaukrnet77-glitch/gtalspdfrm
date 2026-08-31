@@ -1,5 +1,7 @@
 # LSPDFR integration
 
+> English. Русский: [ru/LSPDFR_INTEGRATION.md](ru/LSPDFR_INTEGRATION.md).
+
 ## Status
 
 | Capability | State |

@@ -1,5 +1,7 @@
 # Roadmap
 
+> English. Русский: [ru/ROADMAP.md](ru/ROADMAP.md).
+
 Status as of the Phase 8 commit. "Working" means implemented *and* covered by a
 test that would fail if it broke.
 
@@ -171,9 +173,16 @@ Things that could have been faked and were not:
 - **`RegisterRPC`, `RegisterMission`, `RegisterCustomWeapon`.** These throw with a
   phase number rather than no-op'ing. A registration that appears to work and
   never fires is worse than a loud failure.
-- **RPH and LSPDFR state replication.** The adapters detect, report and register
-  their integration points, and log at warning level that replication is not
-  implemented.
+- **A generic "replicate any RPH plugin" feature.** RPH exposes no way to
+  enumerate or drive another plugin's objects, so there is nothing to read
+  generically. The bridge publishes the plugin list and LSPDFR's documented API;
+  anything else a plugin must send itself.
+- **Shared LSPDFR callout logic.** `API.Functions` reports whether a callout is
+  running, not the decisions inside it. The observable facts cross the wire; the
+  simulation does not, and the documentation says so instead of implying more.
+- **Running the RPH bridge in a real game.** It compiles and its channel half is
+  tested, but RPH's loader and `GameFiber` timing need Windows, GTA V and RPH.
+  Marked unverified rather than reported as working.
 - **Vehicle deformation.** Not sampled, because the engine will not give it up —
   stated rather than approximated with something that would look right and be
   wrong.

@@ -1,5 +1,7 @@
 # Developer console
 
+> English. Русский: [ru/DEVELOPER_CONSOLE.md](ru/DEVELOPER_CONSOLE.md).
+
 Press **F8** in game. The key is configurable — `ConsoleKey` in
 `GTA V/Gtamp/client.ini` is a virtual key code (119 = F8, 192 = tilde).
 

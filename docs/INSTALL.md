@@ -1,5 +1,7 @@
 # Installation
 
+> English. Русский: [ru/INSTALL.md](ru/INSTALL.md).
+
 Concrete commands. Nothing here says "install the dependencies".
 
 ---
@@ -41,7 +43,7 @@ Expected output: `Build succeeded. 0 Warning(s) 0 Error(s)`.
 ./tools/test.sh          # or tools\test.bat
 ```
 
-Expected: `Passed! - Failed: 0, Passed: 138`.
+Expected: `Passed! - Failed: 0, Passed: 291`.
 
 ---
 
@@ -277,6 +279,8 @@ Delete these; nothing else was touched:
 <GTA V>\scripts\Gtamp.Client.Core.dll
 <GTA V>\scripts\Gtamp.Shared.dll
 <GTA V>\Gtamp\                          (whole folder, includes config and logs)
+<GTA V>\Plugins\Gtamp.RphBridge.dll     (only if you installed the RPH bridge)
+<GTA V>\Plugins\Gtamp.Shared.dll
 ```
 
 ScriptHookV, ScriptHookVDotNet, RPH and LSPDFR are untouched by this framework

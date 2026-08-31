@@ -1,5 +1,7 @@
 # Network protocol
 
+> English. Русский: [ru/NETWORK_PROTOCOL.md](ru/NETWORK_PROTOCOL.md).
+
 Transport: UDP. Byte order: little-endian. Protocol version: **3**
 (`ProtocolConstants.ProtocolVersion`); a mismatch is rejected during the
 handshake with a readable message.

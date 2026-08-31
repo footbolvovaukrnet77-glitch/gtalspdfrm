@@ -1,5 +1,7 @@
 # RAGE Plugin Hook integration
 
+> English. Русский: [ru/RPH_INTEGRATION.md](ru/RPH_INTEGRATION.md).
+
 ## Status
 
 | Capability | State |

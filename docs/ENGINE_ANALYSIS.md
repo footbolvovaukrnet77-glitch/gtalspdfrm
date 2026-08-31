@@ -1,5 +1,7 @@
 # GTA V engine analysis — what is actually possible
 
+> English. Русский: [ru/ENGINE_ANALYSIS.md](ru/ENGINE_ANALYSIS.md).
+
 This is the analysis the master prompt asks for before any code: what GTA V lets a
 multiplayer framework do, where the hard limits are, and which of them are
 avoidable. Everything else in the design follows from this document.

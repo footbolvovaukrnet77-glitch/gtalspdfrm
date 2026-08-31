@@ -1,0 +1,139 @@
+# Команды разработчика
+
+> Русская версия. English: [DEV_COMMANDS.md](DEV_COMMANDS.md).
+
+Всё, что нужно, чтобы собрать, запустить, протестировать и отладить фреймворк.
+
+---
+
+## Сборка
+
+| Команда | Что делает |
+| --- | --- |
+| `./tools/build.sh [Debug\|Release]` | Собирает каждый проект, включая клиент `net48` для GTA V |
+| `./tools/rebuild.sh [Debug\|Release]` | Чистая сборка с нуля — когда подозреваете залежавшийся артефакт |
+| `./tools/clean.sh` | Удаляет `bin/` и `obj/`. Не трогает `server.json`, `data/` и `logs/` |
+
+Эквиваленты для Windows: `tools\build.bat`, `tools\rebuild.bat`,
+`tools\clean.bat`.
+
+Клиент `net48` собирается и на Linux, и на macOS — через
+`Microsoft.NETFramework.ReferenceAssemblies`. Windows для компиляции половины,
+относящейся к GTA V, не нужна.
+
+## Тесты
+
+| Команда | Что делает |
+| --- | --- |
+| `./tools/test.sh` | Запускает весь набор |
+| `./tools/test.sh --filter SessionTests` | Один класс |
+| `./tools/test.sh --filter "FullyQualifiedName~Reconnect"` | Совпадающие тесты |
+| `./tools/test.sh -l "console;verbosity=detailed"` | Полный вывод по каждому тесту |
+
+Набор детерминирован и не спит: сеть виртуальна, а время продвигается явно,
+поэтому тест сходимости восьми клиентов на канале с потерями выполняется за
+миллисекунды и даёт один и тот же ответ каждый раз.
+
+## Запуск сервера
+
+| Команда | Что делает |
+| --- | --- |
+| `./tools/run-server.sh` | Собрать и запустить с `server.json` |
+| `./tools/run-server.sh --port 27020` | Переопределить порт |
+| `./tools/run-server.sh --config /etc/gtamp/server.json` | Использовать другой конфиг |
+| `echo stop \| ./tools/run-server.sh` | Запустить и выключить — полезно для дымового теста |
+
+## Консоль сервера
+
+Вводите это в приглашении работающего сервера.
+
+| Команда | Что делает |
+| --- | --- |
+| `help` | Список команд |
+| `status` | Сводка по серверу, миру и тикам |
+| `players` | Подключённые игроки с пингом, потерями и позицией |
+| `entities` | Каждая сущность, которую отслеживает сервер |
+| `entity <id>` | Полное состояние одной сущности |
+| `net` | Счётчики по соединениям: пинг, дисперсия RTT, пакеты, потери, перепосылки |
+| `kick <playerId>` | Отключить игрока |
+| `teleport <id> <x> <y> <z> [heading]` | Переместить игрока; удерживает авторитет, пока тот не подтвердит |
+| `kill <playerId>` | Убить игрока |
+| `respawn <playerId>` | Немедленно возродить мёртвого игрока |
+| `say <text>` | Разослать сообщение в чат от имени сервера |
+| `time <HH:MM>` | Установить мировые часы |
+| `weather <name>` | `EXTRASUNNY`, `CLEAR`, `RAIN`, `THUNDER`, `SNOW`, ... |
+| `save` | Записать мир в хранилище прямо сейчас |
+| `diagnostics` | Те же проверки, что и `/diagnostics` в игре |
+| `stop` | Сохранить и чисто выключиться |
+
+## Внутриигровая консоль (F8)
+
+| Команда | Что делает |
+| --- | --- |
+| `help [command]` | Список команд или объяснение одной |
+| `connect [host] [port]` | Подключиться; умолчания из `client.ini` |
+| `disconnect` | Выйти |
+| `status` | Сводка по соединению, миру и репликации |
+| `players` | Игроки в реплицированном мире |
+| `entity <id>` | Реплицированное состояние одной сущности |
+| `net` | Сетевой отладчик |
+| `mods` | Обнаруженные моды и статус адаптеров |
+| `diagnostics` | Проверить установку и сессию |
+| `report <text>` | Построить баг-репорт и скопировать в буфер обмена |
+| `say <text>` | Чат |
+| `filter <name>` | Показывать только подходящие строки |
+| `search [text]` | Фильтр по тексту; без аргумента — сброс |
+| `copy [message\|stack\|full] [id]` | Скопировать ошибку |
+| `clear` | Очистить буфер |
+| `dev [on\|off]` | Переключить режим разработчика |
+| `resync` *(dev)* | Выбросить реплицированный мир, запросить полный снапшот |
+| `schema` *(dev)* | Список типов сущностей и их реплицируемых полей |
+
+Полный справочник: [docs/ru/DEVELOPER_CONSOLE.md](docs/ru/DEVELOPER_CONSOLE.md).
+
+## Логи
+
+| Где | Что |
+| --- | --- |
+| `logs/server-YYYY-MM-DD.log` | Сервер, рядом с рабочим каталогом |
+| `<GTA V>/Gtamp/logs/client-YYYY-MM-DD.log` | Клиент |
+| `<GTA V>/Gtamp/logs/startup-failure.log` | Пишется только если клиент упал раньше, чем появился его логгер |
+| `<GTA V>/ScriptHookVDotNet.log` | Собственный лог SHVDN — смотрите сюда первым делом, если скрипт вообще не загрузился |
+| `<GTA V>/RagePluginHook.log` | Лог RPH — ищите строки `[GTAMP] RPH bridge`, если мост не отвечает |
+
+`./tools/logs.sh` следит за сегодняшним логом сервера.
+
+## Упаковка клиента
+
+```bash
+./tools/package-client.sh Release
+```
+
+Готовит `dist/client/` ровно с теми файлами, которые игрок копирует в свой каталог
+GTA V. См. [docs/ru/INSTALL.md](docs/ru/INSTALL.md).
+
+## Типичные циклы
+
+**Изменить протокол**
+
+```bash
+$EDITOR src/Gtamp.Shared/Protocol/Messages.cs
+# поднимите ProtocolConstants.ProtocolVersion, если изменение несовместимо назад
+./tools/build.sh && ./tools/test.sh
+```
+
+**Изменить репликацию и проверить сходимость**
+
+```bash
+$EDITOR src/Gtamp.Shared/World/SnapshotCodec.cs
+./tools/test.sh --filter "SnapshotTests|StressTests"
+```
+
+**Изменить мост к GTA V** — это та часть, которую тесты покрыть не могут
+
+```bash
+$EDITOR src/Gtamp.Client.Shv/Bridge/ShvGameBridge.cs
+./tools/build.sh Release            # проверяет, что оно всё ещё компилируется против SHVDN
+./tools/package-client.sh Release
+# скопировать в каталог GTA V, запустить игру, F8, connect
+```

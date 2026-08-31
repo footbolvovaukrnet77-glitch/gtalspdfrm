@@ -1,5 +1,7 @@
 # Troubleshooting
 
+> English. Русский: [TROUBLESHOOTING.ru.md](TROUBLESHOOTING.ru.md).
+
 Each entry: the symptom, how to confirm the cause, and the fix.
 
 ---
@@ -199,10 +201,20 @@ The server is rejecting your movement. Check the server log for
 
 ## Remote players slide instead of walking
 
-**This is a known Phase 1 limitation, not a bug.** Remote peds are moved by
-writing coordinates; GTA V drives locomotion animation from its task system, which
-coordinates alone do not touch. Task-driven locomotion is Phase 2. See
-[docs/ENGINE_ANALYSIS.md](docs/ENGINE_ANALYSIS.md) §4.1.
+Task-driven locomotion landed in Phase 2: `RemotePedController` picks the gait and
+the bridge drives GTA V's task system rather than writing coordinates. If peds
+still slide, it is one of these:
+
+- **The ped is being hard-corrected constantly.** Run `net`. A remote ped is
+  placed outright beyond 8 m of error, and on a link with heavy loss or a large
+  interpolation delay that threshold can be crossed every snapshot. Raise
+  `InterpolationDelay` in `client.ini`.
+- **The thresholds need tuning for your game.** The gait selection and the 0.75 m
+  re-task distance are reasoned rather than measured — nobody has watched the
+  result in Los Santos. This is stated in
+  [docs/ENGINE_ANALYSIS.md](docs/ENGINE_ANALYSIS.md) §4.1 and in the README.
+- **The ped is ragdolling or dead.** Both are deliberately handed to physics and
+  not corrected, so a corpse stays where it fell.
 
 ---
 

@@ -1,5 +1,7 @@
 # Architecture
 
+> English. Русский: [ru/ARCHITECTURE.md](ru/ARCHITECTURE.md).
+
 ## The shape of the system
 
 ```

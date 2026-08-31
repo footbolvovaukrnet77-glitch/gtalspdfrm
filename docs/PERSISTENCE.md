@@ -1,5 +1,7 @@
 # Persistence
 
+> English. Русский: [ru/PERSISTENCE.md](ru/PERSISTENCE.md).
+
 ## Model
 
 ```

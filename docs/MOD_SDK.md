@@ -1,5 +1,7 @@
 # Mod SDK
 
+> English. Русский: [ru/MOD_SDK.md](ru/MOD_SDK.md).
+
 ## What it is for
 
 A mod should be able to describe its own entities, state and events, and have them

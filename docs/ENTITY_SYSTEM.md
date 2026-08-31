@@ -1,5 +1,7 @@
 # Entity system
 
+> English. Русский: [ru/ENTITY_SYSTEM.md](ru/ENTITY_SYSTEM.md).
+
 ## Goal
 
 Adding a new kind of networked thing — by the framework or by a mod — must not

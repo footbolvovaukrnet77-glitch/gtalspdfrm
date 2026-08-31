@@ -1,5 +1,7 @@
 # Developer commands
 
+> English. Русский: [DEV_COMMANDS.ru.md](DEV_COMMANDS.ru.md).
+
 Everything you need to build, run, test and debug the framework.
 
 ---
@@ -96,6 +98,7 @@ Full reference: [docs/DEVELOPER_CONSOLE.md](docs/DEVELOPER_CONSOLE.md).
 | `<GTA V>/Gtamp/logs/client-YYYY-MM-DD.log` | Client |
 | `<GTA V>/Gtamp/logs/startup-failure.log` | Written only if the client fails before its logger exists |
 | `<GTA V>/ScriptHookVDotNet.log` | SHVDN's own log — check here first if the script never loads |
+| `<GTA V>/RagePluginHook.log` | RPH's log — look for `[GTAMP] RPH bridge` lines if the bridge never answers |
 
 `./tools/logs.sh` tails today's server log.
 

@@ -1,5 +1,7 @@
 # GTAMP — GTA V Universal Multiplayer Framework
 
+> English. Русский: [README.ru.md](README.ru.md).
+
 A server-authoritative multiplayer framework that turns single-player GTA V into a
 shared world, with an entity system and mod SDK that third-party mods can extend
 without patching the framework.

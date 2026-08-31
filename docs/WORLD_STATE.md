@@ -1,5 +1,7 @@
 # World state
 
+> English. Русский: [ru/WORLD_STATE.md](ru/WORLD_STATE.md).
+
 ## The rule
 
 > **SERVER WORLD STATE = FULL. CLIENT NETWORK REPLICATION = OPTIMISED.**

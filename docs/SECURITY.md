@@ -1,5 +1,7 @@
 # Security
 
+> English. Русский: [ru/SECURITY.md](ru/SECURITY.md).
+
 ## What is defensible and what is not
 
 The server cannot see inside the client process. It cannot detect memory editing,
