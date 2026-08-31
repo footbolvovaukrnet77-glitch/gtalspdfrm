@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using Gtamp.Client.Missions;
 using Gtamp.Client.Mods;
 using Gtamp.Shared.Diagnostics;
 using Gtamp.Shared.Entities;
@@ -46,8 +47,8 @@ namespace Gtamp.Client.Sdk
 
         byte RegisterObject(INetEntitySerializer serializer);
 
-        /// <summary>Registers a named event. Returns the assigned wire message id.</summary>
-        byte RegisterNetworkEvent(string eventName, ModNetworkEventHandler handler);
+        /// <summary>Registers a named event. Events are routed by name, not by id.</summary>
+        void RegisterNetworkEvent(string eventName, ModNetworkEventHandler handler);
 
         /// <summary>Sends a previously registered event to the server.</summary>
         void SendNetworkEvent(string eventName, byte[] payload, bool reliable = true);
@@ -67,9 +68,17 @@ namespace Gtamp.Client.Sdk
         /// <summary>Declares a custom interior so its id survives a restart.</summary>
         void RegisterInterior(string name, int interiorId);
 
+        /// <summary>Registers a procedure the server can call on this client.</summary>
         void RegisterRPC(string name, Func<byte[], byte[]> handler);
 
-        void RegisterMission(string missionId, object definition);
+        /// <summary>Calls a procedure the server registered and receives the answer.</summary>
+        void CallServerRpc(string name, byte[] payload, Action<RpcResult> callback, double timeoutSeconds = 5.0);
+
+        /// <summary>
+        /// Registers the local half of an activity: blips, markers, UI. The server
+        /// decides what happens; this reacts to it.
+        /// </summary>
+        void RegisterMission(string definitionId, IActivityHandler handler);
 
         void RegisterCustomWeapon(string weaponId, object definition);
     }
@@ -78,15 +87,14 @@ namespace Gtamp.Client.Sdk
     public sealed class ModSdk : IModSdk
     {
         private readonly EntityRegistry _registry;
-        private readonly Dictionary<string, byte> _eventIds = new Dictionary<string, byte>(StringComparer.OrdinalIgnoreCase);
-        private readonly Dictionary<byte, ModNetworkEventHandler> _eventHandlers = new Dictionary<byte, ModNetworkEventHandler>();
+        private readonly Dictionary<string, ModNetworkEventHandler> _eventHandlers =
+            new Dictionary<string, ModNetworkEventHandler>(StringComparer.OrdinalIgnoreCase);
         private readonly Dictionary<string, string> _states = new Dictionary<string, string>(StringComparer.Ordinal);
         private readonly Dictionary<string, uint> _dimensions = new Dictionary<string, uint>(StringComparer.OrdinalIgnoreCase);
         private readonly Dictionary<string, int> _interiors = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
         private readonly List<ModDescriptor> _mods = new List<ModDescriptor>();
 
         private byte _nextEntityTypeId = (byte)EntityType.ModDefinedFirst;
-        private byte _nextEventId = (byte)NetMessageType.ModMessageFirst;
         private uint _nextDimension = 1;
 
         public ModSdk(EntityRegistry registry, LogBus log, Func<string, byte[], bool, bool> sendEvent)
@@ -165,36 +173,20 @@ namespace Gtamp.Client.Sdk
         /// <summary>Next unused mod entity type id, for a mod that wants one assigned rather than chosen.</summary>
         public byte NextEntityTypeId => _nextEntityTypeId;
 
-        public byte RegisterNetworkEvent(string eventName, ModNetworkEventHandler handler)
+        public void RegisterNetworkEvent(string eventName, ModNetworkEventHandler handler)
         {
             if (string.IsNullOrWhiteSpace(eventName))
             {
                 throw new ArgumentException("Event name must not be empty.", nameof(eventName));
             }
 
-            if (_eventIds.TryGetValue(eventName, out byte existing))
-            {
-                _eventHandlers[existing] = handler ?? throw new ArgumentNullException(nameof(handler));
-                return existing;
-            }
-
-            if (_nextEventId > (byte)NetMessageType.ModMessageLast)
-            {
-                throw new InvalidOperationException(
-                    $"All {(byte)NetMessageType.ModMessageLast - (byte)NetMessageType.ModMessageFirst + 1} " +
-                    "mod message ids are in use.");
-            }
-
-            byte id = _nextEventId++;
-            _eventIds[eventName] = id;
-            _eventHandlers[id] = handler ?? throw new ArgumentNullException(nameof(handler));
-            Log.Info(LogCategory.Mod, $"Registered network event '{eventName}' as message 0x{id:X2}.");
-            return id;
+            _eventHandlers[eventName] = handler ?? throw new ArgumentNullException(nameof(handler));
+            Log.Info(LogCategory.Mod, $"Registered network event '{eventName}'.");
         }
 
         public void SendNetworkEvent(string eventName, byte[] payload, bool reliable = true)
         {
-            if (!_eventIds.ContainsKey(eventName))
+            if (!_eventHandlers.ContainsKey(eventName))
             {
                 throw new InvalidOperationException($"Network event '{eventName}' was never registered.");
             }
@@ -205,10 +197,10 @@ namespace Gtamp.Client.Sdk
             }
         }
 
-        /// <summary>Routes an inbound mod message to its handler. Returns false when the id is unknown.</summary>
-        public bool Dispatch(byte messageId, uint senderPlayerId, byte[] payload)
+        /// <summary>Routes an inbound mod event to its handler. Returns false when the name is unknown.</summary>
+        public bool Dispatch(string eventName, uint senderPlayerId, byte[] payload)
         {
-            if (!_eventHandlers.TryGetValue(messageId, out ModNetworkEventHandler? handler))
+            if (!_eventHandlers.TryGetValue(eventName, out ModNetworkEventHandler? handler))
             {
                 return false;
             }
@@ -219,13 +211,13 @@ namespace Gtamp.Client.Sdk
             }
             catch (Exception exception)
             {
-                Log.Error(LogCategory.Mod, $"Handler for mod message 0x{messageId:X2} threw.", exception);
+                Log.Error(LogCategory.Mod, $"Handler for mod event '{eventName}' threw.", exception);
             }
 
             return true;
         }
 
-        public bool TryGetEventId(string eventName, out byte id) => _eventIds.TryGetValue(eventName, out id);
+        public bool IsEventRegistered(string eventName) => _eventHandlers.ContainsKey(eventName);
 
         public void RegisterState(string key, string description)
         {
@@ -270,9 +262,67 @@ namespace Gtamp.Client.Sdk
             Log.Info(LogCategory.Mod, $"Registered interior '{name}' as {interiorId}.");
         }
 
-        public void RegisterRPC(string name, Func<byte[], byte[]> handler) => throw NotYet("RegisterRPC", 6);
+        /// <summary>Set by the client so the SDK can reach the RPC layer.</summary>
+        public RpcDispatcher<object?>? Rpc { get; set; }
 
-        public void RegisterMission(string missionId, object definition) => throw NotYet("RegisterMission", 6);
+        /// <summary>Set by the client: sends an RPC request and returns false when offline.</summary>
+        public Func<ModRpcRequestMessage, bool>? SendRpcRequest { get; set; }
+
+        /// <summary>Set by the client so activity handlers reach the watcher.</summary>
+        public ActivityWatcher? Activities { get; set; }
+
+        public void RegisterRPC(string name, Func<byte[], byte[]> handler)
+        {
+            if (Rpc == null)
+            {
+                throw new InvalidOperationException("The RPC layer is not available on this SDK instance.");
+            }
+
+            Rpc.RegisterHandler(name, (_, payload) => handler(payload));
+            Log.Info(LogCategory.Mod, $"Registered RPC handler '{name}'.");
+        }
+
+        public void CallServerRpc(string name, byte[] payload, Action<RpcResult> callback, double timeoutSeconds = 5.0)
+        {
+            if (callback == null)
+            {
+                throw new ArgumentNullException(nameof(callback));
+            }
+
+            if (Rpc == null || SendRpcRequest == null)
+            {
+                callback(RpcResult.Failed("the client is not connected"));
+                return;
+            }
+
+            ModRpcRequestMessage request = Rpc.BeginCall(
+                name, payload ?? Array.Empty<byte>(), callback, CurrentTime, timeoutSeconds);
+
+            if (!SendRpcRequest(request))
+            {
+                // Fail immediately rather than leaving the caller waiting out a timeout
+                // for a call that was never sent.
+                Rpc.HandleResponse(new ModRpcResponseMessage
+                {
+                    CallId = request.CallId,
+                    Success = false,
+                    Error = "the client is not connected",
+                });
+            }
+        }
+
+        /// <summary>Client time, injected so the SDK does not need its own clock.</summary>
+        public double CurrentTime { get; set; }
+
+        public void RegisterMission(string definitionId, IActivityHandler handler)
+        {
+            if (Activities == null)
+            {
+                throw new InvalidOperationException("The activity system is not available on this SDK instance.");
+            }
+
+            Activities.RegisterHandler(definitionId, handler);
+        }
 
         public void RegisterCustomWeapon(string weaponId, object definition) => throw NotYet("RegisterCustomWeapon", 9);
 

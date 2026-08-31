@@ -94,6 +94,12 @@ namespace Gtamp.Server.Core
 
         public double OwnershipCheckIntervalSeconds { get; set; } = 2;
 
+        /// <summary>
+        /// How long a finished activity stays in the world before it and the entities
+        /// it owns are removed. Long enough that every client sees the ending.
+        /// </summary>
+        public double FinishedActivityLingerSeconds { get; set; } = 30;
+
         /// <summary>Reject connections whose mod set is missing a Required server mod.</summary>
         public bool EnforceRequiredMods { get; set; } = true;
 

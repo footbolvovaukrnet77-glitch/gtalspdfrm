@@ -4,7 +4,7 @@ A server-authoritative multiplayer framework that turns single-player GTA V into
 shared world, with an entity system and mod SDK that third-party mods can extend
 without patching the framework.
 
-**Status: Phases 1 to 5 complete.** Two players share one world, movement replicates,
+**Status: Phases 1 to 6 complete.** Two players share one world, movement replicates,
 and a player who disconnects and comes back receives the world as it is *now* —
 including their own character, across a server restart.
 
@@ -52,12 +52,13 @@ including their own character, across a server restart.
 - **F8 developer console** with colour roles, filters, search, copy-error, bug
   reports and diagnostics.
 - **Mod SDK** — a mod-defined entity type replicates through the ordinary snapshot
-  path with no change to the networking layer.
+  path with no change to the networking layer, plus RPC in both directions and a
+  universal activity system for missions, callouts and jobs.
 - **RAGE Plugin Hook and LSPDFR are genuinely optional.** Neither the client nor
   the adapters link against them; the adapters bind by reflection and report
   themselves inactive when the mod is absent.
 
-244 automated tests, all passing, covering everything except the ScriptHookVDotNet
+267 automated tests, all passing, covering everything except the ScriptHookVDotNet
 host layer, which needs a running game.
 
 ## What does not work yet

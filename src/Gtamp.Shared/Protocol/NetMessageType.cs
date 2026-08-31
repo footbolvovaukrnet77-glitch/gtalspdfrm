@@ -42,6 +42,23 @@ namespace Gtamp.Shared.Protocol
         /// <summary>Client reports a hit it landed. The server decides whether it happened.</summary>
         DamageReport = 0x27,
 
+        /// <summary>A mod calling a procedure on the other side and expecting an answer.</summary>
+        ModRpcRequest = 0x28,
+
+        ModRpcResponse = 0x29,
+
+        /// <summary>
+        /// A mod-defined event, routed by name.
+        /// <para>
+        /// Names rather than ids: assigning ids in registration order means the two
+        /// sides only agree while they register in the same order, and a mod that adds
+        /// an event on one side silently renumbers every later one on that side alone.
+        /// The name costs a few bytes and removes both the ordering coupling and the
+        /// sixteen-event ceiling.
+        /// </para>
+        /// </summary>
+        ModEvent = 0x2A,
+
         // 0x30-0x3F — reliable world/entity events.
         EntityEvent = 0x30,
         ServerEvent = 0x31,
@@ -55,7 +72,8 @@ namespace Gtamp.Shared.Protocol
         AdminCommand = 0x50,
         SecurityNotice = 0x51,
 
-        // 0xF0-0xFF — reserved for the Mod SDK.
+        // 0xF0-0xFF — reserved. Mod events are routed by name through ModEvent; this
+        // range is held back for a future direct-routing optimisation.
         ModMessageFirst = 0xF0,
         ModMessageLast = 0xFF,
     }

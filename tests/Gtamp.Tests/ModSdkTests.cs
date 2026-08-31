@@ -183,30 +183,42 @@ namespace Gtamp.Tests
         }
 
         [Fact]
-        public void NetworkEventsGetIdsFromTheModRangeAndRoundTripThroughTheDispatcher()
+        public void NetworkEventsAreRoutedByNameAndRoundTripThroughTheDispatcher()
         {
             var registry = EntityRegistry.CreateDefault();
             ModSdk sdk = CreateSdk(registry, out List<string> sent);
 
             byte received = 0;
             uint sender = 0;
-            byte id = sdk.RegisterNetworkEvent("turret.fire", (playerId, payload) =>
+            sdk.RegisterNetworkEvent("turret.fire", (playerId, payload) =>
             {
                 sender = playerId;
                 received = payload[0];
             });
 
-            Assert.InRange(id, (byte)Shared.Protocol.NetMessageType.ModMessageFirst, (byte)Shared.Protocol.NetMessageType.ModMessageLast);
+            Assert.True(sdk.IsEventRegistered("turret.fire"));
 
             sdk.SendNetworkEvent("turret.fire", new byte[] { 42 });
             Assert.Single(sent);
             Assert.Equal("turret.fire:1:True", sent[0]);
 
-            Assert.True(sdk.Dispatch(id, 7, new byte[] { 42 }));
+            Assert.True(sdk.Dispatch("turret.fire", 7, new byte[] { 42 }));
             Assert.Equal(42, received);
             Assert.Equal(7u, sender);
 
-            Assert.False(sdk.Dispatch(0xFE, 7, new byte[] { 1 }));
+            Assert.False(sdk.Dispatch("never.registered", 7, new byte[] { 1 }));
+        }
+
+        [Fact]
+        public void EventNamesAreCaseInsensitiveSoTwoModsCannotDisagreeOverCapitals()
+        {
+            ModSdk sdk = CreateSdk(EntityRegistry.CreateDefault(), out _);
+
+            bool called = false;
+            sdk.RegisterNetworkEvent("MyMod.Ping", (_, _) => called = true);
+
+            Assert.True(sdk.Dispatch("mymod.ping", 0, System.Array.Empty<byte>()));
+            Assert.True(called);
         }
 
         [Fact]
@@ -248,16 +260,41 @@ namespace Gtamp.Tests
         }
 
         [Fact]
-        public void UnimplementedSdkMembersFailLoudlyWithARoadmapPointer()
+        public void UnimplementedSdkMembersStillFailLoudlyWithARoadmapPointer()
         {
             ModSdk sdk = CreateSdk(EntityRegistry.CreateDefault(), out _);
 
-            NotSupportedException rpc = Assert.Throws<NotSupportedException>(() => sdk.RegisterRPC("x", _ => new byte[0]));
-            Assert.Contains("Phase 6", rpc.Message);
-            Assert.Contains("ROADMAP.md", rpc.Message);
+            NotSupportedException weapon = Assert.Throws<NotSupportedException>(
+                () => sdk.RegisterCustomWeapon("w", new object()));
 
-            Assert.Throws<NotSupportedException>(() => sdk.RegisterMission("m", new object()));
-            Assert.Throws<NotSupportedException>(() => sdk.RegisterCustomWeapon("w", new object()));
+            Assert.Contains("Phase 9", weapon.Message);
+            Assert.Contains("ROADMAP.md", weapon.Message);
+        }
+
+        [Fact]
+        public void RpcAndMissionRegistrationFailClearlyWhenTheSdkIsNotWiredUp()
+        {
+            // A bare SDK — one built without a client behind it — says so rather than
+            // registering something that could never fire.
+            ModSdk sdk = CreateSdk(EntityRegistry.CreateDefault(), out _);
+
+            Assert.Throws<InvalidOperationException>(() => sdk.RegisterRPC("x", _ => new byte[0]));
+            Assert.Throws<InvalidOperationException>(() => sdk.RegisterMission("m", new StubActivityHandler()));
+        }
+
+        private sealed class StubActivityHandler : Gtamp.Client.Missions.IActivityHandler
+        {
+            public void OnStarted(ActivityEntity activity)
+            {
+            }
+
+            public void OnObjectiveChanged(ActivityEntity activity, ActivityObjective objective)
+            {
+            }
+
+            public void OnFinished(ActivityEntity activity)
+            {
+            }
         }
 
         [Fact]

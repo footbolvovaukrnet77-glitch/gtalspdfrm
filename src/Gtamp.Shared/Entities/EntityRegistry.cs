@@ -23,6 +23,7 @@ namespace Gtamp.Shared.Entities
             registry.Register(new VehicleEntitySerializer());
             registry.Register(new PedEntitySerializer());
             registry.Register(new ObjectEntitySerializer());
+            registry.Register(new ActivityEntitySerializer());
             return registry;
         }
 

@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Net;
 using Gtamp.Client.Entities;
+using Gtamp.Client.Missions;
 using Gtamp.Client.Mods;
 using Gtamp.Client.Network;
 using Gtamp.Client.Players;
@@ -64,7 +65,27 @@ namespace Gtamp.Client.Core
             {
                 Send = (type, payload, delivery) => Connection.Peer?.Send(type, payload, delivery),
             };
-            Sdk = new ModSdk(Registry, Log, SendModEvent);
+            Rpc = new RpcDispatcher<object?>(Log);
+            Activities = new ActivityWatcher(Log);
+
+            Sdk = new ModSdk(Registry, Log, SendModEvent)
+            {
+                Rpc = Rpc,
+                Activities = Activities,
+                SendRpcRequest = request =>
+                {
+                    if (!Connection.IsConnected)
+                    {
+                        return false;
+                    }
+
+                    Connection.Peer!.Send(
+                        NetMessageType.ModRpcRequest, request.Serialize(), DeliveryMethod.ReliableOrdered);
+
+                    return true;
+                },
+            };
+
             Adapters = new AdapterHost(Log);
 
             Connection.Accepted += OnAccepted;
@@ -97,6 +118,12 @@ namespace Gtamp.Client.Core
         public OwnedEntityStreamer OwnedEntities { get; }
 
         public ModSdk Sdk { get; }
+
+        /// <summary>Request/response plumbing for mod procedures.</summary>
+        public RpcDispatcher<object?> Rpc { get; }
+
+        /// <summary>Turns replicated activity state into events for the mods that own them.</summary>
+        public ActivityWatcher Activities { get; }
 
         public AdapterHost Adapters { get; }
 
@@ -221,6 +248,8 @@ namespace Gtamp.Client.Core
                 RemoteEntities.Render(renderTime);
             }
 
+            Sdk.CurrentTime = now;
+            Rpc.Update(now);
             Adapters.Update(now);
         }
 
@@ -273,18 +302,35 @@ namespace Gtamp.Client.Core
                         OwnedEntities.HandleEntityEvent(EntityEventMessage.Deserialize(message.Payload));
                         break;
 
+                    case NetMessageType.ModRpcRequest:
+                    {
+                        ModRpcRequestMessage request = ModRpcRequestMessage.Deserialize(message.Payload);
+                        ModRpcResponseMessage response = Rpc.HandleRequest(request, null);
+                        Connection.Peer?.Send(
+                            NetMessageType.ModRpcResponse, response.Serialize(), DeliveryMethod.ReliableOrdered);
+                        break;
+                    }
+
+                    case NetMessageType.ModRpcResponse:
+                        Rpc.HandleResponse(ModRpcResponseMessage.Deserialize(message.Payload));
+                        break;
+
+                    case NetMessageType.ModEvent:
+                    {
+                        ModEventMessage modEvent = ModEventMessage.Deserialize(message.Payload);
+                        if (!Sdk.Dispatch(modEvent.Name, 0, modEvent.Payload) && Config.VerboseLogging)
+                        {
+                            Log.Debug(LogCategory.Mod, $"No handler for mod event '{modEvent.Name}'.");
+                        }
+
+                        break;
+                    }
+
                     case NetMessageType.Pong:
                         break;
 
                     default:
-                        if ((byte)message.Type >= (byte)NetMessageType.ModMessageFirst)
-                        {
-                            if (!Sdk.Dispatch((byte)message.Type, 0, message.Payload) && Config.VerboseLogging)
-                            {
-                                Log.Debug(LogCategory.Mod, $"No handler for mod message 0x{(byte)message.Type:X2}.");
-                            }
-                        }
-                        else if (Config.VerboseLogging)
+                        if (Config.VerboseLogging)
                         {
                             Log.Debug(LogCategory.Network, $"Unhandled message {message.Type}.");
                         }
@@ -317,6 +363,7 @@ namespace Gtamp.Client.Core
             RemotePlayers.Sync(ReplicatedWorld.Current);
             RemoteEntities.LocalPlayerId = LocalPlayerId;
             RemoteEntities.Sync(ReplicatedWorld.Current);
+            Activities.Sync(ReplicatedWorld.Current);
             ApplyEnvironment();
             ApplyServerCorrection();
 
@@ -528,14 +575,15 @@ namespace Gtamp.Client.Core
 
         private bool SendModEvent(string eventName, byte[] payload, bool reliable)
         {
-            if (!Connection.IsConnected || !Sdk.TryGetEventId(eventName, out byte id))
+            if (!Connection.IsConnected)
             {
                 return false;
             }
 
+            var message = new ModEventMessage { Name = eventName, Payload = payload };
             Connection.Peer!.Send(
-                (NetMessageType)id,
-                payload,
+                NetMessageType.ModEvent,
+                message.Serialize(),
                 reliable ? DeliveryMethod.ReliableOrdered : DeliveryMethod.Unreliable);
 
             return true;
@@ -562,6 +610,11 @@ namespace Gtamp.Client.Core
 
         private void OnDisconnected(DisconnectReason reason, string text)
         {
+            // Every outstanding call fails now rather than waiting out its timeout: the
+            // answer is never coming, and a mod holding a callback for five seconds
+            // after a disconnect looks like a hang.
+            Rpc.FailAllPending("the connection was lost");
+            Activities.Clear();
             RemotePlayers.Clear();
             RemoteEntities.Clear();
             OwnedEntities.Clear();

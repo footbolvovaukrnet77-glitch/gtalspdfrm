@@ -2,6 +2,8 @@ using System;
 using System.Collections.Generic;
 using System.Net;
 using Gtamp.Server.Entities;
+using Gtamp.Server.Missions;
+using Gtamp.Server.Mods;
 using Gtamp.Server.Persistence;
 using Gtamp.Server.Players;
 using Gtamp.Server.Replication;
@@ -68,6 +70,18 @@ namespace Gtamp.Server.Core
             Combat.EnforceWeaponMatch = config.AntiCheat == AntiCheatLevel.Strict;
             Entities = new NetworkedEntityManager(World, config, Log);
             Entities.OwnershipGranted += OnOwnershipGranted;
+
+            Activities = new ActivityManager(World, Log);
+            Rpc = new RpcDispatcher<PlayerSession>(Log);
+            Mods = new ServerModSdk(Registry, World, Activities, Rpc, Log)
+            {
+                SendToSession = (session, type, payload, reliable) => session.Peer.Send(
+                    type, payload, reliable ? DeliveryMethod.ReliableOrdered : DeliveryMethod.Unreliable),
+                SendToAll = (type, payload, reliable) => Broadcast(
+                    type, payload, reliable ? DeliveryMethod.ReliableOrdered : DeliveryMethod.Unreliable),
+                ResolveSession = playerId => Players.TryGetByPlayerId(playerId, out PlayerSession session) ? session : null,
+            };
+
             Manifest.SchemaHash = Registry.ComputeSchemaHash();
         }
 
@@ -89,6 +103,14 @@ namespace Gtamp.Server.Core
         public CombatSettings Combat { get; }
 
         public NetworkedEntityManager Entities { get; }
+
+        /// <summary>Missions, callouts, jobs — anything with objectives and participants.</summary>
+        public ActivityManager Activities { get; }
+
+        public RpcDispatcher<PlayerSession> Rpc { get; }
+
+        /// <summary>What a server-side mod talks to.</summary>
+        public ServerModSdk Mods { get; }
 
         /// <summary>Mods the server itself declares. Compared against each client's manifest at join.</summary>
         public ModManifest Manifest { get; } = new ModManifest();
@@ -144,6 +166,11 @@ namespace Gtamp.Server.Core
 
             UpdateDeaths();
             Entities.UpdateOwnership(Players, now);
+
+            Mods.CurrentTime = now;
+            Activities.Update(now);
+            Activities.CleanUpFinished(now, Config.FinishedActivityLingerSeconds);
+            Rpc.Update(now);
 
             if (now - _lastSnapshotTime >= Config.SnapshotIntervalSeconds)
             {
@@ -486,8 +513,32 @@ namespace Gtamp.Server.Core
                     HandleDamageReport(session, DamageReportMessage.Deserialize(message.Payload));
                     break;
 
+                case NetMessageType.ModRpcRequest:
+                {
+                    ModRpcRequestMessage request = ModRpcRequestMessage.Deserialize(message.Payload);
+                    ModRpcResponseMessage response = Rpc.HandleRequest(request, session);
+                    session.Peer.Send(
+                        NetMessageType.ModRpcResponse, response.Serialize(), DeliveryMethod.ReliableOrdered);
+                    break;
+                }
+
+                case NetMessageType.ModRpcResponse:
+                    Rpc.HandleResponse(ModRpcResponseMessage.Deserialize(message.Payload));
+                    break;
+
                 case NetMessageType.KeepAlive:
                     break;
+
+                case NetMessageType.ModEvent:
+                {
+                    ModEventMessage modEvent = ModEventMessage.Deserialize(message.Payload);
+                    if (!Mods.Dispatch(modEvent.Name, session, modEvent.Payload) && Config.VerboseNetworkLogging)
+                    {
+                        Log.Debug(LogCategory.Mod, $"No server handler for mod event '{modEvent.Name}'.");
+                    }
+
+                    break;
+                }
 
                 default:
                     if (Config.VerboseNetworkLogging)
@@ -1010,6 +1061,7 @@ namespace Gtamp.Server.Core
 
             PersistPlayer(session);
             Entities.ReleaseAllOwnedBy(session.PlayerId, Players);
+            Activities.RemoveParticipantEverywhere(session.PlayerId);
 
             // The player's body leaves the world, but their saved state does not: a
             // reconnect restores it (master prompt section 25).

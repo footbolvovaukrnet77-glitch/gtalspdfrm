@@ -98,14 +98,16 @@ than the game already running underneath it.
 | Item inventory | ⏸ a gameplay system, not a framework one. `CustomData` already carries it per entity and persists with it |
 | PostgreSQL driver | ⏸ the SQL is already portable; only the driver is missing |
 
-## Phase 6 — Mod SDK depth
+## Phase 6 — Mod SDK depth ✅ complete
 
-| Item | Notes |
+| Item | State |
 | --- | --- |
-| `RegisterRPC` | Throws today, naming this phase |
-| `RegisterMission` | Needs the network activity system |
-| Universal activity system | Missions, objectives, checkpoints, timers, rewards — not LSPDFR-specific |
-| Server-side mod adapters | Adapters are client-side only today |
+| Universal activity system | ✅ activities are entities, so they replicate, persist and appear in the inspector with no mission-specific networking |
+| `RegisterMission` | ✅ registers the local half — blips, markers, UI — driven from replicated state |
+| `RegisterRPC` | ✅ both directions, with timeouts, handler errors and failure on disconnect |
+| Server-side mod SDK | ✅ entity types, activities, RPC handlers and events, without writing against `GameServer` internals |
+| Mod events routed by name | ✅ replaced id-by-registration-order, which only worked while both sides registered identically |
+| `RegisterCustomWeapon` | ⏸ Phase 9, with the wider weapon work |
 
 ## Phase 7 — RAGE Plugin Hook
 

@@ -26,9 +26,9 @@ in.
 | `RegisterOwner()` | **Implemented as `NetEntity.OwnerId`** | Ownership is a field, not a registration |
 | `RegisterDimension()` | **Implemented** | Allocates a dimension id so two mods cannot collide |
 | `RegisterInterior()` | **Implemented** | Names an interior id so it survives a restart |
-| `RegisterRPC()` | **Phase 6** | Throws. Use `RegisterNetworkEvent` for now |
-| `RegisterMission()` | **Phase 6** | Throws; needs the activity system |
-| `RegisterCustomWeapon()` | **Phase 9** | Throws; needs the combat system |
+| `RegisterRPC()` | **Implemented** | Registers a procedure the other side can call and get an answer from |
+| `RegisterMission()` | **Implemented** | Registers the local half of an activity: blips, markers, UI |
+| `RegisterCustomWeapon()` | **Phase 9** | Throws; needs the wider weapon work |
 | `RegisterDeserializer()` | **Not separate** | A serializer declares both directions |
 
 Throwing rather than no-op'ing is deliberate. A registration that appears to
@@ -78,7 +78,7 @@ opaque blob.
 ## Network events
 
 ```csharp
-byte id = sdk.RegisterNetworkEvent("turret.fire", (senderPlayerId, payload) =>
+sdk.RegisterNetworkEvent("turret.fire", (senderPlayerId, payload) =>
 {
     // runs on the client tick thread
 });
@@ -86,8 +86,88 @@ byte id = sdk.RegisterNetworkEvent("turret.fire", (senderPlayerId, payload) =>
 sdk.SendNetworkEvent("turret.fire", payload, reliable: true);
 ```
 
-Ids come from `0xF0`–`0xFF` — sixteen per session. Sending an unregistered event
-throws rather than silently dropping.
+Events are routed **by name**, not by an id assigned in registration order.
+
+That distinction matters. Assigning ids in registration order means the two sides
+only agree while they register in the same order — and a mod that adds one event
+on the client silently renumbers every later event on that side alone, so
+`turret.fire` starts arriving at the handler for `turret.reload`. Names cost a few
+bytes per event and remove both that coupling and the sixteen-event ceiling.
+
+Names are case-insensitive, so two mods cannot disagree over capitalisation.
+Sending an unregistered event throws rather than silently dropping.
+
+## Remote procedure calls
+
+```csharp
+// Server side
+serverSdk.RegisterRpc("bank.balance", (session, payload) => Encode(BalanceOf(session)));
+
+// Client side
+sdk.CallServerRpc("bank.balance", request, result =>
+{
+    if (!result.Success)
+    {
+        // result.Error says why: no handler, the handler threw, a timeout,
+        // or the connection dropped
+        return;
+    }
+
+    Show(Decode(result.Payload));
+});
+```
+
+It works in both directions: a client registers with `RegisterRPC` and the server
+calls it with `CallClientRpc`.
+
+Calls **always complete** — with an answer, with the remote handler's error, or
+with a timeout. A call that can hang forever is a mod bug that presents as a
+frozen game, so the timeout is not optional, and every outstanding call is failed
+immediately when the connection drops rather than being left to time out.
+
+Handlers are synchronous by design. Both sides run mod code on a single thread —
+the game's script thread and the server's tick thread — so an asynchronous handler
+would need a scheduler that does not exist, and would invite mods to do slow work
+in the middle of a frame.
+
+## Activities
+
+An activity is a mission, callout, job, race or anything else with objectives and
+participants. **It is an entity.** That is the whole design: it replicates,
+persists and appears in the entity inspector through exactly the same machinery as
+a vehicle, with no mission-specific networking anywhere.
+
+Server side declares and runs it:
+
+```csharp
+serverSdk.RegisterActivity(
+    new ActivityDefinition("traffic-stop", "Traffic stop") { TimeLimitSeconds = 600 }
+        .WithObjective(1, "Pull the vehicle over")
+        .WithObjective(2, "Speak to the driver")
+        .WithObjective(3, "Resolve the stop"));
+
+ActivityEntity? stop = serverSdk.Activities.Start("traffic-stop", playerId, now);
+serverSdk.Activities.SetObjectiveState(stop.Id, 1, ObjectiveState.Completed, now);
+```
+
+Objectives advance one at a time; the activity finishes when they are all
+resolved, when its time limit expires, or when the mod says so. Anything still
+outstanding is marked skipped, so a client rendering the objective list never
+shows a live objective on a finished activity.
+
+Client side reacts:
+
+```csharp
+sdk.RegisterMission("traffic-stop", new MyCalloutHandler());
+```
+
+The handler is driven by **diffing replicated state**, not by a stream of events.
+A client that missed a snapshot still ends up in the right place, and one that
+joins mid-activity is told about it as if it had just started. A handler that
+throws is logged and contained; it cannot take the session down.
+
+Entities attached to an activity are destroyed with it, so a mod does not have to
+track its own suspects and props to clean them up.
 
 ## Custom state
 
