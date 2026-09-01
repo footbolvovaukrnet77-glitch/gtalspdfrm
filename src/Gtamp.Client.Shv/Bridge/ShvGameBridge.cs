@@ -311,6 +311,36 @@ namespace Gtamp.Client.Shv.Bridge
 
 
 
+
+        /// <summary>
+        /// Applies the server's maximum health to the local player's ped.
+        /// <para>
+        /// <c>SET_PED_MAX_HEALTH</c> does not lower current health to fit, so a player
+        /// standing at 300 with a new ceiling of 200 would keep reporting 300 and be
+        /// rejected for exceeding a maximum they no longer have. The clamp is the whole
+        /// point of the call.
+        /// </para>
+        /// </summary>
+        public void SetLocalMaxHealth(int maxHealth)
+        {
+            if (maxHealth <= 0)
+            {
+                return;
+            }
+
+            Ped ped = Game.Player.Character;
+            if (ped == null || !ped.Exists())
+            {
+                return;
+            }
+
+            Function.Call(Hash.SET_PED_MAX_HEALTH, ped.Handle, maxHealth);
+            if (ped.Health > maxHealth)
+            {
+                ped.Health = maxHealth;
+            }
+        }
+
         /// <summary>
         /// Changes the local player's model.
         /// <para>

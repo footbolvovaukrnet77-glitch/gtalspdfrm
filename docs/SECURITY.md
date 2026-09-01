@@ -108,7 +108,16 @@ carrying it has been written. The hold ends when the client acknowledges that
 snapshot, or on the same timeout the others use, so a client that cannot apply the
 level does not freeze the field for the rest of the session.
 
-The player's model is held the same way, on a longer timeout, because applying one
+Maximum health travels the other way and is not held at all, because the client
+never reports it: the ceiling is the server's to decide, and a client that named its
+own would be naming the number the anti-cheat measures it against. The client applies
+whatever the server says and clamps its current health to fit. That is not cosmetic —
+reported health above the server's maximum is a `HealthHack` violation, so a player
+whose game says 300 (a mod raising maximum health is ordinary in an LSPDFR install)
+tripped it on every update once the join grace ran out, which at `Strict` is a kick
+for having a mod installed.
+
+The player's model is held the same way as the wanted level, on a longer timeout, because applying one
 is not a single frame's work on the client: `SET_PLAYER_MODEL` builds a new ped, the
 model has to stream in first, and the game will not do it sanely while the player is
 in a vehicle or dead. The client retries four times a second for ten seconds and

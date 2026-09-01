@@ -297,6 +297,12 @@ namespace Gtamp.Client.Core
         /// </summary>
         public int WantedLevelCorrectionsApplied { get; private set; }
 
+        /// <summary>
+        /// How many times this client's maximum health has been brought into line with
+        /// the server's. Repeatedly nonzero means the game is refusing the ceiling.
+        /// </summary>
+        public int MaxHealthCorrectionsApplied { get; private set; }
+
         /// <summary>Models the server has set for this player, and models it gave up on.</summary>
         public int ModelChangesApplied { get; private set; }
 
@@ -727,6 +733,7 @@ namespace Gtamp.Client.Core
 
             LocalPlayerSample local = Bridge.SampleLocalPlayer();
 
+            ApplyAuthoritativeMaxHealth(authoritative, local);
             ApplyAuthoritativeWantedLevel(authoritative, local);
             ApplyAuthoritativeModel(authoritative, local);
 
@@ -794,6 +801,37 @@ namespace Gtamp.Client.Core
             _lastReportedPosition = authoritative.Position;
             _lastReportedHealth = authoritative.Health;
             _hasReportedState = true;
+        }
+
+        /// <summary>
+        /// Applies the server's maximum health to the local player.
+        /// <para>
+        /// This one needs no comparison against a report, because the client never
+        /// reports its maximum: any difference is the server's value not yet applied.
+        /// It travelled in every snapshot from the first version of the entity and was
+        /// applied by nothing.
+        /// </para>
+        /// <para>
+        /// It is not cosmetic. The anti-cheat measures reported health against the
+        /// server's maximum, so a player whose game says 300 — an LSPDFR install with a
+        /// mod that raises it is the ordinary case — reported 300 against a ceiling of
+        /// 200 and tripped <c>HealthHack</c> on every update once the join grace ran
+        /// out. At `Strict` that is a kick for having a mod installed.
+        /// </para>
+        /// </summary>
+        private void ApplyAuthoritativeMaxHealth(PlayerEntity authoritative, LocalPlayerSample local)
+        {
+            if (authoritative.MaxHealth <= 0 || authoritative.MaxHealth == local.MaxHealth)
+            {
+                return;
+            }
+
+            Log.Debug(
+                LogCategory.Client,
+                $"Server maximum health is {authoritative.MaxHealth}; this game says {local.MaxHealth}.");
+
+            MaxHealthCorrectionsApplied++;
+            Bridge.SetLocalMaxHealth(authoritative.MaxHealth);
         }
 
         /// <summary>

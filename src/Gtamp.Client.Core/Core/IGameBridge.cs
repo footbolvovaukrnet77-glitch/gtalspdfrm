@@ -78,6 +78,18 @@ namespace Gtamp.Client.Core
         /// </summary>
         bool TrySetLocalPlayerModel(uint modelHash);
 
+        /// <summary>
+        /// Sets the local player's maximum health to the server's value.
+        /// <para>
+        /// The client reads its maximum but never reports it: the ceiling is the
+        /// server's to decide, and a client that named its own would be naming the
+        /// number the anti-cheat measures it against. So it travels one way, and a
+        /// client whose game disagrees — a mod raising it is common in an LSPDFR
+        /// install — is brought into line rather than flagged for it.
+        /// </para>
+        /// </summary>
+        void SetLocalMaxHealth(int maxHealth);
+
         /// <summary>Creates a ped representing another player. Returns a handle, or 0 on failure.</summary>
         int CreateRemotePed(uint modelHash, NetVector3 position, float heading);
 

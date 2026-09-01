@@ -99,6 +99,22 @@ namespace Gtamp.Tests
 
         public int ModelChangeAttempts { get; private set; }
 
+        /// <summary>Maximum health this client has been told to adopt, and how often.</summary>
+        public int LocalMaxHealth { get; private set; }
+
+        public int MaxHealthApplications { get; private set; }
+
+        public void SetLocalMaxHealth(int maxHealth)
+        {
+            LocalMaxHealth = maxHealth;
+            MaxHealthApplications++;
+            Sample.MaxHealth = maxHealth;
+            if (Sample.Health > maxHealth)
+            {
+                Sample.Health = maxHealth;
+            }
+        }
+
         public bool TrySetLocalPlayerModel(uint modelHash)
         {
             ModelChangeAttempts++;

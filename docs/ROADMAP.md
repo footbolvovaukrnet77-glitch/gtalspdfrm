@@ -41,7 +41,7 @@ disconnects → B keeps playing → A reconnects → A receives the *current* wo
 | Aim pose | ✅ real aim target from the gameplay camera, applied with `TASK_AIM_GUN_AT_COORD` |
 | Death and respawn | ✅ server-arbitrated; nearest-hospital respawn; a dead client cannot heal itself |
 | Interior tracking | ✅ read from `GET_INTERIOR_FROM_ENTITY` and replicated |
-| Server-initiated moves | ✅ authority hold, so a teleport or respawn is not dragged back by in-flight client updates. The wanted level and the player's own model are held the same way: a restored save, or an admin's `wanted` or `model` command, survives the client's next report and reaches the game. A model the client cannot apply is given up on out loud rather than retried forever |
+| Server-initiated moves | ✅ authority hold, so a teleport or respawn is not dragged back by in-flight client updates. The wanted level and the player's own model are held the same way: a restored save, or an admin's `wanted` or `model` command, survives the client's next report and reaches the game. A model the client cannot apply is given up on out loud rather than retried forever. Maximum health goes one way only — the server's ceiling reaches the game, and a client whose own game disagrees is brought into line rather than flagged for it by the anti-cheat |
 | Scenario and animation tasks | ⏸ `AnimationHash` is replicated and still unused by the bridge — moved to Phase 9 with the wider animation work |
 
 **Caveat that matters.** The locomotion *decision* is unit-tested — 15 tests over
@@ -248,7 +248,7 @@ machine and real clients, and is not claimed here.
 | Step | What it guards |
 | --- | --- |
 | `dotnet build -c Release -warnaserror` | The zero-warning claim. Without `-warnaserror` it decays the first time a warning lands that nobody scrolls up far enough to see |
-| `dotnet test -c Release` | All 550 tests, with the `.trx` uploaded as an artifact so a failure is readable without re-running anything |
+| `dotnet test -c Release` | All 553 tests, with the `.trx` uploaded as an artifact so a failure is readable without re-running anything |
 | `python3 tools/check-docs.py` | Dead relative links, `#anchors` naming headings that no longer exist, and any document that lost its counterpart in the other language |
 
 The whole solution compiles on `ubuntu-latest`, the `net48` client included,

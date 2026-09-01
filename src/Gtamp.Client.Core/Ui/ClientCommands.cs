@@ -436,7 +436,8 @@ namespace Gtamp.Client.Ui
             builder.AppendLine($"  hits            {client.HitsReported} reported");
             builder.AppendLine(
                 $"  corrections     {client.CorrectionsApplied} position / " +
-                $"{client.WantedLevelCorrectionsApplied} wanted level");
+                $"{client.WantedLevelCorrectionsApplied} wanted level / " +
+                $"{client.MaxHealthCorrectionsApplied} max health");
 
             // A model the server set and this client could not apply is the one line
             // here a player actually has to act on, so it is never folded away.

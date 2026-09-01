@@ -3,6 +3,7 @@ using Gtamp.Server.Players;
 using Gtamp.Shared.Core;
 using Gtamp.Shared.Entities;
 using Gtamp.Shared.Protocol;
+using Gtamp.Shared.Security;
 using Xunit;
 
 namespace Gtamp.Tests
@@ -326,6 +327,104 @@ namespace Gtamp.Tests
 
             // Given up on means given up on: no more attempts after the warning.
             Assert.Equal(attempts, player.Bridge.ModelChangeAttempts);
+        }
+
+        /// <summary>
+        /// A game whose maximum health disagrees with the server's is brought into
+        /// line, not banned for it.
+        /// <para>
+        /// `MaxHealth` was on the character entity from the start, replicated in every
+        /// snapshot, restored from every save, and applied to the game by nothing —
+        /// while the anti-cheat measured every reported health against it. A player
+        /// whose game says 300, which a mod raising maximum health makes ordinary in an
+        /// LSPDFR install, reported 300 against a ceiling of 200 and tripped
+        /// <c>HealthHack</c> on every update once the join grace ran out: at `Strict`,
+        /// a kick for having a mod installed.
+        /// </para>
+        /// </summary>
+        [Fact]
+        public void AGameWithADifferentMaximumHealthIsBroughtIntoLine()
+        {
+            using var harness = new TestHarness();
+            TestClient player = Join(harness, "modded");
+
+            // Their game has a mod that raises maximum health, and they are at it.
+            player.Bridge.Sample.MaxHealth = 300;
+            player.Bridge.Sample.Health = 300;
+
+            Assert.True(harness.AdvanceUntil(() => player.Client.IsConnected));
+            Assert.True(harness.AdvanceUntil(() => player.Client.LocalEntityId.IsValid));
+
+            // The server's ceiling reaches the game, and the health above it comes down
+            // with it — otherwise the next report is still over a maximum it no longer
+            // has.
+            Assert.True(harness.AdvanceUntil(() => player.Bridge.LocalMaxHealth == 200));
+            Assert.Equal(200, player.Bridge.Sample.MaxHealth);
+            Assert.True(player.Bridge.Sample.Health <= 200);
+
+            harness.Advance(2d);
+
+            // And no violation was recorded for it: the ceiling arrived inside the
+            // join grace, which is exactly what that grace is for.
+            Assert.True(harness.Server.Players.TryGetByPlayerId(
+                player.Client.LocalPlayerId, out PlayerSession session));
+            Assert.False(session.PendingRemoval);
+            Assert.Equal(200, harness.Server.World.GetPlayer(player.Client.LocalEntityId)!.MaxHealth);
+        }
+
+        /// <summary>
+        /// The failure this prevents, shown directly rather than described: the
+        /// anti-cheat measures reported health against the server's maximum, so health
+        /// the client's own game considers normal is a `HealthHack` violation the moment
+        /// the two disagree.
+        /// </summary>
+        [Fact]
+        public void HealthAboveTheServersMaximumIsAViolation()
+        {
+            var engine = new AntiCheatEngine(new AntiCheatSettings { Level = AntiCheatLevel.Standard });
+            var entity = new PlayerEntity(new EntityId(1))
+            {
+                Position = new NetVector3(220f, -800f, 30f),
+                Health = 200,
+                MaxHealth = 200,
+            };
+
+            var state = new PlayerValidationState();
+            var proposal = new PlayerStateProposal
+            {
+                Position = entity.Position,
+                Velocity = NetVector3.Zero,
+                AimPosition = entity.Position,
+                Heading = 0f,
+                Health = 300,
+                Armor = 0,
+            };
+
+            ValidationOutcome outcome = engine.ValidatePlayerState(entity, proposal, state, now: 100d);
+
+            Assert.False(outcome.Accepted);
+            Assert.Contains(outcome.Violations, v => v.Kind == ViolationKind.HealthHack);
+        }
+
+        /// <summary>
+        /// And it is applied once, not every frame: it is a ceiling, not a per-frame
+        /// command, and a native call twenty times a second for a number that does not
+        /// move is how a client's frame budget disappears.
+        /// </summary>
+        [Fact]
+        public void TheMaximumIsAppliedOnChangeOnly()
+        {
+            using var harness = new TestHarness();
+            TestClient player = Join(harness, "modded");
+            player.Bridge.Sample.MaxHealth = 300;
+
+            Assert.True(harness.AdvanceUntil(() => player.Client.IsConnected));
+            Assert.True(harness.AdvanceUntil(() => player.Bridge.LocalMaxHealth == 200));
+
+            int applications = player.Bridge.MaxHealthApplications;
+            harness.Advance(2d);
+
+            Assert.Equal(applications, player.Bridge.MaxHealthApplications);
         }
 
         [Fact]
