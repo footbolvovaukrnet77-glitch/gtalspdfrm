@@ -88,7 +88,39 @@ requirements to warnings.
 
 ## Script does not load
 
-`<GTA V>/ScriptHookVDotNet.log` is the first place to look.
+`<GTA V>/ScriptHookVDotNet.log` is the first place to look — **and the first thing to
+check is whether that file exists at all.** Everything below assumes it does. If it
+does not, the problem is underneath this framework: the ScriptHookVDotNet layer never
+ran, so nothing here was ever asked to load, and copying our files again will not
+change that.
+
+The presence of `<GTA V>/ScriptHookV.log` splits it in two:
+
+| What is there | What it means | Where to look |
+| --- | --- | --- |
+| Neither log | ScriptHookV itself never loaded | The four causes below |
+| `ScriptHookV.log` but no SHVDN log | ScriptHookV runs; its `.asi` did not | `ScriptHookVDotNet.asi`, `ScriptHookVDotNet2.dll` and `ScriptHookVDotNet3.dll` must all be in the GTA V root, beside `GTA5.exe` |
+
+When neither log exists, in the order worth checking:
+
+1. **The wrong edition of the game.** ScriptHookV supports GTA V **Legacy** only. On
+   Enhanced it will never load and no amount of installing changes that. The launcher
+   names the edition. A working LSPDFR install is good evidence of Legacy, since
+   LSPDFR is Legacy-only too.
+2. **An antivirus deleted the files.** ScriptHookV is an injector and is quarantined
+   routinely, usually in silence. `dir` the GTA V folder: if `ScriptHookV.dll` or
+   `dinput8.dll` are absent after you copied them, that is the answer.
+3. **The downloaded files are blocked.** Windows marks files that came from the
+   internet and the loader may refuse them. In an elevated PowerShell:
+   `Get-ChildItem -Path '<GTA V>\*' -Include *.dll,*.asi | Unblock-File`.
+4. **Another mod owns the ASI loader.** `dinput8.dll` is one of several names a
+   loader can take; another mod shipping `dsound.dll` or `version.dll` can win.
+
+Note that RAGE Plugin Hook proves nothing here either way: RPH is its own loader and
+does not need ScriptHookV, so a working LSPDFR setup can sit on a machine where
+ScriptHookV has never loaded once.
+
+Once the log exists:
 
 | Symptom | Cause | Fix |
 | --- | --- | --- |
