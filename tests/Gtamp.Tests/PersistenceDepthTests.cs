@@ -15,23 +15,26 @@ namespace Gtamp.Tests
     public class SchemaMigrationTests : IDisposable
     {
         private readonly string _databasePath = Path.Combine(
-            Path.GetTempPath(), "gtamp-tests", Guid.NewGuid().ToString("N") + ".db");
+            Path.GetTempPath(), "gtamp-tests", Guid.NewGuid().ToString("N"), "world.db");
 
+        /// <summary>
+        /// Removes this class's own directory. Every persistence test class owns one,
+        /// named after its own GUID, because deleting anything shared races with the
+        /// classes xUnit is running in parallel — see PersistenceTests.Dispose.
+        /// </summary>
         public void Dispose()
         {
-            foreach (string path in new[] { _databasePath, _databasePath + "-wal", _databasePath + "-shm" })
+            try
             {
-                try
+                string? directory = Path.GetDirectoryName(_databasePath);
+                if (directory != null && Directory.Exists(directory))
                 {
-                    if (File.Exists(path))
-                    {
-                        File.Delete(path);
-                    }
+                    Directory.Delete(directory, recursive: true);
                 }
-                catch (IOException)
-                {
-                    // A leftover temp file is not worth failing a test over.
-                }
+            }
+            catch (IOException)
+            {
+                // A leftover temp file is not worth failing a test over.
             }
         }
 
@@ -331,23 +334,22 @@ namespace Gtamp.Tests
         private const uint Adder = 0xB779A091;
 
         private readonly string _databasePath = Path.Combine(
-            Path.GetTempPath(), "gtamp-tests", Guid.NewGuid().ToString("N") + ".db");
+            Path.GetTempPath(), "gtamp-tests", Guid.NewGuid().ToString("N"), "world.db");
 
+        /// <summary>Removes this class's own directory; see PersistenceTests.Dispose.</summary>
         public void Dispose()
         {
-            foreach (string path in new[] { _databasePath, _databasePath + "-wal", _databasePath + "-shm" })
+            try
             {
-                try
+                string? directory = Path.GetDirectoryName(_databasePath);
+                if (directory != null && Directory.Exists(directory))
                 {
-                    if (File.Exists(path))
-                    {
-                        File.Delete(path);
-                    }
+                    Directory.Delete(directory, recursive: true);
                 }
-                catch (IOException)
-                {
-                    // Best effort.
-                }
+            }
+            catch (IOException)
+            {
+                // Best effort.
             }
         }
 

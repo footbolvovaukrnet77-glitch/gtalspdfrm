@@ -15,30 +15,29 @@ namespace Gtamp.Tests
         public PersistenceTests()
         {
             _databasePath = Path.Combine(
-                Path.GetTempPath(), "gtamp-tests", Guid.NewGuid().ToString("N") + ".db");
+                Path.GetTempPath(), "gtamp-tests", Guid.NewGuid().ToString("N"), "world.db");
         }
 
+        /// <summary>
+        /// Deletes this class's own directory and nothing else.
+        /// <para>
+        /// This used to delete the <c>gtamp-tests</c> directory itself whenever it
+        /// happened to be empty at that instant — and xUnit runs test classes in
+        /// parallel, so "empty" meant "no other class has created its file *yet*".
+        /// A second persistence class opening its database a moment later found the
+        /// directory gone and failed with SQLite error 14, unable to open database
+        /// file. Every class now owns a directory named after its own GUID, so there
+        /// is nothing shared left to race over.
+        /// </para>
+        /// </summary>
         public void Dispose()
         {
             try
             {
                 string? directory = Path.GetDirectoryName(_databasePath);
-                if (File.Exists(_databasePath))
+                if (directory != null && Directory.Exists(directory))
                 {
-                    File.Delete(_databasePath);
-                }
-
-                foreach (string sidecar in new[] { _databasePath + "-wal", _databasePath + "-shm" })
-                {
-                    if (File.Exists(sidecar))
-                    {
-                        File.Delete(sidecar);
-                    }
-                }
-
-                if (directory != null && Directory.Exists(directory) && Directory.GetFileSystemEntries(directory).Length == 0)
-                {
-                    Directory.Delete(directory);
+                    Directory.Delete(directory, recursive: true);
                 }
             }
             catch (IOException)
