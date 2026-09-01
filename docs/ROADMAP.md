@@ -284,11 +284,11 @@ locally, it produced the same six errors byte for byte, and the fix was then
 verified against both SDKs — build and 360 tests clean on 8.0.424, build clean on
 10.0.400.
 
-This is the sixth defect the project has found in itself, and the only one no
+This is one of twenty-six defects the project has found in itself, and the only one no
 amount of local testing would have surfaced: the bug was in the assumption that
 *my* SDK is *the* SDK.
 
-**An eighth defect, found by reading a mod that has actually been played.**
+**A defect found by reading a mod that has actually been played.**
 `CurrentWeaponHash` was read from the local player, serialised, sent, stored on the
 server, replicated to every other client and printed by both `players` and `diff` —
 and the only weapon-related call anywhere in the ScriptHookVDotNet layer was the
@@ -303,7 +303,7 @@ is the narrow version of the same bug. Nothing was copied. Reading a project tha
 been played for years is how you find the defects that only running the thing
 reveals — and this project has never been run.
 
-**A seventh defect, found by reading the security code rather than by running it.**
+**A defect found by reading the security code rather than by running it.**
 `SessionCrypto` had counted encrypted and rejected packets "for the network
 debugger" since it was written, and nothing anywhere read either number;
 `ClientConnection.IsEncrypted` was read only by tests. So an operator could set
@@ -323,6 +323,42 @@ exited non-zero. A checker that only ever passes is indistinguishable from one
 that checks nothing.
 
 ---
+
+## Twenty-six defects, and sixteen of them the same one
+
+The numbered narratives above were written when there were eight. There are
+twenty-six, and counting them individually turned out to matter less than noticing
+that **sixteen are the same defect**:
+
+> State that travels correctly, is stored correctly, is validated, persisted and
+> printed by the diagnostics — and never reaches the thing it describes.
+
+Every one had passing tests over the part that worked, which is why no test here
+could find any of them. The wire was right, the server was right, the console was
+right; the consumer at the end was missing, and nothing asserted that a consumer
+existed.
+
+Three methods found them, in increasing order of yield:
+
+| Method | Found |
+| --- | --- |
+| Reading a mod that has actually been played | 2 |
+| Re-reading our own bridge asking what happened *after* a value was applied | 3 |
+| Grepping every declared field and every interface method for callers | 9 |
+
+The third is now a habit rather than an audit. `IGameBridge` has no method without
+a caller. `VehicleEntity`, `CharacterEntity`, `ObjectEntity` and `PlayerFlags` have
+no field that is neither read nor documented as derived from something that is —
+and where a field cannot be replicated at all, like `Handbrake`, the enum says so
+where a reader will meet it.
+
+Four of the twenty-six were worse than unimplemented: `LeftIndicator`,
+`RightIndicator`, `SirenMuted` and `Handbrake` were *applied* from a field nothing
+sampled, and a flag written but never read is always false. Every replicated car
+had its indicators forced off and its handbrake released sixty times a second.
+
+The full list, with what each one looked like in the game, is in the pull request
+description.
 
 ## Deliberately not done
 
