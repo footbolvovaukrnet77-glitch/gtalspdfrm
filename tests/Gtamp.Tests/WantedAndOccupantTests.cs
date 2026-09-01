@@ -125,6 +125,119 @@ namespace Gtamp.Tests
             Assert.True(harness.AdvanceUntil(() => car.Occupants.Count == 0));
         }
 
+        /// <summary>
+        /// A wanted level the server sets reaches the game.
+        /// <para>
+        /// It was persisted, restored on connect, printed by the admin console — and
+        /// applied to nothing. The client's very first update, from a fresh session at
+        /// zero stars, overwrote the restored value before the snapshot carrying it had
+        /// been written. The save file recorded three stars and handed back none.
+        /// </para>
+        /// </summary>
+        [Fact]
+        public void AWantedLevelTheServerSetsReachesTheGame()
+        {
+            using var harness = new TestHarness();
+            TestClient player = Join(harness, "suspect");
+            Assert.True(harness.AdvanceUntil(() => player.Client.IsConnected));
+            Assert.True(harness.AdvanceUntil(() => player.Client.LocalEntityId.IsValid));
+
+            Assert.True(harness.Server.Players.TryGetByPlayerId(
+                player.Client.LocalPlayerId, out PlayerSession session));
+            Assert.True(harness.Server.SetWantedLevel(session, 3));
+
+            Assert.True(harness.AdvanceUntil(() => player.Bridge.LocalWantedLevel == 3));
+            Assert.True(player.Client.WantedLevelCorrectionsApplied > 0);
+        }
+
+        /// <summary>
+        /// And it stays set. The client reports twenty times a second from a game that
+        /// still says zero; without the hold, the server's own value survives for less
+        /// than one update.
+        /// </summary>
+        [Fact]
+        public void TheServersWantedLevelIsNotOverwrittenByTheClientsNextReport()
+        {
+            using var harness = new TestHarness();
+            TestClient player = Join(harness, "suspect");
+            Assert.True(harness.AdvanceUntil(() => player.Client.IsConnected));
+            Assert.True(harness.AdvanceUntil(() => player.Client.LocalEntityId.IsValid));
+
+            Assert.True(harness.Server.Players.TryGetByPlayerId(
+                player.Client.LocalPlayerId, out PlayerSession session));
+            Assert.True(harness.Server.SetWantedLevel(session, 4));
+
+            Assert.True(harness.AdvanceUntil(() => player.Bridge.LocalWantedLevel == 4));
+
+            harness.Advance(1d);
+
+            PlayerEntity? entity = harness.Server.World.GetPlayer(player.Client.LocalEntityId);
+            Assert.NotNull(entity);
+            Assert.Equal(4, entity!.WantedLevel);
+        }
+
+        /// <summary>
+        /// An ordinary session never triggers it. The wanted level the local game owns
+        /// is reported upward and echoed back, and echoing is not a disagreement: a
+        /// client that re-applied it would fight its own game every snapshot.
+        /// </summary>
+        [Fact]
+        public void AWantedLevelTheClientReportedIsNotAppliedBackToIt()
+        {
+            using var harness = new TestHarness();
+            TestClient player = Join(harness, "citizen");
+            Assert.True(harness.AdvanceUntil(() => player.Client.IsConnected));
+            Assert.True(harness.AdvanceUntil(() => player.Client.LocalEntityId.IsValid));
+
+            // Let the session settle first: until a report of ours has been answered,
+            // "the server changed it" and "the server has not heard us" look the same.
+            harness.Advance(1d);
+            int applicationsBefore = player.Bridge.LocalWantedLevelApplications;
+
+            player.Bridge.Sample.WantedLevel = 2;
+            harness.Advance(1d);
+
+            PlayerEntity? entity = harness.Server.World.GetPlayer(player.Client.LocalEntityId);
+            Assert.NotNull(entity);
+            Assert.Equal(2, entity!.WantedLevel);
+
+            // The client's own level was never written back to it, and the sample it
+            // reports still says what the game says.
+            Assert.Equal(applicationsBefore, player.Bridge.LocalWantedLevelApplications);
+            Assert.Equal(2, player.Bridge.Sample.WantedLevel);
+        }
+
+        /// <summary>
+        /// The other side of the same rule: the stars you were carrying in single
+        /// player do not come with you.
+        /// <para>
+        /// At the moment of connecting the server has heard nothing from this client,
+        /// so its own value — a restored save, or a clean zero — is the authoritative
+        /// one, exactly as it is for position and health. Importing a wanted level from
+        /// the client's own session would let anyone arrive on a server already at five
+        /// stars, and would make a restored save lose to whatever the game happened to
+        /// have on screen.
+        /// </para>
+        /// </summary>
+        [Fact]
+        public void TheStarsYouArriveWithAreClearedByTheServer()
+        {
+            using var harness = new TestHarness();
+            TestClient player = Join(harness, "arrival");
+            player.Bridge.Sample.WantedLevel = 3;
+
+            Assert.True(harness.AdvanceUntil(() => player.Client.IsConnected));
+            Assert.True(harness.AdvanceUntil(() => player.Client.LocalEntityId.IsValid));
+            Assert.True(harness.AdvanceUntil(() => player.Bridge.LocalWantedLevelApplications > 0));
+
+            Assert.Equal(0, player.Bridge.LocalWantedLevel);
+
+            harness.Advance(1d);
+            PlayerEntity? entity = harness.Server.World.GetPlayer(player.Client.LocalEntityId);
+            Assert.NotNull(entity);
+            Assert.Equal(0, entity!.WantedLevel);
+        }
+
         [Fact]
         public void ASeatIsClaimedByOneOccupantAtATime()
         {

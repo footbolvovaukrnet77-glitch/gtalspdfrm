@@ -309,6 +309,22 @@ namespace Gtamp.Client.Shv.Bridge
             return _localAppearance;
         }
 
+
+        /// <summary>
+        /// Applies a wanted level the server decided.
+        /// <para>
+        /// <c>SET_PLAYER_WANTED_LEVEL</c> only stages the value; without
+        /// <c>SET_PLAYER_WANTED_LEVEL_NOW</c> it is applied on the game's own schedule,
+        /// which for a level being lowered can be never. Both natives, always.
+        /// </para>
+        /// </summary>
+        public void SetLocalWantedLevel(int level)
+        {
+            int clamped = Clamp(level, 0, 5);
+            Function.Call(Hash.SET_PLAYER_WANTED_LEVEL, Game.Player.Handle, clamped, false);
+            Function.Call(Hash.SET_PLAYER_WANTED_LEVEL_NOW, Game.Player.Handle, false);
+        }
+
         public void ApplyLocalCorrection(NetVector3 position, float heading, int health, int armor)
         {
             Ped ped = Game.Player.Character;

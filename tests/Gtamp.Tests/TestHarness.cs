@@ -82,6 +82,19 @@ namespace Gtamp.Tests
 
         public LocalPlayerSample SampleLocalPlayer() => Sample;
 
+
+        /// <summary>Wanted level the server has told this client to apply, and how often.</summary>
+        public int LocalWantedLevel { get; private set; }
+
+        public int LocalWantedLevelApplications { get; private set; }
+
+        public void SetLocalWantedLevel(int level)
+        {
+            LocalWantedLevel = level;
+            LocalWantedLevelApplications++;
+            Sample.WantedLevel = (byte)(level < 0 ? 0 : (level > 5 ? 5 : level));
+        }
+
         public void ApplyLocalCorrection(NetVector3 position, float heading, int health, int armor)
         {
             CorrectionsApplied++;

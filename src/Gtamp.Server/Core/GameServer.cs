@@ -964,7 +964,16 @@ namespace Gtamp.Server.Core
 
             // Clamped, not trusted: the field is a byte on the wire and GTA V has six
             // levels, so a client claiming 200 would be replicated and printed as 200.
-            entity.WantedLevel = update.WantedLevel > 5 ? (byte)5 : update.WantedLevel;
+            //
+            // Held while the server has a wanted level of its own that the client has
+            // not seen yet. A player who logged out with three stars had them restored
+            // into the entity, saved, printed by the admin console — and erased by the
+            // first update from a client whose fresh session is at zero, before the
+            // snapshot carrying them was ever written.
+            if (!IsWantedHeld(session, update.AcknowledgedSnapshotId))
+            {
+                entity.WantedLevel = update.WantedLevel > 5 ? (byte)5 : update.WantedLevel;
+            }
             entity.AnimationHash = update.AnimationHash;
 
             // The pose is only meaningful while the flag is set, and a stale one is
@@ -1041,6 +1050,60 @@ namespace Gtamp.Server.Core
         {
             session.PendingHealthHold = true;
             session.HealthHoldSnapshot = 0;
+        }
+
+        /// <summary>True while the client has not yet seen a wanted level the server set.</summary>
+        private bool IsWantedHeld(PlayerSession session, uint acknowledgedSnapshotId)
+        {
+            if (session.PendingWantedHold)
+            {
+                return true;
+            }
+
+            if (session.WantedHoldSnapshot == 0)
+            {
+                return false;
+            }
+
+            if (acknowledgedSnapshotId >= session.WantedHoldSnapshot || _now >= session.WantedHoldExpiry)
+            {
+                session.WantedHoldSnapshot = 0;
+                session.WantedHoldExpiry = 0;
+                return false;
+            }
+
+            return true;
+        }
+
+        /// <summary>
+        /// Declares that the server has just set a player's wanted level itself, so the
+        /// client's reports are ignored until it has seen the change. The hold expires
+        /// on a timeout as well as on acknowledgement: a client that cannot apply it —
+        /// an older build, or a game that refuses the level — must not freeze the field
+        /// for the rest of the session.
+        /// </summary>
+        private void HoldWantedAuthority(PlayerSession session)
+        {
+            session.PendingWantedHold = true;
+            session.WantedHoldSnapshot = 0;
+        }
+
+        /// <summary>
+        /// Sets a player's wanted level from the server side: a restored save, an admin
+        /// command, a mod. Returns false when the session has no entity in the world.
+        /// </summary>
+        public bool SetWantedLevel(PlayerSession session, byte level)
+        {
+            PlayerEntity? entity = World.GetPlayer(session.EntityId);
+            if (entity == null)
+            {
+                return false;
+            }
+
+            entity.WantedLevel = level > 5 ? (byte)5 : level;
+            HoldWantedAuthority(session);
+            World.Touch(entity);
+            return true;
         }
 
         /// <summary>Kills a player from the server side, e.g. an admin command.</summary>
@@ -1466,6 +1529,13 @@ namespace Gtamp.Server.Core
                     session.HealthHoldExpiry = _now + AuthorityHoldTimeoutSeconds;
                 }
 
+                if (session.PendingWantedHold)
+                {
+                    session.PendingWantedHold = false;
+                    session.WantedHoldSnapshot = snapshotId;
+                    session.WantedHoldExpiry = _now + AuthorityHoldTimeoutSeconds;
+                }
+
                 SnapshotWriteResult result = SnapshotCodec.Write(
                     World.State, baseline, Registry, order, snapshotId, budget,
                     session.LastProcessedUpdateSequence,
@@ -1610,6 +1680,12 @@ namespace Gtamp.Server.Core
                 Dimension = saved?.Dimension ?? 0,
                 InteriorId = saved?.InteriorId ?? 0,
             };
+
+            if (entity.WantedLevel > 0)
+            {
+                // Restored, so the client has to be told before its own reports count.
+                HoldWantedAuthority(session);
+            }
 
             return World.Spawn(entity);
         }

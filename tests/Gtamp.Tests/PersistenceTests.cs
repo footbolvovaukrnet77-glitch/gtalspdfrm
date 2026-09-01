@@ -214,6 +214,69 @@ namespace Gtamp.Tests
             Assert.True(aliceAgain.Client.Connection.Accept!.Restored);
         }
 
+        /// <summary>
+        /// The stars come back too.
+        /// <para>
+        /// The wanted level was written to the database, read back on connect, and
+        /// applied to nothing at all. The returning player's client — a fresh session at
+        /// zero — reported that zero before the snapshot carrying the restored value had
+        /// even been written, and the server took it. Three stars went in and none came
+        /// out, and every layer in between reported success.
+        /// </para>
+        /// </summary>
+        [Fact]
+        public void APlayersWantedLevelSurvivesARestartAndReachesTheirGame()
+        {
+            using var key = Gtamp.Shared.Security.IdentityKey.Create();
+            string identity = key.ExportPrivateBlob();
+
+            var firstConfig = new ServerConfig
+            {
+                ServerName = "wanted-restart-test",
+                PersistenceEnabled = true,
+                DatabasePath = _databasePath,
+                SaveIntervalSeconds = 0,
+                StartTime = "12:00",
+            };
+
+            using (var harness = new TestHarness(firstConfig, new SqlitePersistenceStore(_databasePath)))
+            {
+                TestClient alice = harness.CreateClient("alice", identity);
+                alice.Client.Connect("127.0.0.1", TestHarness.ServerEndPoint.Port);
+                Assert.True(harness.AdvanceUntil(() => alice.PlayerCount >= 1));
+
+                harness.Advance(1d);
+                alice.Bridge.Sample.WantedLevel = 3;
+                harness.Advance(1d);
+
+                Assert.Equal(3, harness.Server.World.GetPlayer(alice.Client.LocalEntityId)!.WantedLevel);
+            }
+
+            var secondConfig = new ServerConfig
+            {
+                ServerName = "wanted-restart-test",
+                PersistenceEnabled = true,
+                DatabasePath = _databasePath,
+                SaveIntervalSeconds = 0,
+                StartTime = "12:00",
+            };
+
+            using var restarted = new TestHarness(secondConfig, new SqlitePersistenceStore(_databasePath));
+
+            TestClient aliceAgain = restarted.CreateClient("alice", identity);
+            aliceAgain.Client.Connect("127.0.0.1", TestHarness.ServerEndPoint.Port);
+            Assert.True(restarted.AdvanceUntil(() => aliceAgain.PlayerCount >= 1));
+
+            // Her game starts clean, as a fresh session does — and by the time the
+            // connection is up the server has already told it otherwise, and keeps
+            // telling it: the level is held against her client's reports until it has
+            // seen the change.
+            Assert.True(restarted.AdvanceUntil(() => aliceAgain.Bridge.LocalWantedLevel == 3));
+            restarted.Advance(1d);
+
+            Assert.Equal(3, restarted.Server.World.GetPlayer(aliceAgain.Client.LocalEntityId)!.WantedLevel);
+        }
+
         [Fact]
         public void EntityIdsAreNeverReusedAfterARestart()
         {

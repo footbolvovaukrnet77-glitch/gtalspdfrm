@@ -64,11 +64,12 @@ namespace Gtamp.Client.Core
 
         private readonly struct ReportedState
         {
-            public ReportedState(uint sequence, NetVector3 position, int health)
+            public ReportedState(uint sequence, NetVector3 position, int health, byte wantedLevel)
             {
                 Sequence = sequence;
                 Position = position;
                 Health = health;
+                WantedLevel = wantedLevel;
             }
 
             public uint Sequence { get; }
@@ -76,6 +77,8 @@ namespace Gtamp.Client.Core
             public NetVector3 Position { get; }
 
             public int Health { get; }
+
+            public byte WantedLevel { get; }
         }
 
         private double _lastStateSendTime;
@@ -85,6 +88,7 @@ namespace Gtamp.Client.Core
 
         private NetVector3 _lastReportedPosition;
         private int _lastReportedHealth;
+        private byte _lastReportedWantedLevel;
         private bool _hasReportedState;
 
         public MultiplayerClient(
@@ -260,6 +264,13 @@ namespace Gtamp.Client.Core
 
         /// <summary>How many times the server has had to correct the local player's position.</summary>
         public int CorrectionsApplied { get; private set; }
+
+        /// <summary>
+        /// How many times the server has set this player's wanted level. Nonzero only
+        /// when the server actually took it over — a restored save, an admin command —
+        /// so it stays at zero through a whole ordinary session.
+        /// </summary>
+        public int WantedLevelCorrectionsApplied { get; private set; }
 
         /// <summary>
         /// Rounds this client has reported firing, and rounds it has drawn for other
@@ -686,6 +697,8 @@ namespace Gtamp.Client.Core
 
             LocalPlayerSample local = Bridge.SampleLocalPlayer();
 
+            ApplyAuthoritativeWantedLevel(authoritative, local);
+
             // Compared against what was last *reported*, not against where the player
             // is *now*.
             //
@@ -740,12 +753,82 @@ namespace Gtamp.Client.Core
             // The correction is now what the server believes, so the report it
             // answered is rewritten to match: judging the next snapshot against the
             // superseded value would correct the same disagreement twice.
-            _reportHistory[_serverAcknowledgedSequence % _reportHistory.Length] =
-                new ReportedState(_serverAcknowledgedSequence, authoritative.Position, authoritative.Health);
+            _reportHistory[_serverAcknowledgedSequence % _reportHistory.Length] = new ReportedState(
+                _serverAcknowledgedSequence,
+                authoritative.Position,
+                authoritative.Health,
+                _lastReportedWantedLevel);
 
             _lastReportedPosition = authoritative.Position;
             _lastReportedHealth = authoritative.Health;
             _hasReportedState = true;
+        }
+
+        /// <summary>
+        /// Applies a wanted level the server set rather than one the client reported.
+        /// <para>
+        /// The local game owns the wanted level in normal play: cops raise it, a corner
+        /// turned clears it, and the client reports it upward. The server sets one of
+        /// its own in exactly two situations — restoring a player who logged out with
+        /// stars, and an admin issuing them — and until this ran, neither reached the
+        /// game. A restored three-star player spawned clean, reported zero, and the
+        /// server's own saved value was gone inside one update.
+        /// </para>
+        /// <para>
+        /// Compared against the report the snapshot answers, not against the level
+        /// right now, for the same reason the position correction is: a level the
+        /// player picked up half a round trip ago is not a disagreement, and correcting
+        /// on it would clear stars the game had legitimately just given them.
+        /// </para>
+        /// </summary>
+        private void ApplyAuthoritativeWantedLevel(PlayerEntity authoritative, LocalPlayerSample local)
+        {
+            byte reported;
+            if (_hasReportedState)
+            {
+                ReportedState answered = _reportHistory[_serverAcknowledgedSequence % _reportHistory.Length];
+                if (answered.Sequence != _serverAcknowledgedSequence || _serverAcknowledgedSequence == 0)
+                {
+                    // We have reported, and the server has confirmed none of it. Every
+                    // difference here reads the same whether the server changed the
+                    // level or simply has not heard us yet, and acting on that would
+                    // clear the stars the client is at that moment reporting. Waiting
+                    // costs one round trip; a wanted level the server really did set is
+                    // still in the next snapshot.
+                    return;
+                }
+
+                reported = answered.WantedLevel;
+            }
+            else
+            {
+                // Nothing reported yet — the first snapshot after connecting, which is
+                // the one that carries a restored save. Here the local level is the
+                // right comparison: it is what this client would report.
+                reported = local.WantedLevel;
+            }
+
+            if (authoritative.WantedLevel == reported)
+            {
+                return;
+            }
+
+            WantedLevelCorrectionsApplied++;
+            Log.Debug(
+                LogCategory.Network,
+                $"Server set the wanted level to {authoritative.WantedLevel}; this client reported {reported}.");
+
+            Bridge.SetLocalWantedLevel(authoritative.WantedLevel);
+
+            // What the server said is now what this client has reported, so the same
+            // difference is not acted on a second time while the change is in flight.
+            _lastReportedWantedLevel = authoritative.WantedLevel;
+            if (_hasReportedState)
+            {
+                ReportedState answered = _reportHistory[_serverAcknowledgedSequence % _reportHistory.Length];
+                _reportHistory[_serverAcknowledgedSequence % _reportHistory.Length] = new ReportedState(
+                    answered.Sequence, answered.Position, answered.Health, authoritative.WantedLevel);
+            }
         }
 
         private void RequestResync(string reason)
@@ -914,10 +997,11 @@ namespace Gtamp.Client.Core
             Connection.Peer?.Send(NetMessageType.ClientStateUpdate, update.Serialize(), DeliveryMethod.Unreliable);
 
             _reportHistory[_updateSequence % _reportHistory.Length] =
-                new ReportedState(_updateSequence, sample.Position, sample.Health);
+                new ReportedState(_updateSequence, sample.Position, sample.Health, sample.WantedLevel);
 
             _lastReportedPosition = sample.Position;
             _lastReportedHealth = sample.Health;
+            _lastReportedWantedLevel = sample.WantedLevel;
             _hasReportedState = true;
         }
 

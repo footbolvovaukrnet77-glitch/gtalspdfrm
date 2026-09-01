@@ -59,6 +59,13 @@ namespace Gtamp.Client.Core
         /// </summary>
         void ApplyLocalCorrection(NetVector3 position, float heading, int health, int armor);
 
+        /// <summary>
+        /// Sets the local player's wanted level, because the server decided it: a
+        /// restored save, an admin command, a mod. Not called for a wanted level the
+        /// client itself reported — the local game owns that one.
+        /// </summary>
+        void SetLocalWantedLevel(int level);
+
         /// <summary>Creates a ped representing another player. Returns a handle, or 0 on failure.</summary>
         int CreateRemotePed(uint modelHash, NetVector3 position, float heading);
 

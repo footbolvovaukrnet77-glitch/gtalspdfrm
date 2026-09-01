@@ -121,6 +121,23 @@ namespace Gtamp.Server.Players
 
         public double HealthHoldExpiry { get; set; }
 
+        /// <summary>
+        /// The same hold, for the wanted level, and for the same reason in reverse.
+        /// <para>
+        /// A wanted level is the client's to report — the local game raises and clears
+        /// it — right up until the server sets one itself: restoring a saved player who
+        /// logged out with three stars, or an admin issuing one. The client is at that
+        /// moment still reporting the zero its fresh session has, twenty times a second,
+        /// and without this the restored value is overwritten before the snapshot that
+        /// carries it has even been sent.
+        /// </para>
+        /// </summary>
+        public bool PendingWantedHold { get; set; }
+
+        public uint WantedHoldSnapshot { get; set; }
+
+        public double WantedHoldExpiry { get; set; }
+
         /// <summary>Set once a disconnect has been decided, so the tick loop can reap the session.</summary>
         public bool PendingRemoval { get; set; }
 

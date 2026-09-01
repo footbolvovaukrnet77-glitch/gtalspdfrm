@@ -59,6 +59,7 @@ namespace Gtamp.Server.Admin
                 "teleport" or "tp" => Teleport(args),
                 "kill" => Kill(args),
                 "respawn" => RespawnCommand(args),
+                "wanted" => Wanted(args),
                 "say" => Say(args),
                 "time" => Time(args),
                 "weather" => Weather(args),
@@ -86,6 +87,7 @@ namespace Gtamp.Server.Admin
             "  teleport <id> <x> <y> <z> [heading]   move a player",
             "  kill <playerId>     kill a player",
             "  respawn <playerId>  respawn a dead player immediately",
+            "  wanted <playerId> <0-5>  set a player's wanted level",
             "  say <text>          broadcast a chat message as the server",
             "  time <HH:MM>        set the world clock",
             "  weather <name>      set the weather (e.g. EXTRASUNNY, RAIN, THUNDER)",
@@ -402,6 +404,29 @@ namespace Gtamp.Server.Admin
             }
 
             return _server.KillPlayer(session) ? $"Killed {session.Name}." : $"{session.Name} is already dead.";
+        }
+
+        /// <summary>
+        /// Sets a player's wanted level. The server holds it against the player's own
+        /// reports until their client has seen it, so this is not undone by the next
+        /// update from a game that still thinks they are clean.
+        /// </summary>
+        private string Wanted(string[] args)
+        {
+            if (args.Length < 2 || !uint.TryParse(args[0], out uint playerId)
+                || !byte.TryParse(args[1], out byte level) || level > 5)
+            {
+                return "Usage: wanted <playerId> <0-5>";
+            }
+
+            if (!_server.Players.TryGetByPlayerId(playerId, out PlayerSession session))
+            {
+                return $"No player with id {playerId}.";
+            }
+
+            return _server.SetWantedLevel(session, level)
+                ? $"{session.Name} is now wanted at level {level}."
+                : $"{session.Name} has no character in the world.";
         }
 
         private string RespawnCommand(string[] args)

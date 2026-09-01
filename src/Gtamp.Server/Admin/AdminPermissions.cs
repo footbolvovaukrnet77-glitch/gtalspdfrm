@@ -73,6 +73,7 @@ namespace Gtamp.Server.Admin
                 ["teleport"] = AdminPermission.AffectPlayers,
                 ["kill"] = AdminPermission.AffectPlayers,
                 ["respawn"] = AdminPermission.AffectPlayers,
+                ["wanted"] = AdminPermission.AffectPlayers,
 
                 ["time"] = AdminPermission.World,
                 ["weather"] = AdminPermission.World,

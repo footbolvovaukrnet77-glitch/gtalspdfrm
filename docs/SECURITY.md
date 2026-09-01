@@ -98,6 +98,16 @@ Accepting them drags the player straight back out of the position the server jus
 chose. Rejecting them trips the teleport check, and because the server's position
 then never advances, *every* subsequent update fails: the player is wedged.
 
+The wanted level is held the same way and for the same reason, in the other
+direction. It is the client's to report in normal play — the local game raises and
+clears it — right up until the server sets one itself: restoring a player who
+logged out with three stars, or an admin issuing them with `wanted`. At that moment
+the client is still reporting the zero its fresh session has, twenty times a
+second, and without the hold the server's own value is gone before the snapshot
+carrying it has been written. The hold ends when the client acknowledges that
+snapshot, or on the same timeout the others use, so a client that cannot apply the
+level does not freeze the field for the rest of the session.
+
 So neither. The server records the snapshot id that carries the move and ignores
 that client's state updates until one arrives acknowledging it:
 
@@ -366,7 +376,7 @@ Roles are `Player`, `Moderator`, `Admin`, persisted per identity.
 | Role | May |
 | --- | --- |
 | `Player` | nothing over the network |
-| `Moderator` | inspect, announce, kick, ban, move/kill/respawn players |
+| `Moderator` | inspect, announce, kick, ban, move/kill/respawn players, set a wanted level |
 | `Admin` | all of that, plus the world clock and weather, saving, roles and shutdown |
 
 A moderator cannot change roles, including their own: a moderator who can promote
