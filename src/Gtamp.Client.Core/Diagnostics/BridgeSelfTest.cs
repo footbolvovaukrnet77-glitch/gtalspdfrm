@@ -238,6 +238,25 @@ namespace Gtamp.Client.Diagnostics
                     SelfTestOutcome.NeedsEyes,
                     $"{client.CorrectionsApplied} so far — occasional is normal, constant means rubber-banding"));
 
+            // A model the server set and this client could not apply is the one thing
+            // here the player has to act on: it means a mod is missing, and everyone
+            // else is looking at a character this machine cannot draw.
+            results.Add(client.ModelChangesRefused > 0
+                ? new SelfTestResult(
+                    "player model",
+                    SelfTestOutcome.Broken,
+                    $"{client.ModelChangesRefused} model(s) the server set could not be applied — "
+                        + "the model is probably not installed here; the client log names the hash")
+                : client.ModelChangesApplied > 0
+                    ? new SelfTestResult(
+                        "player model",
+                        SelfTestOutcome.Works,
+                        $"{client.ModelChangesApplied} applied at the server's request")
+                    : new SelfTestResult(
+                        "player model",
+                        SelfTestOutcome.NotExercised,
+                        "the server has not changed your model"));
+
             results.Add(client.ReplicatedWorld.SnapshotsDropped == 0
                 ? new SelfTestResult("snapshots", SelfTestOutcome.Works, $"{client.ReplicatedWorld.SnapshotsApplied} applied, none dropped")
                 : new SelfTestResult(

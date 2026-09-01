@@ -184,5 +184,31 @@ namespace Gtamp.Tests
                     new SelfTestResult("a", SelfTestOutcome.Works, "fine"),
                 }));
         }
+        /// <summary>
+        /// The self test is there to be honest about what did not work. A model the
+        /// server set and this client could not apply is a missing mod, and it must read
+        /// as broken rather than as "not exercised".
+        /// </summary>
+        [Fact]
+        public void AModelThatCouldNotBeAppliedReadsAsBroken()
+        {
+            using var harness = new TestHarness();
+            TestClient player = harness.CreateClient("skin");
+            player.Client.Connect("127.0.0.1", TestHarness.ServerEndPoint.Port);
+            Assert.True(harness.AdvanceUntil(() => player.Client.IsConnected));
+            Assert.True(harness.AdvanceUntil(() => player.Client.LocalEntityId.IsValid));
+            harness.Advance(1d);
+
+            player.Bridge.ModelChangeRefusals = int.MaxValue;
+            Assert.True(harness.Server.Players.TryGetByPlayerId(
+                player.Client.LocalPlayerId, out Gtamp.Server.Players.PlayerSession session));
+            Assert.True(harness.Server.SetPlayerModel(session, 0x9C9EFFD8u));
+
+            Assert.True(harness.AdvanceUntil(() => player.Client.ModelChangesRefused > 0, timeoutSeconds: 20d));
+
+            List<SelfTestResult> results = BridgeSelfTest.Run(player.Client);
+            Assert.Equal(SelfTestOutcome.Broken, Find(results, "player model").Outcome);
+        }
+
     }
 }
