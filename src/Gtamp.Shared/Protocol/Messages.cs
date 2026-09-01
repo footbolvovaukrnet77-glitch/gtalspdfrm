@@ -214,6 +214,9 @@ namespace Gtamp.Shared.Protocol
 
         public int InteriorId { get; set; }
 
+        /// <summary>How wanted this player is, 0 to 5.</summary>
+        public byte WantedLevel { get; set; }
+
         public uint AnimationHash { get; set; }
 
         /// <summary>
@@ -260,6 +263,7 @@ namespace Gtamp.Shared.Protocol
 
             writer.WriteQuantizedPosition(AimPosition);
             writer.WriteVarInt(InteriorId);
+            writer.WriteByte(WantedLevel);
             writer.WriteUInt32(AnimationHash);
 
             // Gated on the flag, which the reader has already decoded by this point.
@@ -318,6 +322,7 @@ namespace Gtamp.Shared.Protocol
                 WeaponTint = ReadWeaponAttachments(reader, out List<uint> components),
                 AimPosition = reader.ReadQuantizedPosition(),
                 InteriorId = reader.ReadVarInt(),
+                WantedLevel = reader.ReadByte(),
                 AnimationHash = reader.ReadUInt32(),
             };
 

@@ -109,17 +109,32 @@ namespace Gtamp.Server.Replication
         /// <summary>Entities closer than this are always treated as maximum priority.</summary>
         public const float NearDistance = 150f;
 
+        /// <summary>
+        /// A dimension is a parallel copy of the world: entities in one are not
+        /// replicated to a viewer in another.
+        /// <para>
+        /// This is a <em>replication</em> filter and nothing more, exactly like
+        /// distance. Every entity stays in the server world at every dimension, which
+        /// is what <c>WorldStateTests</c> and <c>StressTests</c> assert. Strict
+        /// equality rather than "dimension 0 sees everything": a rule with an
+        /// exception in it is one that has to be reasoned about at every call site.
+        /// </para>
+        /// </summary>
+        public static bool SharesDimension(NetEntity entity, uint viewerDimension) =>
+            entity.Dimension == viewerDimension;
+
         public static List<NetEntity> Order(
             IEnumerable<NetEntity> entities,
             NetVector3 viewer,
             uint currentTick,
             ClientReplicationState state,
-            EntityId excludeId)
+            EntityId excludeId,
+            uint viewerDimension = 0)
         {
             var scored = new List<KeyValuePair<double, NetEntity>>();
             foreach (NetEntity entity in entities)
             {
-                if (entity.Id == excludeId)
+                if (entity.Id == excludeId || !SharesDimension(entity, viewerDimension))
                 {
                     continue;
                 }

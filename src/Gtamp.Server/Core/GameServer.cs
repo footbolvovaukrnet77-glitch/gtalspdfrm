@@ -231,6 +231,10 @@ namespace Gtamp.Server.Core
             if (now - _lastSnapshotTime >= Config.SnapshotIntervalSeconds)
             {
                 _lastSnapshotTime = now;
+
+                // Immediately before the snapshot, so the list a client receives
+                // agrees with the seats the same snapshot carries on the characters.
+                RebuildVehicleOccupants();
                 SendSnapshots();
             }
 
@@ -946,6 +950,10 @@ namespace Gtamp.Server.Core
             entity.WeaponComponents.AddRange(update.WeaponComponents);
             entity.AimPosition = update.AimPosition;
             entity.InteriorId = update.InteriorId;
+
+            // Clamped, not trusted: the field is a byte on the wire and GTA V has six
+            // levels, so a client claiming 200 would be replicated and printed as 200.
+            entity.WantedLevel = update.WantedLevel > 5 ? (byte)5 : update.WantedLevel;
             entity.AnimationHash = update.AnimationHash;
 
             // The pose is only meaningful while the flag is set, and a stale one is
@@ -1065,6 +1073,49 @@ namespace Gtamp.Server.Core
                 }
 
                 Respawn(session);
+            }
+        }
+
+        /// <summary>
+        /// Rebuilds every vehicle's occupant list from the characters that report
+        /// riding in it.
+        /// <para>
+        /// The seat is replicated on the character — `VehicleId` and `VehicleSeat` —
+        /// because that is the direction the client can actually observe it. The list
+        /// on the vehicle is the same fact indexed the other way, which is what a mod
+        /// asking "who is in this car" needs, and it was validated, cloned and
+        /// persisted while never being filled in by anybody.
+        /// </para>
+        /// <para>
+        /// Derived here rather than reported by clients, because a client reporting
+        /// who else is in its car is a client asserting something about other players.
+        /// </para>
+        /// </summary>
+        private void RebuildVehicleOccupants()
+        {
+            foreach (NetEntity entity in World.State.Entities)
+            {
+                if (entity is VehicleEntity vehicle && vehicle.Occupants.Count > 0)
+                {
+                    vehicle.Occupants.Clear();
+                }
+            }
+
+            foreach (NetEntity entity in World.State.Entities)
+            {
+                if (entity is not CharacterEntity character
+                    || !character.VehicleId.IsValid
+                    || character.VehicleSeat <= -2)
+                {
+                    continue;
+                }
+
+                if (World.TryGet(character.VehicleId, out NetEntity found)
+                    && found is VehicleEntity ride
+                    && ride.Occupants.Count < VehicleStateLists.MaxOccupants)
+                {
+                    ride.SetOccupant(character.VehicleSeat, character.Id);
+                }
             }
         }
 
@@ -1374,13 +1425,14 @@ namespace Gtamp.Server.Core
 
                 PlayerEntity? viewerEntity = World.GetPlayer(session.EntityId);
                 NetVector3 viewer = viewerEntity?.Position ?? DefaultSpawn;
+                uint viewerDimension = viewerEntity?.Dimension ?? 0;
 
                 EntitySnapshotView baseline = session.Replication.ResyncRequested
                     ? EntitySnapshotView.Empty
                     : session.Replication.Baseline;
 
                 List<NetEntity> order = ReplicationPriority.Order(
-                    World.State.Entities, viewer, World.Tick, session.Replication, EntityId.None);
+                    World.State.Entities, viewer, World.Tick, session.Replication, EntityId.None, viewerDimension);
 
                 session.Bandwidth?.Update(session.Peer.Stats, _now);
                 int budget = session.Bandwidth?.CurrentBudget ?? Config.SnapshotByteBudget;
@@ -1405,7 +1457,8 @@ namespace Gtamp.Server.Core
 
                 SnapshotWriteResult result = SnapshotCodec.Write(
                     World.State, baseline, Registry, order, snapshotId, budget,
-                    session.LastProcessedUpdateSequence);
+                    session.LastProcessedUpdateSequence,
+                    entity => ReplicationPriority.SharesDimension(entity, viewerDimension));
 
                 session.Peer.Send(NetMessageType.Snapshot, result.Payload, DeliveryMethod.Unreliable);
                 session.Replication.RecordSent(result, World.Tick);

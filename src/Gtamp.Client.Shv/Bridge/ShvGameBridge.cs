@@ -141,6 +141,7 @@ namespace Gtamp.Client.Shv.Bridge
                 Movement = SampleMovement(ped),
                 Flags = SampleFlags(ped),
                 InteriorId = Function.Call<int>(Hash.GET_INTERIOR_FROM_ENTITY, ped.Handle),
+                WantedLevel = (byte)Clamp(Game.Player.WantedLevel, 0, 5),
                 AnimationHash = 0,
                 AimPosition = SampleAimPosition(ped),
                 Appearance = SampleAppearance(ped),

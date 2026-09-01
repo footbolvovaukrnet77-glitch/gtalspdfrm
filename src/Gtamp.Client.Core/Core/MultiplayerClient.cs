@@ -876,6 +876,7 @@ namespace Gtamp.Client.Core
                 WeaponTint = sample.WeaponTint,
                 AimPosition = sample.AimPosition,
                 InteriorId = sample.InteriorId,
+                WantedLevel = sample.WantedLevel,
                 AnimationHash = sample.AnimationHash,
                 Ragdoll = sample.Ragdoll,
             };

@@ -80,6 +80,34 @@ Two properties follow from the shape of this function:
   nobody is near eventually outranks a nearby idle one and gets sent. Nothing
   starves.
 
+## Dimensions
+
+A dimension is a parallel copy of the world — an instance, a private session, an
+interior nobody outside should be able to see into. Every entity carries one.
+
+It is a **replication filter and nothing else**, exactly like distance. Entities
+whose dimension differs from the viewer's are not sent to that viewer; not one of
+them leaves `ServerWorld`, and
+`DimensionTests.ADimensionNeverRemovesAnEntityFromTheServerWorld` asserts both
+halves at once — five vehicles across five dimensions, invisible to the only
+player, and all six entities still in the world.
+
+Membership is strict equality. There is deliberately no "dimension 0 sees
+everything" exception: a rule with a special case in it has to be reasoned about at
+every call site.
+
+Leaving a dimension **removes** the old dimension's entities from the client rather
+than leaving them behind, and that distinction is the whole implementation. An
+entity dropped from the candidate list without being reported as removed keeps its
+baseline copy on the client for ever, frozen at whatever it was doing when it left
+view. `SnapshotCodec.Write` therefore takes a visibility predicate and reports "no
+longer visible to you" through the same channel as "no longer exists".
+
+Until this filter existed the field was decorative: `Dimension` was serialised,
+persisted, restored on reconnect, printed by the admin console and settable through
+`TeleportPlayer`, and two players in different dimensions saw each other, drove
+into each other and shot each other.
+
 ## Server tick
 
 ```

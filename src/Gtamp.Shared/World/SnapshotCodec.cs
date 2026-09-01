@@ -93,6 +93,12 @@ namespace Gtamp.Shared.World
         /// <param name="baseline">View the client is known to hold; <see cref="EntitySnapshotView.Empty"/> forces a full snapshot.</param>
         /// <param name="registry">Entity type table.</param>
         /// <param name="order">Candidate entities, most important first. Entities omitted here simply keep their baseline state on the client.</param>
+        /// <param name="visible">
+        /// Whether an entity should be replicated to this client at all. Null means
+        /// everything is. This filters <em>replication</em> and nothing else — the
+        /// entity stays in the world, and an entity that stops being visible is
+        /// reported as removed rather than left frozen at its last known state.
+        /// </param>
         /// <param name="snapshotId">Id assigned to this snapshot; must be non-zero and increasing.</param>
         /// <param name="byteBudget">Hard cap on the produced payload.</param>
         public static SnapshotWriteResult Write(
@@ -102,7 +108,8 @@ namespace Gtamp.Shared.World
             IReadOnlyList<NetEntity> order,
             uint snapshotId,
             int byteBudget,
-            uint acknowledgedClientUpdate = 0)
+            uint acknowledgedClientUpdate = 0,
+            Func<NetEntity, bool>? visible = null)
         {
             if (snapshotId == 0)
             {
@@ -114,7 +121,17 @@ namespace Gtamp.Shared.World
 
             foreach (EntityId id in baseline.Ids)
             {
+                // Gone from the world, or no longer visible to this client. Both have
+                // to be reported: an entity dropped from the candidate list without
+                // being removed keeps its baseline copy on the client for ever, frozen
+                // at whatever it was doing when it left view.
                 if (!world.Contains(id))
+                {
+                    result.RemovedIds.Add(id);
+                    continue;
+                }
+
+                if (visible != null && world.TryGet(id, out NetEntity existing) && !visible(existing))
                 {
                     result.RemovedIds.Add(id);
                 }

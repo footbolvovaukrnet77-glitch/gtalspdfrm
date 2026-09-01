@@ -190,6 +190,14 @@ namespace Gtamp.Client.Core
         public List<uint>? WeaponComponents;
         public NetVector3 AimPosition;
         public int InteriorId;
+
+        /// <summary>
+        /// The local player's wanted level. Replicated so other players can see who
+        /// the police are after; never applied to anybody else's game, because a
+        /// wanted level is a property of a player and not of the ped standing in for
+        /// them.
+        /// </summary>
+        public byte WantedLevel;
         public uint AnimationHash;
 
         /// <summary>

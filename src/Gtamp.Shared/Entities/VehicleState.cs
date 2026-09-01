@@ -220,7 +220,8 @@ namespace Gtamp.Shared.Entities
         public override int GetHashCode() => (Seat << 24) ^ (int)Occupant.Value;
     }
 
-    internal static class VehicleStateLists
+    /// <summary>Shared limits and comparisons for the vehicle's list fields.</summary>
+    public static class VehicleStateLists
     {
         public const int MaxMods = 64;
         public const int MaxOccupants = 16;

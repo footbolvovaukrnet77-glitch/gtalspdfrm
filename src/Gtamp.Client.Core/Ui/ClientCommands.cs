@@ -228,17 +228,19 @@ namespace Gtamp.Client.Ui
         private static string PlayersList(MultiplayerClient client)
         {
             var builder = new StringBuilder();
-            builder.AppendLine("  entity   playerId  name                 health  position");
+            builder.AppendLine("  entity   playerId  name                 health  wanted  dim  position");
             foreach (PlayerEntity player in AllPlayers(client))
             {
                 bool isLocal = player.Id == client.LocalEntityId;
                 builder.AppendLine(string.Format(
                     CultureInfo.InvariantCulture,
-                    "  {0,-8} {1,-9} {2,-20} {3,-7} {4}{5}",
+                    "  {0,-8} {1,-9} {2,-20} {3,-7} {4,-7} {5,-4} {6}{7}",
                     player.Id,
                     player.PlayerId,
                     player.Name,
                     player.Health,
+                    player.WantedLevel == 0 ? "-" : new string('*', player.WantedLevel),
+                    player.Dimension,
                     player.Position,
                     isLocal ? "  (you)" : string.Empty));
             }
