@@ -328,6 +328,10 @@ namespace Gtamp.Client.Core
                 () => Config.HealthCorrectionThreshold = fresh.HealthCorrectionThreshold);
             Apply("ShowNetworkOverlay", Config.ShowNetworkOverlay, fresh.ShowNetworkOverlay, result,
                 () => Config.ShowNetworkOverlay = fresh.ShowNetworkOverlay);
+            Apply("ShowPlayerBlips", Config.ShowPlayerBlips, fresh.ShowPlayerBlips, result,
+                () => Config.ShowPlayerBlips = fresh.ShowPlayerBlips);
+            Apply("ShowPlayerNames", Config.ShowPlayerNames, fresh.ShowPlayerNames, result,
+                () => Config.ShowPlayerNames = fresh.ShowPlayerNames);
             Apply("VerboseLogging", Config.VerboseLogging, fresh.VerboseLogging, result,
                 () => Config.VerboseLogging = fresh.VerboseLogging);
             Apply("ConsoleKey", Config.ConsoleKey, fresh.ConsoleKey, result,
@@ -446,6 +450,13 @@ namespace Gtamp.Client.Core
                 // Rendered a fixed delay behind the estimated server clock, which is
                 // what turns 20 Hz snapshots into smooth frame-rate movement.
                 double renderTime = EstimatedServerTime - Config.InterpolationDelay;
+
+                // Blips and names are drawn relative to where the local player is, so
+                // the viewer has to be refreshed before rendering rather than read
+                // from a snapshot that is a tenth of a second behind them.
+                RemotePlayers.ShowBlips = Config.ShowPlayerBlips;
+                RemotePlayers.ShowNames = Config.ShowPlayerNames;
+                RemotePlayers.ViewerPosition = _hasReportedState ? _lastReportedPosition : RemotePlayers.ViewerPosition;
                 RemotePlayers.Render(renderTime);
                 RemoteEntities.Render(renderTime);
             }

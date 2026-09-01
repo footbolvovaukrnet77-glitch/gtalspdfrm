@@ -121,6 +121,11 @@ namespace Gtamp.Tests
             PendingHits.Clear();
         }
 
+        /// <summary>The last marker drawn for each ped, so a test can read what the policy decided.</summary>
+        public Dictionary<int, PlayerMarker> Markers { get; } = new Dictionary<int, PlayerMarker>();
+
+        public void ApplyPlayerMarker(int pedHandle, in PlayerMarker marker) => Markers[pedHandle] = marker;
+
         public LocalShotSample SampleLocalShots()
         {
             LocalShotSample shot = PendingShot;

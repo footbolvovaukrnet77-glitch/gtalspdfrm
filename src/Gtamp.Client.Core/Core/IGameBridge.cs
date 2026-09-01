@@ -104,6 +104,13 @@ namespace Gtamp.Client.Core
         /// </summary>
         bool TryGetRemotePedPosition(int handle, out NetVector3 position);
 
+        /// <summary>
+        /// Draws the map blip and the floating name for one remote player. Called
+        /// every frame, because the name is drawn per frame and the blip's colour
+        /// changes with what the player is doing.
+        /// </summary>
+        void ApplyPlayerMarker(int pedHandle, in PlayerMarker marker);
+
         void DestroyRemotePed(int handle);
 
         bool IsRemotePedValid(int handle);

@@ -200,6 +200,13 @@ working and is annotated as such.
 
 ## The network overlay
 
+`ShowPlayerBlips` and `ShowPlayerNames` in `client.ini` control the map blip and
+the floating name drawn for each other player. Both default to **on**: a session in
+which you cannot find or identify anybody is not a session. The blip is coloured by
+what the player is doing — red when the police are after them, grey when they are
+down, blue in a vehicle, yellow when badly hurt, green otherwise — and the name
+fades out with distance rather than vanishing at a threshold.
+
 `overlay on`, or `ShowNetworkOverlay=True` in `client.ini`, draws a readout in the
 top-right corner:
 

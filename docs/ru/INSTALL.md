@@ -50,7 +50,7 @@ tools\build.bat Release
 ./tools/test.sh          # или tools\test.bat
 ```
 
-Ожидается: `Passed! - Failed: 0, Passed: 504`.
+Ожидается: `Passed! - Failed: 0, Passed: 514`.
 
 ### Проверка документации
 
@@ -249,6 +249,8 @@ ConsoleKey=119
 InterpolationDelay=0.12
 CorrectionThreshold=3
 ShowNetworkOverlay=False
+ShowPlayerBlips=True
+ShowPlayerNames=True
 VerboseLogging=False
 AutoConnectOnStart=False
 ```

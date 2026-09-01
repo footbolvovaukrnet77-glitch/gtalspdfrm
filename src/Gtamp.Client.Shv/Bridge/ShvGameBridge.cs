@@ -32,6 +32,12 @@ namespace Gtamp.Client.Shv.Bridge
         /// <summary>ig_michael, used until a player's own model is known.</summary>
         private const uint DefaultPedModel = 0xD7114C9;
 
+        /// <summary>Blip sprite 1 is the plain circle GTA V uses for other players.</summary>
+        private const int PlayerBlipSprite = 1;
+
+        /// <summary>How far above the head bone the name sits, in metres.</summary>
+        private const float NameTagHeight = 0.4f;
+
         /// <summary>Re-task a walking ped only when its destination has moved this far.</summary>
         private const float RetaskDistance = 0.75f;
 
@@ -47,6 +53,9 @@ namespace Gtamp.Client.Shv.Bridge
 
         /// <summary>Counts the local player's rounds. See <see cref="ShotDetector"/> for why the clip is the signal.</summary>
         private readonly ShotDetector _shots = new ShotDetector();
+
+        /// <summary>Map blip per remote ped, with the colour last written so it is set on change only.</summary>
+        private readonly Dictionary<int, BlipRecord> _blips = new Dictionary<int, BlipRecord>();
 
         /// <summary>Rockstar's shared particle library. Holds the muzzle flashes.</summary>
         private ParticleEffectAsset _muzzleAsset = new ParticleEffectAsset("core");
@@ -1243,8 +1252,130 @@ namespace Gtamp.Client.Shv.Bridge
             }
         }
 
+        /// <summary>
+        /// Draws a remote player's map blip and the name over their head.
+        /// <para>
+        /// The blip is attached to the ped, so the game moves it; only its colour is
+        /// written, and only when it changes. The name is immediate-mode — drawn from
+        /// scratch every frame between <c>SET_DRAW_ORIGIN</c> and
+        /// <c>CLEAR_DRAW_ORIGIN</c>, which is what projects a screen-space string onto
+        /// a world position.
+        /// </para>
+        /// </summary>
+        public void ApplyPlayerMarker(int pedHandle, in PlayerMarker marker)
+        {
+            if (!_remotePeds.TryGetValue(pedHandle, out Ped ped) || !ped.Exists())
+            {
+                RemovePlayerBlip(pedHandle);
+                return;
+            }
+
+            try
+            {
+                ApplyBlip(pedHandle, ped, in marker);
+
+                if (marker.ShowName && !string.IsNullOrEmpty(marker.Name))
+                {
+                    DrawNameTag(ped, marker.Name, PlayerMarkers.NameOpacity(marker.Distance));
+                }
+            }
+            catch (Exception)
+            {
+                // A blip or a text command that failed this frame. It is redrawn on the
+                // next one, and a marker is never worth an exception reaching the game.
+            }
+        }
+
+        private void ApplyBlip(int pedHandle, Ped ped, in PlayerMarker marker)
+        {
+            _blips.TryGetValue(pedHandle, out BlipRecord record);
+
+            if (!marker.ShowBlip)
+            {
+                RemovePlayerBlip(pedHandle);
+                return;
+            }
+
+            if (record.Handle == 0 || !Function.Call<bool>(Hash.DOES_BLIP_EXIST, record.Handle))
+            {
+                int blip = Function.Call<int>(Hash.ADD_BLIP_FOR_ENTITY, ped.Handle);
+                if (blip == 0)
+                {
+                    return;
+                }
+
+                Function.Call(Hash.SET_BLIP_SPRITE, blip, PlayerBlipSprite);
+                Function.Call(Hash.SET_BLIP_SCALE, blip, 0.85f);
+                Function.Call(Hash.SHOW_HEADING_INDICATOR_ON_BLIP, blip, true);
+                Function.Call(Hash.BEGIN_TEXT_COMMAND_SET_BLIP_NAME, "STRING");
+                Function.Call(Hash.ADD_TEXT_COMPONENT_SUBSTRING_PLAYER_NAME, marker.Name ?? string.Empty);
+                Function.Call(Hash.END_TEXT_COMMAND_SET_BLIP_NAME, blip);
+
+                record = new BlipRecord(blip, -1);
+            }
+
+            // Colour on change only. Rewriting it every frame is a native call per
+            // player per frame that says nothing new.
+            if (record.Colour != marker.BlipColour)
+            {
+                Function.Call(Hash.SET_BLIP_COLOUR, record.Handle, marker.BlipColour);
+                record = new BlipRecord(record.Handle, marker.BlipColour);
+            }
+
+            _blips[pedHandle] = record;
+        }
+
+        private void RemovePlayerBlip(int pedHandle)
+        {
+            if (!_blips.TryGetValue(pedHandle, out BlipRecord record))
+            {
+                return;
+            }
+
+            _blips.Remove(pedHandle);
+            if (record.Handle == 0)
+            {
+                return;
+            }
+
+            // Through the wrapper rather than the native: REMOVE_BLIP takes the handle
+            // by pointer, which would make this the only unsafe block in the project.
+            var blip = new Blip(record.Handle);
+            if (blip.Exists())
+            {
+                blip.Delete();
+            }
+        }
+
+        /// <summary>
+        /// The floating name. Drawn a little above the ped's head so it does not sit
+        /// inside the model, and faded with distance so it thins out rather than
+        /// vanishing at a threshold.
+        /// </summary>
+        private static void DrawNameTag(Ped ped, string name, float opacity)
+        {
+            if (opacity <= 0f)
+            {
+                return;
+            }
+
+            Vector3 head = ped.Bones[Bone.SkelHead].Position;
+            Function.Call(Hash.SET_DRAW_ORIGIN, head.X, head.Y, head.Z + NameTagHeight, 0);
+            Function.Call(Hash.SET_TEXT_FONT, 4);
+            Function.Call(Hash.SET_TEXT_SCALE, 0.3f, 0.3f);
+            Function.Call(Hash.SET_TEXT_CENTRE, true);
+            Function.Call(Hash.SET_TEXT_OUTLINE);
+            Function.Call(Hash.SET_TEXT_COLOUR, 255, 255, 255, (int)(opacity * 255f));
+            Function.Call(Hash.BEGIN_TEXT_COMMAND_DISPLAY_TEXT, "STRING");
+            Function.Call(Hash.ADD_TEXT_COMPONENT_SUBSTRING_PLAYER_NAME, name);
+            Function.Call(Hash.END_TEXT_COMMAND_DISPLAY_TEXT, 0f, 0f);
+            Function.Call(Hash.CLEAR_DRAW_ORIGIN);
+        }
+
         public void DestroyRemotePed(int handle)
         {
+            RemovePlayerBlip(handle);
+
             _driveState.Remove(handle);
             if (!_remotePeds.TryGetValue(handle, out Ped ped))
             {
@@ -1514,6 +1645,20 @@ namespace Gtamp.Client.Shv.Bridge
         private static NetVector3 ToNet(Vector3 value) => new NetVector3(value.X, value.Y, value.Z);
 
         private static Vector3 ToGame(NetVector3 value) => new Vector3(value.X, value.Y, value.Z);
+
+        /// <summary>A blip handle and the colour last written to it.</summary>
+        private readonly struct BlipRecord
+        {
+            public BlipRecord(int handle, int colour)
+            {
+                Handle = handle;
+                Colour = colour;
+            }
+
+            public int Handle { get; }
+
+            public int Colour { get; }
+        }
 
         /// <summary>Per-ped bookkeeping so tasks are issued on change rather than every frame.</summary>
         private sealed class PedDriveState

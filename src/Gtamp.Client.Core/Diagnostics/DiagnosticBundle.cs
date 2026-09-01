@@ -99,6 +99,8 @@ namespace Gtamp.Client.Diagnostics
             builder.AppendLine($"CorrectionThreshold={config.CorrectionThreshold.ToString("0.###", CultureInfo.InvariantCulture)}");
             builder.AppendLine($"HealthCorrectionThreshold={config.HealthCorrectionThreshold.ToString(CultureInfo.InvariantCulture)}");
             builder.AppendLine($"ShowNetworkOverlay={config.ShowNetworkOverlay}");
+            builder.AppendLine($"ShowPlayerBlips={config.ShowPlayerBlips}");
+            builder.AppendLine($"ShowPlayerNames={config.ShowPlayerNames}");
             builder.AppendLine($"VerboseLogging={config.VerboseLogging}");
             builder.Append($"AutoConnectOnStart={config.AutoConnectOnStart}");
             return builder.ToString();

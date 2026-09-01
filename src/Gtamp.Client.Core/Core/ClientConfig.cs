@@ -72,6 +72,15 @@ namespace Gtamp.Client.Core
 
         public bool ShowNetworkOverlay { get; set; }
 
+        /// <summary>
+        /// A map blip per remote player, and their name over their head. Both default
+        /// to on: a co-op session in which you cannot find or identify anybody is not
+        /// a session, and the cost is one blip and one string per player.
+        /// </summary>
+        public bool ShowPlayerBlips { get; set; } = true;
+
+        public bool ShowPlayerNames { get; set; } = true;
+
         public bool VerboseLogging { get; set; }
 
         public bool AutoConnectOnStart { get; set; }
@@ -179,6 +188,8 @@ namespace Gtamp.Client.Core
                 $"CorrectionThreshold={CorrectionThreshold.ToString("0.###", CultureInfo.InvariantCulture)}",
                 $"HealthCorrectionThreshold={HealthCorrectionThreshold.ToString(CultureInfo.InvariantCulture)}",
                 $"ShowNetworkOverlay={ShowNetworkOverlay}",
+                $"ShowPlayerBlips={ShowPlayerBlips}",
+                $"ShowPlayerNames={ShowPlayerNames}",
                 $"VerboseLogging={VerboseLogging}",
                 $"AutoConnectOnStart={AutoConnectOnStart}",
             };
@@ -242,6 +253,12 @@ namespace Gtamp.Client.Core
                     break;
                 case "shownetworkoverlay":
                     ShowNetworkOverlay = ParseBool(value);
+                    break;
+                case "showplayerblips":
+                    ShowPlayerBlips = ParseBool(value);
+                    break;
+                case "showplayernames":
+                    ShowPlayerNames = ParseBool(value);
                     break;
                 case "verboselogging":
                     VerboseLogging = ParseBool(value);

@@ -51,6 +51,12 @@ namespace Gtamp.Client.Players
         /// </summary>
         public int AppearanceVersion { get; private set; }
 
+        /// <summary>
+        /// The newest replicated state, before interpolation. Used for anything that
+        /// is not a position: the discrete state that a blend would only invent.
+        /// </summary>
+        public PlayerEntity? Latest => _samples.Count > 0 ? _samples[_samples.Count - 1].State : null;
+
         public int SampleCount => _samples.Count;
 
         public double NewestSampleTime => _samples.Count > 0 ? _samples[_samples.Count - 1].Time : 0d;

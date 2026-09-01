@@ -49,7 +49,7 @@ Expected output: `Build succeeded. 0 Warning(s) 0 Error(s)`.
 ./tools/test.sh          # or tools\test.bat
 ```
 
-Expected: `Passed! - Failed: 0, Passed: 504`.
+Expected: `Passed! - Failed: 0, Passed: 514`.
 
 ### Check the documentation
 
@@ -247,6 +247,8 @@ ConsoleKey=119
 InterpolationDelay=0.12
 CorrectionThreshold=3
 ShowNetworkOverlay=False
+ShowPlayerBlips=True
+ShowPlayerNames=True
 VerboseLogging=False
 AutoConnectOnStart=False
 ```

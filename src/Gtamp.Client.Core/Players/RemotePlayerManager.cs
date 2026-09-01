@@ -35,6 +35,17 @@ namespace Gtamp.Client.Players
         public EntityId LocalEntityId { get; set; } = EntityId.None;
 
         /// <summary>
+        /// Where the local player is, and whether blips and names are wanted. Set by
+        /// the client each frame; without a viewer there is no distance to fade a
+        /// name with, so markers are simply not drawn.
+        /// </summary>
+        public NetVector3 ViewerPosition { get; set; }
+
+        public bool ShowBlips { get; set; } = true;
+
+        public bool ShowNames { get; set; } = true;
+
+        /// <summary>
         /// Turns the replicated id of a vehicle into the handle the local game has for
         /// it, or 0 when it has none.
         /// <para>
@@ -172,6 +183,7 @@ namespace Gtamp.Client.Players
                 RemotePedCommand command = RemotePedController.Decide(
                     in frame, pedPosition, VehicleHandleFor(in frame));
                 _bridge.ApplyRemotePedCommand(player.PedHandle, in command);
+                ApplyMarker(player);
             }
         }
 
@@ -183,6 +195,27 @@ namespace Gtamp.Client.Players
             }
 
             return ResolveVehicleHandle(frame.VehicleId);
+        }
+
+        /// <summary>
+        /// Draws this player's map blip and floating name.
+        /// <para>
+        /// Fed from the latest replicated entity rather than the interpolated frame:
+        /// the blip's colour comes from health, the wanted level and whether they are
+        /// driving, none of which are interpolated, and a name label does not need to
+        /// be a tenth of a second behind to look right.
+        /// </para>
+        /// </summary>
+        private void ApplyMarker(RemotePlayer player)
+        {
+            PlayerEntity? latest = player.Latest;
+            if (latest == null)
+            {
+                return;
+            }
+
+            PlayerMarker marker = PlayerMarkers.Decide(latest, ViewerPosition, ShowBlips, ShowNames);
+            _bridge.ApplyPlayerMarker(player.PedHandle, in marker);
         }
 
         private void ApplyAppearanceIfChanged(RemotePlayer player)
