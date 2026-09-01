@@ -222,7 +222,7 @@ the most useful single identifier in a report — stays.
 | --- | --- |
 | Session encryption | ✅ signed ephemeral ECDH P-256 per connection, AES-CBC with HMAC-SHA256 encrypt-then-MAC, derived IV, 16-byte tag. Verified by watching the wire, with a control |
 | Stress beyond 32 players | ✅ the convergence test now runs at 32 and 64 |
-| Allocation budget on the hot path | ✅ measured rather than claimed: ~26 KB per server tick at 16 players with encryption on, guarded at 512 KB so a regression trips the test |
+| Allocation budget on the hot path | ✅ measured rather than claimed: 26,284 bytes per server tick at 16 players with encryption on, guarded at 512 KB so a regression trips the test. The figure is printed by the test on every run and lands in the `.trx` CI uploads, so it is a series rather than something to re-measure by hand |
 | Per-entity baselines | ⏸ **not done, and not pretended.** The per-client view history is the memory cost, and reworking the one path every correctness guarantee runs through — without being able to profile the real game — trades a measurable risk for an unmeasured gain |
 | Database throughput | ⏸ writes are already batched into one transaction and coalesced off the tick thread; nothing measured says this is the bottleneck |
 

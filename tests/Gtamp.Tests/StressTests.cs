@@ -4,6 +4,7 @@ using Gtamp.Server.Core;
 using Gtamp.Shared.Core;
 using Gtamp.Shared.Entities;
 using Xunit;
+using Xunit.Abstractions;
 
 namespace Gtamp.Tests
 {
@@ -13,6 +14,11 @@ namespace Gtamp.Tests
     /// </summary>
     public class StressTests
     {
+        private readonly ITestOutputHelper _output;
+
+        public StressTests(ITestOutputHelper output) => _output = output;
+
+
         /// <summary>Corners of the GTA V map, so no two of these are within streaming range.</summary>
         private static readonly NetVector3[] MapSpread =
         {
@@ -122,6 +128,13 @@ namespace Gtamp.Tests
             }
 
             long perTick = (GC.GetAllocatedBytesForCurrentThread() - before) / Ticks;
+
+            // Recorded on every run, pass or fail. The budget answers "has this got
+            // dramatically worse"; the number answers "by how much, and since when" —
+            // and CI uploads the .trx, so the figure becomes a series rather than
+            // something somebody has to patch the test to find out. Re-measuring it by
+            // hand is how a documented figure goes stale without anybody noticing.
+            _output.WriteLine($"snapshot path allocated {perTick} bytes/tick at {Players} players");
 
             // At 60 Hz this is the per-frame server allocation with 16 players
             // connected, snapshots encrypted. Generous enough not to be flaky, tight
