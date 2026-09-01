@@ -67,6 +67,9 @@ namespace Gtamp.Client.Shv.Bridge
 
         private int _lastAppearanceSampleTick;
 
+        /// <summary>Blackout as last written, so the native fires on a change rather than every frame.</summary>
+        private bool _blackout;
+
         public ShvGameBridge(LogBus log)
         {
             _log = log ?? throw new ArgumentNullException(nameof(log));
@@ -1484,6 +1487,61 @@ namespace Gtamp.Client.Shv.Bridge
                 GtaWorld.CurrentTimeOfDay = target;
             }
         }
+
+        /// <summary>
+        /// Wind, written on change only.
+        /// <para>
+        /// Both were replicated from the first version of <c>WorldEnvironment</c> and
+        /// neither was ever applied: every client ran whatever wind its own game had
+        /// picked, so the same storm blew different ways for different players.
+        /// </para>
+        /// <para>
+        /// The comparison is against what the game currently reports rather than
+        /// against what was last written, because a script or a weather change can
+        /// move the wind behind us and the next equal value would then be skipped.
+        /// </para>
+        /// </summary>
+        public void SetWind(float speed, float directionDegrees)
+        {
+            try
+            {
+                if (Math.Abs(Function.Call<float>(Hash.GET_WIND_SPEED) - speed) > 0.05f)
+                {
+                    Function.Call(Hash.SET_WIND_SPEED, speed);
+                }
+
+                float wanted = WrapDegrees(directionDegrees);
+                float current = WrapDegrees(Function.Call<float>(Hash.GET_WIND_DIRECTION));
+                if (Math.Abs(AngleDifference(wanted, current)) > 1f)
+                {
+                    Function.Call(Hash.SET_WIND_DIRECTION, wanted);
+                }
+            }
+            catch (Exception exception)
+            {
+                _log.Error(LogCategory.Client, "Could not apply the replicated wind.", exception);
+            }
+        }
+
+        public void SetBlackout(bool blackout)
+        {
+            if (_blackout == blackout)
+            {
+                return;
+            }
+
+            _blackout = blackout;
+            Function.Call(Hash.SET_ARTIFICIAL_LIGHTS_STATE, blackout);
+        }
+
+        private static float WrapDegrees(float degrees)
+        {
+            float wrapped = degrees % 360f;
+            return wrapped < 0f ? wrapped + 360f : wrapped;
+        }
+
+        /// <summary>Signed difference between two headings, taking the short way round.</summary>
+        private static float AngleDifference(float a, float b) => ((a - b) % 360f + 540f) % 360f - 180f;
 
         public void ShowNotification(string text) => GTA.UI.Notification.Show(text, false);
 

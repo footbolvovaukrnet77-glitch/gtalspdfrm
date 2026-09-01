@@ -938,6 +938,8 @@ namespace Gtamp.Client.Core
             WorldEnvironment environment = ReplicatedWorld.Environment;
             Bridge.SetClock(environment.Hours, environment.Minutes, environment.Seconds);
             Bridge.SetWeather(environment.WeatherHash, environment.NextWeatherHash, environment.WeatherTransition);
+            Bridge.SetWind(environment.WindSpeed, environment.WindDirection);
+            Bridge.SetBlackout(environment.Blackout);
         }
 
         /// <summary>

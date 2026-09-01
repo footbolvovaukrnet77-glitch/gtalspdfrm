@@ -170,6 +170,19 @@ namespace Gtamp.Client.Core
 
         void SetClock(int hours, int minutes, int seconds);
 
+        /// <summary>
+        /// Wind speed in metres per second and its direction in degrees. Replicated
+        /// because wind moves foliage, rain and cloth: two players standing in the
+        /// same storm should not see it blowing opposite ways.
+        /// </summary>
+        void SetWind(float speed, float directionDegrees);
+
+        /// <summary>
+        /// City-wide artificial lights. A blackout is a world event every player has
+        /// to see the same way or the map stops matching itself.
+        /// </summary>
+        void SetBlackout(bool blackout);
+
         void ShowNotification(string text);
 
         void ShowSubtitle(string text, int durationMilliseconds);

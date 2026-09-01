@@ -159,6 +159,21 @@ namespace Gtamp.Tests
 
         public void SetClock(int hours, int minutes, int seconds) => ClockHours = hours;
 
+        /// <summary>Wind and blackout as last applied, so a test can assert they arrived.</summary>
+        public float WindSpeed { get; private set; } = -1f;
+
+        public float WindDirection { get; private set; } = -1f;
+
+        public bool Blackout { get; private set; }
+
+        public void SetWind(float speed, float directionDegrees)
+        {
+            WindSpeed = speed;
+            WindDirection = directionDegrees;
+        }
+
+        public void SetBlackout(bool blackout) => Blackout = blackout;
+
         public void ShowNotification(string text) => Notifications.Add(text);
 
         public void ShowSubtitle(string text, int durationMilliseconds) => Notifications.Add(text);
