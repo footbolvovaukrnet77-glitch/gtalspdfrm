@@ -293,6 +293,32 @@ opaque.
 key exchange to. Turning it off returns to plaintext UDP and exists for a LAN, or
 for someone debugging with a packet capture.
 
+**And the player is told which one they got.** A guarantee the player cannot
+observe is one they have to take on trust, so the state is on all three surfaces
+they would look at:
+
+| Surface | Encrypted | Not encrypted |
+| --- | --- | --- |
+| Network overlay | `session encrypted` | `session NOT encrypted — traffic is readable`, in warning colour |
+| `/diagnostics` | `Encryption ✓ encrypted and authenticated` | `Encryption ⚠ this server does not encrypt sessions` |
+| Diagnostic bundle | both of the above, since it composes them | as above |
+
+This was a real gap, not a precaution. `SessionCrypto` had counted encrypted and
+rejected packets "for the network debugger" since the day it was written, and
+nothing anywhere read either number; `ClientConnection.IsEncrypted` was read only
+by tests. An operator could set `encryptSessions: false` and the player would have
+had no way to find out, while this document and the README went on telling them
+their traffic was protected. That is the same class of defect as the
+`ShowNetworkOverlay` setting that nothing read — a thing that looks supported and
+does nothing — except that here the missing readout was the security property
+itself.
+
+The overlay also reports **rejected** packets when there are any: those are packets
+that were shaped like a valid session packet and carried the wrong tag. That is not
+network damage — a corrupted datagram is discarded by the UDP checksum long before
+it reaches the MAC — so a non-zero count means someone is injecting, and it is
+shown in the alarming colour rather than folded into the loss figure.
+
 ## Bans
 
 Keyed by identity public key. Not by name, which the player chooses and changes in

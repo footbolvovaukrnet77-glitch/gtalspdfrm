@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.Text;
+using Gtamp.Client.Diagnostics;
 using Gtamp.Server.Core;
 using Gtamp.Shared.Security;
 using Xunit;
@@ -202,6 +203,86 @@ namespace Gtamp.Tests
             byte[] substitutedClientKey = IdentityKey.BuildChallenge(
                 1, nonce, "server", serverSide.PublicKey, attacker.PublicKey);
             Assert.False(IdentityKey.Verify(identity.PublicKey, substitutedClientKey, signature));
+        }
+
+        // ------------------------------------------------------------------
+        // Telling the player
+        // ------------------------------------------------------------------
+        [Fact]
+        public void ThePlayerCanSeeThatTheSessionIsEncrypted()
+        {
+            // Encryption the player cannot observe is encryption they have to take on
+            // trust. The overlay is the surface that is on screen while they are
+            // playing, so it is the one that has to say so.
+            using var harness = new TestHarness();
+            TestClient alice = harness.CreateClient("Alice");
+
+            alice.Client.Connect("127.0.0.1", TestHarness.ServerEndPoint.Port);
+            Assert.True(harness.AdvanceUntil(() => alice.Client.IsConnected), "alice never connected");
+
+            string overlay = NetworkOverlay.Format(NetworkOverlay.Build(alice.Client));
+            Assert.Contains("encrypted", overlay, StringComparison.OrdinalIgnoreCase);
+
+            string diagnostics = DiagnosticsRunner.Format(DiagnosticsRunner.Run(alice.Client));
+            Assert.Contains("encrypted", diagnostics, StringComparison.OrdinalIgnoreCase);
+        }
+
+        [Fact]
+        public void APlaintextSessionSaysSoRatherThanStayingSilent()
+        {
+            // The case that matters. `encryptSessions` defaults to true, and both the
+            // README and SECURITY.md tell a player their traffic is encrypted -- so a
+            // player on a server that turned it off is the one person who must not be
+            // left to assume. Silence here would be the documentation lying on the
+            // operator's behalf.
+            var config = new ServerConfig
+            {
+                ServerName = "plain",
+                SaveIntervalSeconds = 0,
+                EncryptSessions = false,
+            };
+
+            using var harness = new TestHarness(config);
+            TestClient alice = harness.CreateClient("Alice");
+
+            alice.Client.Connect("127.0.0.1", TestHarness.ServerEndPoint.Port);
+            Assert.True(harness.AdvanceUntil(() => alice.Client.IsConnected), "alice never connected");
+            Assert.False(alice.Client.Connection.IsEncrypted);
+
+            List<OverlayLine> lines = NetworkOverlay.Build(alice.Client);
+            OverlayLine warning = Assert.Single(
+                lines.FindAll(line => line.Text.IndexOf("not encrypted", StringComparison.OrdinalIgnoreCase) >= 0));
+
+            // Normal severity would render it in the same colour as the player count,
+            // which is not what "your traffic is readable" deserves.
+            Assert.Equal(OverlaySeverity.Warning, warning.Severity);
+
+            List<DiagnosticCheck> checks = DiagnosticsRunner.Run(alice.Client);
+            DiagnosticCheck encryption = Assert.Single(checks.FindAll(check => check.Name == "Encryption"));
+            Assert.Equal(CheckStatus.Warn, encryption.Status);
+        }
+
+        [Fact]
+        public void ForgedPacketsAreCountedWhereSomeoneWouldLook()
+        {
+            // SessionCrypto.Rejected counts packets that failed authentication --
+            // forged, corrupted, or replayed into the wrong direction. That number is
+            // the difference between "the network is bad" and "someone is injecting
+            // packets", and it was previously visible to nothing.
+            using var harness = new TestHarness();
+            TestClient alice = harness.CreateClient("Alice");
+
+            alice.Client.Connect("127.0.0.1", TestHarness.ServerEndPoint.Port);
+            Assert.True(harness.AdvanceUntil(() => alice.Client.IsConnected), "alice never connected");
+            Assert.Equal(0, alice.Client.Connection.RejectedPackets);
+
+            harness.Advance(0.5);
+            Assert.Equal(0, alice.Client.Connection.RejectedPackets);
+
+            // A clean session must not cry wolf: with nothing forged, the overlay says
+            // nothing about rejects at all.
+            string overlay = NetworkOverlay.Format(NetworkOverlay.Build(alice.Client));
+            Assert.DoesNotContain("forged", overlay, StringComparison.OrdinalIgnoreCase);
         }
 
         // ------------------------------------------------------------------

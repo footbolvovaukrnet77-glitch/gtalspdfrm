@@ -94,6 +94,28 @@ namespace Gtamp.Client.Diagnostics
                 $"vehicles {client.RemoteEntities.VehicleCount}   objects {client.RemoteEntities.ObjectCount}",
                 OverlaySeverity.Normal));
 
+            // Whether the session is encrypted is a fact about the session, not a live
+            // metric, but it belongs on the same surface: a player who was told their
+            // traffic is protected should be able to see that it is, and a player on a
+            // server that turned it off is the one person who must not have to guess.
+            if (!client.Connection.IsEncrypted)
+            {
+                lines.Add(new OverlayLine("session NOT encrypted — traffic is readable", OverlaySeverity.Warning));
+            }
+            else if (client.Connection.RejectedPackets > 0)
+            {
+                // Not loss. A packet the network damaged is dropped by the UDP checksum
+                // long before it reaches the MAC, so anything counted here was shaped
+                // like a valid packet and carried the wrong tag.
+                lines.Add(new OverlayLine(
+                    $"session encrypted — {client.Connection.RejectedPackets} forged packet(s) rejected",
+                    OverlaySeverity.Bad));
+            }
+            else
+            {
+                lines.Add(new OverlayLine("session encrypted", OverlaySeverity.Normal));
+            }
+
             if (!client.MissingContent.IsEmpty)
             {
                 // Surfaced here as well as in /diagnostics because this is the one that

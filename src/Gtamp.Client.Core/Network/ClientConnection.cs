@@ -54,6 +54,20 @@ namespace Gtamp.Client.Network
 
         /// <summary>True once packets on this session are encrypted and authenticated.</summary>
         public bool IsEncrypted => Peer?.Crypto != null;
+
+        /// <summary>
+        /// Packets that arrived on this session and failed authentication: forged,
+        /// corrupted in flight, or replayed into the wrong direction.
+        /// <para>
+        /// Surfaced because the count is the difference between "the network is bad"
+        /// and "someone is injecting packets", and those two have entirely different
+        /// answers. Zero on a healthy session, including a lossy one — a packet
+        /// mangled by the network is dropped by the UDP checksum long before it
+        /// reaches the MAC.
+        /// </para>
+        /// </summary>
+        public int RejectedPackets => Peer?.Crypto?.Rejected ?? 0;
+
         private double _lastAttemptTime;
         private int _attempts;
 

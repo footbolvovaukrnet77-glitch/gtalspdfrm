@@ -113,6 +113,34 @@ namespace Gtamp.Client.Diagnostics
                 checks.Add(new DiagnosticCheck("Network", CheckStatus.Warn, "no active session"));
             }
 
+            // Reported even when it is working, because "encrypted" is the claim the
+            // README and SECURITY.md make on the framework's behalf, and a check that
+            // only appears when something is wrong cannot confirm a claim.
+            if (client.Connection.State != ClientConnectionState.Connected)
+            {
+                checks.Add(new DiagnosticCheck("Encryption", CheckStatus.Warn, "no active session"));
+            }
+            else if (!client.Connection.IsEncrypted)
+            {
+                checks.Add(new DiagnosticCheck(
+                    "Encryption",
+                    CheckStatus.Warn,
+                    "this server does not encrypt sessions — traffic is readable on the network"));
+            }
+            else
+            {
+                int rejected = client.Connection.RejectedPackets;
+                checks.Add(rejected == 0
+                    ? new DiagnosticCheck(
+                        "Encryption",
+                        CheckStatus.Pass,
+                        "encrypted and authenticated (AES-256-CBC, HMAC-SHA256, forward secret)")
+                    : new DiagnosticCheck(
+                        "Encryption",
+                        CheckStatus.Warn,
+                        $"encrypted; {rejected} packet(s) failed authentication and were discarded"));
+            }
+
             checks.Add(new DiagnosticCheck(
                 "Entity schema",
                 CheckStatus.Pass,

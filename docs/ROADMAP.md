@@ -236,7 +236,7 @@ machine and real clients, and is not claimed here.
 | Step | What it guards |
 | --- | --- |
 | `dotnet build -c Release -warnaserror` | The zero-warning claim. Without `-warnaserror` it decays the first time a warning lands that nobody scrolls up far enough to see |
-| `dotnet test -c Release` | All 360 tests, with the `.trx` uploaded as an artifact so a failure is readable without re-running anything |
+| `dotnet test -c Release` | All 363 tests, with the `.trx` uploaded as an artifact so a failure is readable without re-running anything |
 | `python3 tools/check-docs.py` | Dead relative links, `#anchors` naming headings that no longer exist, and any document that lost its counterpart in the other language |
 
 The whole solution compiles on `ubuntu-latest`, the `net48` client included,
@@ -276,6 +276,19 @@ verified against both SDKs — build and 360 tests clean on 8.0.424, build clean
 This is the sixth defect the project has found in itself, and the only one no
 amount of local testing would have surfaced: the bug was in the assumption that
 *my* SDK is *the* SDK.
+
+**A seventh defect, found by reading the security code rather than by running it.**
+`SessionCrypto` had counted encrypted and rejected packets "for the network
+debugger" since it was written, and nothing anywhere read either number;
+`ClientConnection.IsEncrypted` was read only by tests. So an operator could set
+`encryptSessions: false` and the player had no way to find out — no overlay line,
+no `/diagnostics` row, nothing in the bug report — while the README and
+`docs/SECURITY.md` went on telling them their traffic was encrypted. Same class as
+the `ShowNetworkOverlay` setting that nothing read, except the missing readout was
+the security property itself. Encryption state and the rejected-packet count now
+appear on the overlay, in `/diagnostics`, and therefore in the bundle. Two of the
+three new tests were confirmed to fail against the previous code before the fix
+went in.
 
 **The documentation checker is itself checked.** It was run against a
 deliberately broken tree — a link to a missing file, an anchor naming a heading
