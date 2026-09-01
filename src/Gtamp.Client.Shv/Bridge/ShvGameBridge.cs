@@ -706,7 +706,7 @@ namespace Gtamp.Client.Shv.Bridge
                 return;
             }
 
-            SeatRemotePedInVehicle(ped.Handle, command.VehicleHandle, command.VehicleSeat);
+            _vehicles.SeatRemotePedInVehicle(ped.Handle, command.VehicleHandle, command.VehicleSeat);
             state.Reset();
             state.SeatedVehicle = command.VehicleHandle;
             state.SeatedIndex = command.VehicleSeat;
@@ -1223,6 +1223,38 @@ namespace Gtamp.Client.Shv.Bridge
             _ => WeaponClass.None,
         };
 
+        /// <summary>
+        /// Applies a networked NPC's relationship group.
+        /// <para>
+        /// Every remote ped is created in the local player's own relationship group,
+        /// which is right for another player and wrong for an NPC: a callout's suspect
+        /// arrived over the network flagged hostile and every client quietly made it an
+        /// ally of the person it was sent to threaten. The hash travelled in
+        /// <c>PedEntity.RelationshipGroupHash</c> from the first version of the entity
+        /// and reached nothing.
+        /// </para>
+        /// <para>
+        /// This changes only how <i>others</i> treat the ped. What it does itself still
+        /// comes from the server: <c>BlockPermanentEvents</c> and the blocking of
+        /// non-temporary events stay on, so a hostile group does not hand the local
+        /// game the ped's decisions back.
+        /// </para>
+        /// </summary>
+        public void SetRemotePedRelationshipGroup(int handle, uint relationshipGroupHash)
+        {
+            if (!_remotePeds.TryGetValue(handle, out Ped ped) || !ped.Exists())
+            {
+                return;
+            }
+
+            // RelationshipGroup converts implicitly from the raw hash; there is no
+            // conversion back to an integer, so this goes through the typed property
+            // rather than the native.
+            ped.RelationshipGroup = relationshipGroupHash == 0
+                ? Game.Player.Character.RelationshipGroup
+                : relationshipGroupHash;
+        }
+
         public void ApplyRemotePedAppearance(int handle, PedAppearance appearance)
         {
             if (!_remotePeds.TryGetValue(handle, out Ped ped) || !ped.Exists())
@@ -1424,9 +1456,6 @@ namespace Gtamp.Client.Shv.Bridge
         public int GetLocalPlayerVehicleHandle() => _vehicles.GetLocalPlayerVehicleHandle();
 
         public uint GetVehicleModel(int handle) => _vehicles.GetVehicleModel(handle);
-
-        public void SeatRemotePedInVehicle(int pedHandle, int vehicleHandle, sbyte seat) =>
-            _vehicles.SeatRemotePedInVehicle(pedHandle, vehicleHandle, seat);
 
         public int CreateRemoteObject(uint modelHash, NetVector3 position, float heading) =>
             _vehicles.CreateRemoteObject(modelHash, position, heading);

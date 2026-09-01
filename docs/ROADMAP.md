@@ -248,7 +248,7 @@ machine and real clients, and is not claimed here.
 | Step | What it guards |
 | --- | --- |
 | `dotnet build -c Release -warnaserror` | The zero-warning claim. Without `-warnaserror` it decays the first time a warning lands that nobody scrolls up far enough to see |
-| `dotnet test -c Release` | All 538 tests, with the `.trx` uploaded as an artifact so a failure is readable without re-running anything |
+| `dotnet test -c Release` | All 540 tests, with the `.trx` uploaded as an artifact so a failure is readable without re-running anything |
 | `python3 tools/check-docs.py` | Dead relative links, `#anchors` naming headings that no longer exist, and any document that lost its counterpart in the other language |
 
 The whole solution compiles on `ubuntu-latest`, the `net48` client included,
@@ -406,11 +406,19 @@ deformation buffer back in a form this layer can read.
 
 ✅ model, position, rotation, velocity, health, armour, weapon, vehicle
 assignment, driver and passenger state, death, ragdoll — all through the same
-controller a player's ped uses.
+controller a player's ped uses — and **relationships**: an NPC is put in the
+relationship group the server gave it, which is what decides whether every other
+ped on the machine, and the local player's own targeting, treats it as hostile.
+Until that was wired, every remote ped inherited the local player's own group,
+so a suspect the server had marked hostile was drawn as an ally on every client
+at once.
 
-⏸ task, scenario, combat target, relationships, group, alert state — replicated
-and applied by nothing, because an NPC's decisions belong to a server-side AI that
-does not exist.
+⏸ task, scenario, combat target, group, alert state — replicated and applied by
+nothing. `GroupId` is a key for a mod's own registry and has no meaning to the
+game; the other four are decisions, and they belong to a server-side AI that does
+not exist. Alert state has a native (`SET_PED_ALERTNESS`) but no effect on a ped
+whose permanent events are blocked, which every replicated ped's are, so applying
+it would be a native call that changes nothing.
 
 ❌ **loadout, fleeing, chasing, attacking, surrender, arrest, perception, AI
 events.** These are the AI itself, not state about it.

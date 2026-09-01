@@ -161,5 +161,74 @@ namespace Gtamp.Tests
             npc.Push(3d, state);
             Assert.NotEqual(afterFirst, npc.AppearanceVersion);
         }
+        /// <summary>
+        /// The hostile suspect that every client turned into a friend.
+        /// <para>
+        /// Every remote ped is created in the local player's own relationship group,
+        /// because for another player that is right. An NPC is not another player:
+        /// <c>RelationshipGroupHash</c> travelled from the server in every snapshot and
+        /// reached nothing, so a callout's suspect was drawn as an ally of the person
+        /// it was sent to threaten, on every machine at once.
+        /// </para>
+        /// </summary>
+        [Fact]
+        public void AnNpcIsPutInTheRelationshipGroupTheServerGaveIt()
+        {
+            using var harness = new TestHarness();
+            TestClient client = harness.CreateClient("watcher");
+            client.Client.Connect("127.0.0.1", TestHarness.ServerEndPoint.Port);
+            Assert.True(harness.AdvanceUntil(() => client.Client.IsConnected));
+
+            const uint Hostile = 0xE3D96FA1u;
+            PedEntity npc = Npc(harness, new NetVector3(220f, -800f, 30f));
+            npc.RelationshipGroupHash = Hostile;
+            harness.Server.World.Touch(npc);
+
+            Assert.True(harness.AdvanceUntil(() =>
+                client.Client.RemoteEntities.TryGetNpc(npc.Id, out RemoteNpc r)
+                && r.PedHandle != 0
+                && client.Bridge.RelationshipGroups.ContainsKey(r.PedHandle)));
+
+            Assert.True(client.Client.RemoteEntities.TryGetNpc(npc.Id, out RemoteNpc remote));
+            Assert.Equal(Hostile, client.Bridge.RelationshipGroups[remote.PedHandle]);
+        }
+
+        /// <summary>
+        /// The group is a property, not a per-frame command: re-applying it every frame
+        /// would be a native call per NPC per frame for a value that almost never
+        /// changes, and it is applied again the moment it does.
+        /// </summary>
+        [Fact]
+        public void TheGroupIsAppliedOnChangeAndNotEveryFrame()
+        {
+            using var harness = new TestHarness();
+            TestClient client = harness.CreateClient("watcher");
+            client.Client.Connect("127.0.0.1", TestHarness.ServerEndPoint.Port);
+            Assert.True(harness.AdvanceUntil(() => client.Client.IsConnected));
+
+            PedEntity npc = Npc(harness, new NetVector3(220f, -800f, 30f));
+            npc.RelationshipGroupHash = 0xE3D96FA1u;
+            harness.Server.World.Touch(npc);
+
+            Assert.True(harness.AdvanceUntil(() =>
+                client.Client.RemoteEntities.TryGetNpc(npc.Id, out RemoteNpc r)
+                && r.PedHandle != 0
+                && client.Bridge.RelationshipGroupApplications.ContainsKey(r.PedHandle)));
+
+            Assert.True(client.Client.RemoteEntities.TryGetNpc(npc.Id, out RemoteNpc remote));
+            int handle = remote.PedHandle;
+            // Half a second of frames, not thirty: Advance takes seconds.
+            harness.Advance(0.5d);
+            Assert.Equal(1, client.Bridge.RelationshipGroupApplications[handle]);
+
+            const uint Friendly = 0xA49E591Cu;
+            npc.RelationshipGroupHash = Friendly;
+            harness.Server.World.Touch(npc);
+
+            Assert.True(harness.AdvanceUntil(() =>
+                client.Bridge.RelationshipGroups.TryGetValue(handle, out uint g) && g == Friendly));
+            Assert.Equal(2, client.Bridge.RelationshipGroupApplications[handle]);
+        }
+
     }
 }

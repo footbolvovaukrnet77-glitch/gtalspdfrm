@@ -28,6 +28,7 @@ namespace Gtamp.Client.Entities
         private readonly Dictionary<EntityId, RemoteNpc> _npcs = new Dictionary<EntityId, RemoteNpc>();
         private readonly Dictionary<EntityId, int> _objects = new Dictionary<EntityId, int>();
         private readonly Dictionary<EntityId, int> _appliedNpcAppearance = new Dictionary<EntityId, int>();
+        private readonly Dictionary<EntityId, uint> _appliedNpcGroup = new Dictionary<EntityId, uint>();
         private readonly Dictionary<EntityId, int> _appliedVehicleAppearance = new Dictionary<EntityId, int>();
         private readonly List<EntityId> _removalBuffer = new List<EntityId>();
 
@@ -289,6 +290,7 @@ namespace Gtamp.Client.Entities
                     }
 
                     _appliedNpcAppearance.Remove(npc.EntityId);
+                    _appliedNpcGroup.Remove(npc.EntityId);
                 }
 
                 NetVector3 pedPosition = _bridge.TryGetRemotePedPosition(npc.PedHandle, out NetVector3 position)
@@ -303,7 +305,35 @@ namespace Gtamp.Client.Entities
                 RemotePedCommand command = RemotePedController.Decide(in frame, pedPosition, vehicleHandle);
                 _bridge.ApplyRemotePedCommand(npc.PedHandle, in command);
                 ApplyNpcAppearanceIfChanged(npc);
+                ApplyNpcRelationshipGroupIfChanged(npc);
             }
+        }
+
+        /// <summary>
+        /// Puts an NPC in the relationship group the server gave it, on change only.
+        /// <para>
+        /// A remote ped is created in the local player's own group, so until this ran
+        /// a suspect the server had marked hostile was an ally on every machine that
+        /// drew it. The hash was in <see cref="PedEntity.RelationshipGroupHash"/> from
+        /// the entity's first version and was read by nothing.
+        /// </para>
+        /// </summary>
+        private void ApplyNpcRelationshipGroupIfChanged(RemoteNpc npc)
+        {
+            PedEntity? latest = npc.Latest;
+            if (latest == null)
+            {
+                return;
+            }
+
+            if (_appliedNpcGroup.TryGetValue(npc.EntityId, out uint applied)
+                && applied == latest.RelationshipGroupHash)
+            {
+                return;
+            }
+
+            _appliedNpcGroup[npc.EntityId] = latest.RelationshipGroupHash;
+            _bridge.SetRemotePedRelationshipGroup(npc.PedHandle, latest.RelationshipGroupHash);
         }
 
         private void ApplyNpcAppearanceIfChanged(RemoteNpc npc)
@@ -337,6 +367,7 @@ namespace Gtamp.Client.Entities
 
             _npcs.Remove(id);
             _appliedNpcAppearance.Remove(id);
+            _appliedNpcGroup.Remove(id);
         }
 
         private void ApplyAppearanceIfChanged(RemoteVehicle vehicle)
@@ -410,6 +441,7 @@ namespace Gtamp.Client.Entities
             _objects.Clear();
             _appliedVehicleAppearance.Clear();
             _appliedNpcAppearance.Clear();
+            _appliedNpcGroup.Clear();
         }
     }
 }

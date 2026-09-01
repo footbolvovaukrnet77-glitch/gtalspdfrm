@@ -72,6 +72,18 @@ namespace Gtamp.Client.Core
         void ApplyRemotePedAppearance(int handle, PedAppearance appearance);
 
         /// <summary>
+        /// Puts a networked NPC into the relationship group the server gave it, which
+        /// is what decides whether every other ped on this machine — and the local
+        /// player's own targeting — treats it as hostile.
+        /// <para>
+        /// A hash of 0 means "no opinion": the ped goes back to the group a remote ped
+        /// is created in, which is the local player's own. Called only when the value
+        /// changes; the group is a property of the ped, not a per-frame command.
+        /// </para>
+        /// </summary>
+        void SetRemotePedRelationshipGroup(int handle, uint relationshipGroupHash);
+
+        /// <summary>
         /// Rounds the local player fired since the last call, with the geometry of the
         /// last of them. Called every frame, unlike <see cref="SampleLocalPlayer"/>:
         /// a shot is an event and the send rate would swallow most of them.
@@ -145,9 +157,6 @@ namespace Gtamp.Client.Core
 
         /// <summary>Model hash of a local vehicle handle, or 0 when the handle is not valid.</summary>
         uint GetVehicleModel(int handle);
-
-        /// <summary>Puts a ped into a seat of a replicated vehicle.</summary>
-        void SeatRemotePedInVehicle(int pedHandle, int vehicleHandle, sbyte seat);
 
         // --- objects -------------------------------------------------------
 

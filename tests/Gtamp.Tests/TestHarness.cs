@@ -46,6 +46,11 @@ namespace Gtamp.Tests
         /// <summary>How many times each ped has had its clothing written.</summary>
         public Dictionary<int, int> AppearanceApplications { get; } = new Dictionary<int, int>();
 
+        /// <summary>Relationship group last applied per ped handle, and how many times.</summary>
+        public Dictionary<int, uint> RelationshipGroups { get; } = new Dictionary<int, uint>();
+
+        public Dictionary<int, int> RelationshipGroupApplications { get; } = new Dictionary<int, int>();
+
         public Dictionary<int, PedAppearance> PedAppearances { get; } = new Dictionary<int, PedAppearance>();
 
         public List<string> Notifications { get; } = new List<string>();
@@ -104,6 +109,13 @@ namespace Gtamp.Tests
             _pedPositions[handle] = command.TargetPosition;
         }
 
+        public void SetRemotePedRelationshipGroup(int handle, uint relationshipGroupHash)
+        {
+            RelationshipGroups[handle] = relationshipGroupHash;
+            RelationshipGroupApplications.TryGetValue(handle, out int applied);
+            RelationshipGroupApplications[handle] = applied + 1;
+        }
+
         public void ApplyRemotePedAppearance(int handle, PedAppearance appearance)
         {
             AppearanceApplications.TryGetValue(handle, out int count);
@@ -150,6 +162,8 @@ namespace Gtamp.Tests
             Peds.Remove(handle);
             _pedPositions.Remove(handle);
             AppearanceApplications.Remove(handle);
+            RelationshipGroups.Remove(handle);
+            RelationshipGroupApplications.Remove(handle);
             PedAppearances.Remove(handle);
         }
 
@@ -296,10 +310,6 @@ namespace Gtamp.Tests
 
         public uint GetVehicleModel(int handle) =>
             Vehicles.TryGetValue(handle, out VehicleEntity? vehicle) ? vehicle.ModelHash : 0u;
-
-        public void SeatRemotePedInVehicle(int pedHandle, int vehicleHandle, sbyte seat)
-        {
-        }
 
         public int CreateRemoteObject(uint modelHash, NetVector3 position, float heading)
         {
