@@ -472,11 +472,20 @@ custom data. ❌ **scale, physics, destruction, interaction.**
 ✅ time, weather, transitions, wind, rain, snow, lightning, thunder, clouds, fog
 (all weather types), blackout.
 
-❌ **traffic, pedestrian state, police state, fire, explosions, doors, world
-events, temporary world states.** Ambient traffic and pedestrians are local to each
-client and always have been — every co-op mod for this game makes that choice, and
-it is named here rather than left to be discovered from a street full of cars only
-you can see.
+⏸ **fire and explosions**, in the only forms the engine reports: a burning
+character (section 13) and a destroyed vehicle (section 13). Neither is a *world*
+fire or explosion — one that belongs to a place rather than to an entity — and those
+are not done, for the reason given under section 13: the natives create them and
+cannot be asked where one happened.
+
+❌ **traffic, pedestrian state, police state, doors, world events, temporary world
+states.** Ambient traffic and pedestrians are local to each client and always have
+been — every co-op mod for this game makes that choice, and it is named here rather
+than left to be discovered from a street full of cars only you can see. Doors fail
+the same test as world explosions in the other direction: `SET_STATE_OF_CLOSEST_DOOR_OF_TYPE`
+will change one, and nothing will tell you which door somebody else changed, so
+replicating them means shipping a door registry or a mod-facing registration API
+rather than reading the world.
 
 ### Section 16 — Interiors
 
