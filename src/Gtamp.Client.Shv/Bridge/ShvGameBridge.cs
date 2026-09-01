@@ -356,6 +356,7 @@ namespace Gtamp.Client.Shv.Bridge
 
             ApplyVitals(ped, in command, state);
             ApplyWeapon(ped, command.WeaponHash, state);
+            ApplyPosture(ped, in command, state);
 
             switch (command.Action)
             {
@@ -623,6 +624,39 @@ namespace Gtamp.Client.Shv.Bridge
 
             Function.Call(Hash.SET_PED_DESIRED_MOVE_BLEND_RATIO, ped.Handle, command.MoveBlendRatio);
             ApplyAim(ped, in command);
+        }
+
+        /// <summary>
+        /// The two posture flags this layer can act on: crouching and reloading.
+        /// <para>
+        /// GTA V has no "crouch" for a ped — what a player sees as crouching is
+        /// stealth movement, which is a mode rather than a task, so it is set on
+        /// change and left alone. Reloading is a task and has to be issued once per
+        /// reload; re-issuing it every frame restarts the animation and the ped
+        /// fumbles the magazine forever.
+        /// </para>
+        /// <para>
+        /// The other posture flags are replicated and **not** applied here. They are
+        /// listed, with the reason for each, in docs/ENTITY_SYSTEM.md — a flag that
+        /// travels to no effect is worth naming rather than leaving to be discovered.
+        /// </para>
+        /// </summary>
+        private static void ApplyPosture(Ped ped, in RemotePedCommand command, PedDriveState state)
+        {
+            bool crouching = (command.Flags & PlayerFlags.Crouching) != 0;
+            if (state.Crouching != crouching)
+            {
+                state.Crouching = crouching;
+                Function.Call(Hash.SET_PED_STEALTH_MOVEMENT, ped.Handle, crouching, 0);
+            }
+
+            bool reloading = (command.Flags & PlayerFlags.Reloading) != 0;
+            if (reloading && !state.Reloading)
+            {
+                Function.Call(Hash.TASK_RELOAD_WEAPON, ped.Handle, true);
+            }
+
+            state.Reloading = reloading;
         }
 
         private static void ApplyAim(Ped ped, in RemotePedCommand command)
@@ -1140,6 +1174,12 @@ namespace Gtamp.Client.Shv.Bridge
             public bool Tasked;
             public NetVector3 TaskTarget;
             public float TaskBlend;
+            /// <summary>Stealth movement is a mode, so it is written on change rather than every frame.</summary>
+            public bool Crouching;
+
+            /// <summary>Whether the reload task has already been issued for the reload in progress.</summary>
+            public bool Reloading;
+
             public bool Ragdolling;
 
             /// <summary>

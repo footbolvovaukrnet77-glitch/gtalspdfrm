@@ -39,7 +39,8 @@ namespace Gtamp.Client.Players
             int health,
             int armor,
             uint weaponHash,
-            RagdollPose ragdoll = default)
+            RagdollPose ragdoll = default,
+            PlayerFlags flags = PlayerFlags.None)
         {
             Action = action;
             TargetPosition = targetPosition;
@@ -52,6 +53,7 @@ namespace Gtamp.Client.Players
             Armor = armor;
             WeaponHash = weaponHash;
             Ragdoll = ragdoll;
+            Flags = flags;
         }
 
         public RemotePedAction Action { get; }
@@ -75,6 +77,18 @@ namespace Gtamp.Client.Players
         /// is only read by <see cref="RemotePedAction.Ragdoll"/>.
         /// </summary>
         public RagdollPose Ragdoll { get; }
+
+        /// <summary>
+        /// The player's replicated posture flags, passed through whole.
+        /// <para>
+        /// The action above says what the ped is <em>doing</em>; these say how it
+        /// looks while doing it, and the bridge reads the handful it can act on. Most
+        /// of them it cannot: see the flag table in docs/ENTITY_SYSTEM.md, which lists
+        /// every flag and whether anything applies it, rather than leaving a dozen
+        /// values travelling to no effect.
+        /// </para>
+        /// </summary>
+        public PlayerFlags Flags { get; }
 
         public NetVector3 TargetPosition { get; }
 
@@ -137,7 +151,7 @@ namespace Gtamp.Client.Players
                 // owns it from there, and walking a corpse looks like a bug.
                 return new RemotePedCommand(
                     RemotePedAction.Dead, frame.Position, frame.Heading, 0f, true, false, frame.AimPosition, 0, 0,
-                    frame.CurrentWeaponHash);
+                    frame.CurrentWeaponHash, RagdollPose.None, frame.Flags);
             }
 
             if ((frame.Flags & PlayerFlags.Ragdoll) != 0)
@@ -163,7 +177,8 @@ namespace Gtamp.Client.Players
                     frame.Health,
                     frame.Armor,
                     frame.CurrentWeaponHash,
-                    frame.Ragdoll);
+                    frame.Ragdoll,
+                    frame.Flags);
             }
 
             if ((frame.Flags & PlayerFlags.InVehicle) != 0)
@@ -180,7 +195,9 @@ namespace Gtamp.Client.Players
                     frame.AimPosition,
                     frame.Health,
                     frame.Armor,
-                    frame.CurrentWeaponHash);
+                    frame.CurrentWeaponHash,
+                    RagdollPose.None,
+                    frame.Flags);
             }
 
             float distance = NetVector3.Distance(pedPosition, frame.Position);
@@ -207,7 +224,9 @@ namespace Gtamp.Client.Players
                 frame.AimPosition,
                 frame.Health,
                 frame.Armor,
-                frame.CurrentWeaponHash);
+                frame.CurrentWeaponHash,
+                RagdollPose.None,
+                frame.Flags);
         }
 
         private static RemotePedAction ChooseGait(in RemotePedFrame frame, float distance)

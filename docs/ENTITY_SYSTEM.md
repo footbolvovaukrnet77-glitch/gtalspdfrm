@@ -123,6 +123,36 @@ behind presence masks so a default character costs three bytes rather than the 4
 a fixed layout would need. It is one replicated field written whole, because
 appearance changes at spawn and when a player changes clothes — not per frame.
 
+### Every posture flag, and what actually applies it
+
+Eighteen flags are sampled from the local player and replicated. That is not the
+same as eighteen flags being *used*, and the difference is exactly the kind of gap
+that hides for a whole project: the state travels, stores and prints correctly and
+never reaches the ped. So the whole set is listed, applied or not.
+
+| Flag | Applied by | Notes |
+| --- | --- | --- |
+| `Dead` | `RemotePedController` → `DriveDead` | Placed, not tasked; the game's death animation owns it |
+| `Ragdoll` | `DriveRagdoll` + `RagdollDriver` | Head and both feet corrected with impulses |
+| `InVehicle` | `RemotePedController` | Held at the replicated position; the vehicle owns it |
+| `Aiming` | `TASK_AIM_GUN_AT_COORD` | Real aim target from the shooter's camera |
+| `Shooting` | `WeaponShot` relay | The rounds themselves, counted from the clip |
+| `Reloading` | `TASK_RELOAD_WEAPON`, once per reload | Re-issuing it every frame makes the ped fumble the magazine forever |
+| `Crouching` | `SET_PED_STEALTH_MOVEMENT` | GTA V has no ped crouch; what a player sees as crouching is stealth movement |
+| `Sprinting` | — | Superseded by `MovementState`, which the gait selection already uses. The flag is kept because a mod may want it |
+| `Jumping`, `Climbing` | **not applied** | Both are transitions a second or two long. By the time one arrives the player has finished it, and `TASK_JUMP` on a ped that is being walked to a coordinate fights the task it is already running |
+| `Falling` | **not applied** | The local ped falls on its own when there is nothing under it. Forcing it would double up with the game's own physics |
+| `Swimming`, `Diving` | **not applied** | A ped tasked into water swims by itself. What is missing is the *dive*, which needs the underwater task set and is Phase 9 work |
+| `Melee` | **not applied** | A melee task needs a target entity, and the target is not replicated — only the flag. Issuing it without one makes the ped swing at the air in a random direction |
+| `InCover` | **not applied** | Cover is a position in the world, not a state of the ped. `TASK_STAY_IN_COVER` needs a cover point the receiving client would have to find for itself, and a wrong guess pins the ped to the wrong wall |
+| `Parachuting` | **not applied** | Needs the parachute prop, its own task set and a canopy state machine. Scheduled with the wider animation work |
+| `EnteringVehicle` | **not applied** | Phase 3 seats a ped in a vehicle outright; the entry animation is not played |
+| `Invincible` | server-side only | Read by the anti-cheat as a god-mode signal. Never applied to a remote ped — a remote ped is already invincible, because its health comes from the server |
+
+Six applied, one superseded, one server-side, ten not applied. The ten are a real
+gap and are stated as one; each is here because applying it badly is visibly worse
+than not applying it, not because it was overlooked.
+
 ### The ragdoll pose
 
 A ragdoll flag says a body is falling. It does not say where the body ends up, and
