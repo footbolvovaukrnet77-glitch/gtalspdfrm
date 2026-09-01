@@ -31,6 +31,14 @@ namespace Gtamp.Client.Shv.Bridge
 
         private readonly LogBus _log;
         private readonly Dictionary<int, Vehicle> _vehicles = new Dictionary<int, Vehicle>();
+
+        /// <summary>
+        /// Decides which damage transitions are worth a native call. Without it, a
+        /// state the engine answers differently than it was written -- a tyre burst on
+        /// the rim is the usual one -- is re-applied every frame, which is an argument
+        /// with the engine at sixty hertz and looks like flickering.
+        /// </summary>
+        private readonly VehicleDamageTracker _damage = new VehicleDamageTracker();
         private readonly Dictionary<int, Prop> _objects = new Dictionary<int, Prop>();
 
         public ShvVehicleBridge(LogBus log)
@@ -86,6 +94,11 @@ namespace Gtamp.Client.Shv.Bridge
             if (!_vehicles.TryGetValue(handle, out Vehicle vehicle) || !vehicle.Exists())
             {
                 _vehicles.Remove(handle);
+
+                // The damage history goes with it. Handles are reused, and a new
+                // vehicle inheriting the previous one's history would have its whole
+                // state judged as "unchanged" and never applied.
+                _damage.Forget(handle);
                 return;
             }
 
@@ -117,9 +130,21 @@ namespace Gtamp.Client.Shv.Bridge
             }
 
             ApplyLights(vehicle, frame.Flags);
-            ApplyDoors(vehicle, frame.Doors);
-            ApplyWindows(vehicle, frame.Windows);
-            ApplyTires(vehicle, frame.Tires);
+            VehicleDamageTracker.Change damage = _damage.Observe(handle, frame.Doors, frame.Windows, frame.Tires);
+            if (damage.Doors)
+            {
+                ApplyDoors(vehicle, frame.Doors);
+            }
+
+            if (damage.Windows)
+            {
+                ApplyWindows(vehicle, frame.Windows);
+            }
+
+            if (damage.Tires)
+            {
+                ApplyTires(vehicle, frame.Tires);
+            }
         }
 
         private static void ApplyLights(Vehicle vehicle, VehicleFlags flags)
@@ -184,12 +209,21 @@ namespace Gtamp.Client.Shv.Bridge
             for (int window = 0; window < 8; window++)
             {
                 bool intact = (windows & (1 << window)) != 0;
-                if (intact)
+                bool currentlyIntact = Function.Call<bool>(Hash.IS_VEHICLE_WINDOW_INTACT, vehicle.Handle, window);
+
+                if (intact == currentlyIntact)
                 {
                     continue;
                 }
 
-                if (Function.Call<bool>(Hash.IS_VEHICLE_WINDOW_INTACT, vehicle.Handle, window))
+                if (intact)
+                {
+                    // The repair direction, which is only safe now that this runs on a
+                    // reported transition rather than on every frame the engine and the
+                    // report disagree. Without the tracker this is the smash/repair loop.
+                    Function.Call(Hash.FIX_VEHICLE_WINDOW, vehicle.Handle, window);
+                }
+                else
                 {
                     Function.Call(Hash.SMASH_VEHICLE_WINDOW, vehicle.Handle, window);
                 }
@@ -438,6 +472,7 @@ namespace Gtamp.Client.Shv.Bridge
             }
 
             _vehicles.Remove(handle);
+            _damage.Forget(handle);
             try
             {
                 if (vehicle.Exists())
