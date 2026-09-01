@@ -46,7 +46,7 @@
 | `Gtamp.Adapters.Rph` | `net48` | Optional RAGE Plugin Hook integration, loaded only when RPH is present. |
 | `Gtamp.Adapters.Lspdfr` | `net48` | Optional LSPDFR integration, same rule. |
 | `Gtamp.RphBridge` | `net48` | The other half of the RPH integration, loaded by RAGE Plugin Hook rather than by ScriptHookVDotNet. It is the only assembly here that references RPH, and nothing in the client references it. |
-| `Gtamp.Tests` | `net8.0` | xUnit. Covers everything except the ScriptHookVDotNet host layer, which needs a running game. |
+| `Gtamp.Tests` | `net8.0` | xUnit. Covers everything except the ScriptHookVDotNet host layer, which needs a running game. xUnit runs test **classes in parallel** and creates a new instance of a class **per test**, so a class may create and delete only paths under a directory of its own — the persistence classes each use `gtamp-tests/<guid>/`. Deleting anything shared, however carefully guarded, races with the classes running beside it, and that raced for as long as the guard looked reasonable. |
 
 ## The four seams
 
