@@ -361,6 +361,110 @@ had its indicators forced off and its handbrake released sixty times a second.
 The full list, with what each one looked like in the game, is in the pull request
 description.
 
+## The master prompt's state lists, item by item
+
+Sections 9–16 of the specification enumerate what to synchronise, field by field.
+This is that enumeration checked against the code rather than against memory. It
+exists because "maximally synchronise" is not a claim anybody can verify, and a
+list of names is.
+
+**Legend.** ✅ read from the game and applied to every copy. ⏸ replicated, and
+deliberately not applied, with the reason stated where the field is declared.
+❌ not present at all.
+
+### Section 9 — Players
+
+✅ position, velocity, movement, walk/run/sprint, crouch, ragdoll (with limb
+positions), health, armour, death, respawn, model, clothes, components, props,
+appearance, aiming, shooting, reloading, current weapon and its attachments, ammo,
+wanted level, vehicle, passengers, custom state.
+
+⏸ jumping, falling, swimming, climbing, melee, animations, tasks, scenarios —
+each with its reason in `PlayerFlags` and in ENTITY_SYSTEM.md.
+
+❌ **stamina, injuries, gestures, interactions, police state, room.** Six named
+fields with nothing behind them. Stamina and injuries are readable from the engine
+and are simply not done; gestures and interactions need an animation layer that
+does not exist; room is part of the interior work below.
+
+❌ **inventory**, stated in ROADMAP as a game system rather than a framework one:
+`CustomData` carries it for any mod that wants it.
+
+### Section 10 — Vehicles
+
+✅ everything in the list except the five below, including the ones that only
+arrived recently: indicators, horn, radio, neon, convertible roof, trailer.
+
+❌ **acceleration, suspension, wheel state, attached vehicles.** Throttle and brake
+are replicated, which is the input rather than the result; suspension and wheel
+state are not sampled at all.
+
+❌ **deformation** — see "Deliberately not done": the engine does not hand the
+deformation buffer back in a form this layer can read.
+
+### Section 11 — NPCs
+
+✅ model, position, rotation, velocity, health, armour, weapon, vehicle
+assignment, driver and passenger state, death, ragdoll — all through the same
+controller a player's ped uses.
+
+⏸ task, scenario, combat target, relationships, group, alert state — replicated
+and applied by nothing, because an NPC's decisions belong to a server-side AI that
+does not exist.
+
+❌ **loadout, fleeing, chasing, attacking, surrender, arrest, perception, AI
+events.** These are the AI itself, not state about it.
+
+### Section 12 — Physics
+
+✅ position, rotation, velocity, angular velocity, ragdoll, vehicle physics,
+trailer physics, attachments, damage; client prediction, interpolation, server
+correction and reconciliation are all in place.
+
+❌ **forces, impulses, collisions, destruction.** The specification says not to
+give up on physics because it is hard, and this is the part not done: a collision
+between two players is resolved twice, once on each machine, and only the
+positions are reconciled afterwards.
+
+### Section 13 — Weapons and combat
+
+✅ weapon, selection, aim, fire, reload, ammo, hit, hit position, hit bone,
+damage, armour, ragdoll, death, melee flag, attachments, custom weapons.
+
+❌ **projectile, trajectory, explosion, fire, throwable.** The projectile design
+decision is taken and recorded below; explosions and fire are not started.
+
+### Section 14 — Objects
+
+✅ id, model, position, rotation, visibility, collision, attachment, damage,
+custom data. ❌ **scale, physics, destruction, interaction.**
+
+### Section 15 — World
+
+✅ time, weather, transitions, wind, rain, snow, lightning, thunder, clouds, fog
+(all weather types), blackout.
+
+❌ **traffic, pedestrian state, police state, fire, explosions, doors, world
+events, temporary world states.** Ambient traffic and pedestrians are local to each
+client and always have been — every co-op mod for this game makes that choice, and
+it is named here rather than left to be discovered from a street full of cars only
+you can see.
+
+### Section 16 — Interiors
+
+Only `InteriorId`, and it is sampled and **not applied** — one more of the family
+this branch spent its length on, left in place because applying it needs the rest.
+
+❌ **MLO, IPL, custom interiors, transitions, rooms, portals, custom doors,
+interior objects, interior NPCs, interior missions, interior events.**
+
+### What this list is for
+
+Sections 9–16 are the largest single block of the specification and the easiest to
+answer with "maximally synchronised". Twenty-six items are genuinely missing.
+Naming them is the same discipline as the rest of this document: the reader is
+owed the gap, not a summary that implies there is none.
+
 ## Deliberately not done
 
 Things that could have been faked and were not:
