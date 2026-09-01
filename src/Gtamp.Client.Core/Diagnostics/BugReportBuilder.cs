@@ -119,7 +119,9 @@ namespace Gtamp.Client.Diagnostics
             int listed = 0;
             foreach (NetEntity entity in client.ReplicatedWorld.Current.Entities)
             {
-                builder.AppendLine($"  {entity.Id,-8} {entity.Type,-8} owner={entity.OwnerId,-4} v{entity.NetworkVersion,-5} {entity.Position}");
+                string registeredBy = client.Registry.OwnerOf((byte)entity.Type) is string mod ? $" mod={mod}" : string.Empty;
+                builder.AppendLine(
+                    $"  {entity.Id,-8} {entity.Type,-8} owner={entity.OwnerId,-4} v{entity.NetworkVersion,-5} {entity.Position}{registeredBy}");
                 if (++listed >= 25)
                 {
                     builder.AppendLine($"  ... and {client.ReplicatedWorld.EntityCount - listed} more");

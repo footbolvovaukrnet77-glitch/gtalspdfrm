@@ -16,7 +16,7 @@ stub that silently does nothing, and nothing throws a "not yet" any more.
 
 | Prompt name | Status | Notes |
 | --- | --- | --- |
-| `RegisterEntity()` | **Implemented** | Registers a networked entity type; returns its wire id |
+| `RegisterEntity()` | **Implemented** | Registers a networked entity type; returns its wire id. The overload taking a mod name records who owns the type, so `entity <id>` and every bug report can name the mod behind an entity instead of leaving the reader to guess |
 | `RegisterSerializer()` | **Implemented** | Alias of `RegisterEntity` |
 | `RegisterVehicle()` | **Implemented** | `RegisterEntity` with a readable name at the call site |
 | `RegisterPed()` | **Implemented** | as above |
@@ -69,7 +69,10 @@ public void Initialize(IModSdk sdk, ModEnvironment environment)
         Requirement = ModNetworkRequirement.Optional,
     });
 
-    sdk.RegisterEntity(new TurretSerializer());
+    // Naming the mod is optional and worth doing: without it an entity of this
+    // type is reported as unattributed, and a bug report from a player running six
+    // mods says nothing about which one put it there.
+    sdk.RegisterEntity(new TurretSerializer(), "TurretMod");
 }
 ```
 

@@ -289,6 +289,12 @@ namespace Gtamp.Client.Ui
             builder.AppendLine($"  networkVersion  {entity.NetworkVersion}");
             builder.AppendLine($"  lastUpdateTick  {entity.LastUpdateTick}");
 
+            // Which mod put this type in the world. "the framework" is an answer, not a
+            // blank: it says the entity is one of the five built-in types rather than
+            // something a mod introduced.
+            builder.AppendLine(
+                $"  registeredBy    {client.Registry.OwnerOf((byte)entity.Type) ?? "the framework"}");
+
             if (entity is PlayerEntity player)
             {
                 builder.AppendLine($"  name            {player.Name}");

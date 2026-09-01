@@ -14,6 +14,19 @@ namespace Gtamp.Shared.Entities
         private readonly Dictionary<string, INetEntitySerializer> _byName =
             new Dictionary<string, INetEntitySerializer>(StringComparer.OrdinalIgnoreCase);
 
+        /// <summary>
+        /// Which mod registered each type id, for the ones a mod registered.
+        /// <para>
+        /// The framework&#39;s own five types are not in here, and their absence is the
+        /// answer rather than a hole: an entity whose type nobody claims came from this
+        /// framework. Master prompt section 44 asks the entity inspector to name the mod
+        /// behind an entity, and without this the answer to "what put a type 0x42 in my
+        /// world" was nothing at all — which is the least useful thing a diagnostic can
+        /// say in a framework whose whole premise is third-party mods.
+        /// </para>
+        /// </summary>
+        private readonly Dictionary<byte, string> _typeOwners = new Dictionary<byte, string>();
+
         private bool _locked;
 
         public static EntityRegistry CreateDefault()
@@ -29,7 +42,13 @@ namespace Gtamp.Shared.Entities
 
         public IEnumerable<INetEntitySerializer> Serializers => _byId.Values;
 
-        public void Register(INetEntitySerializer serializer)
+        public void Register(INetEntitySerializer serializer) => Register(serializer, null);
+
+        /// <summary>
+        /// Registers an entity type, optionally recording the mod that owns it.
+        /// <paramref name="mod"/> is null for the framework&#39;s own types.
+        /// </summary>
+        public void Register(INetEntitySerializer serializer, string? mod)
         {
             if (serializer == null)
             {
@@ -56,7 +75,19 @@ namespace Gtamp.Shared.Entities
 
             _byId[serializer.TypeId] = serializer;
             _byName[serializer.TypeName] = serializer;
+            if (!string.IsNullOrWhiteSpace(mod))
+            {
+                _typeOwners[serializer.TypeId] = mod!.Trim();
+            }
         }
+
+        /// <summary>
+        /// The mod that registered a type id, or null when the framework itself did.
+        /// Printed by the entity inspector and by the bug report, which is the whole
+        /// reason it is recorded.
+        /// </summary>
+        public string? OwnerOf(byte typeId) =>
+            _typeOwners.TryGetValue(typeId, out string? mod) ? mod : null;
 
         /// <summary>Called once the first client is accepted; makes the type table immutable.</summary>
         public void Lock() => _locked = true;

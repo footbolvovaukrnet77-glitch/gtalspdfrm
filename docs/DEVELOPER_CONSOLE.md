@@ -73,7 +73,7 @@ into the game.
 | `disconnect` | Leave the server |
 | `status` | Connection, world and replication summary |
 | `players` | Players in the replicated world |
-| `entity <id>` | Full replicated state of one entity |
+| `entity <id>` | Full replicated state of one entity, including which mod registered its type — "the framework" when none did |
 | `diff <id>` | The server's state for an entity next to the local game's, field by field |
 | `net` | Network debugger: ping, loss, bandwidth, snapshots, retransmits |
 | `mods` | Detected mods and adapter status |

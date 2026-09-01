@@ -40,6 +40,14 @@ namespace Gtamp.Client.Sdk
         /// <summary>Registers a new networked entity type. Returns the assigned wire type id.</summary>
         byte RegisterEntity(INetEntitySerializer serializer);
 
+        /// <summary>
+        /// Registers an entity type and records which mod owns it, so the entity
+        /// inspector and every bug report can name the mod behind an entity of that
+        /// type. Without a name the type is still registered — it is simply reported as
+        /// unattributed, which is honest and less useful.
+        /// </summary>
+        byte RegisterEntity(INetEntitySerializer serializer, string mod);
+
         /// <summary>Alias of <see cref="RegisterEntity"/> kept for readability at mod call sites.</summary>
         byte RegisterSerializer(INetEntitySerializer serializer);
 
@@ -147,7 +155,12 @@ namespace Gtamp.Client.Sdk
             Log.Info(LogCategory.Mod, $"Registered mod '{descriptor.Id}' {descriptor.Version}.");
         }
 
-        public byte RegisterEntity(INetEntitySerializer serializer)
+        public byte RegisterEntity(INetEntitySerializer serializer) => RegisterEntityCore(serializer, null);
+
+        public byte RegisterEntity(INetEntitySerializer serializer, string mod) =>
+            RegisterEntityCore(serializer, mod);
+
+        private byte RegisterEntityCore(INetEntitySerializer serializer, string? mod)
         {
             if (serializer == null)
             {
@@ -174,24 +187,36 @@ namespace Gtamp.Client.Sdk
                 throw new InvalidOperationException("All mod entity type ids are in use.");
             }
 
-            _registry.Register(serializer);
+            _registry.Register(serializer, mod);
             byte assigned = serializer.TypeId;
             if (assigned >= _nextEntityTypeId)
             {
                 _nextEntityTypeId = (byte)(assigned + 1);
             }
 
-            Log.Info(LogCategory.Mod, $"Registered entity type '{serializer.TypeName}' as id {assigned}.");
+            Log.Info(
+                LogCategory.Mod,
+                string.IsNullOrWhiteSpace(mod)
+                    ? $"Registered entity type '{serializer.TypeName}' as id {assigned}."
+                    : $"Registered entity type '{serializer.TypeName}' as id {assigned} for mod '{mod}'.");
             return assigned;
         }
 
         public byte RegisterSerializer(INetEntitySerializer serializer) => RegisterEntity(serializer);
 
+        public byte RegisterSerializer(INetEntitySerializer serializer, string mod) => RegisterEntity(serializer, mod);
+
         public byte RegisterVehicle(INetEntitySerializer serializer) => RegisterEntity(serializer);
+
+        public byte RegisterVehicle(INetEntitySerializer serializer, string mod) => RegisterEntity(serializer, mod);
 
         public byte RegisterPed(INetEntitySerializer serializer) => RegisterEntity(serializer);
 
+        public byte RegisterPed(INetEntitySerializer serializer, string mod) => RegisterEntity(serializer, mod);
+
         public byte RegisterObject(INetEntitySerializer serializer) => RegisterEntity(serializer);
+
+        public byte RegisterObject(INetEntitySerializer serializer, string mod) => RegisterEntity(serializer, mod);
 
         /// <summary>Next unused mod entity type id, for a mod that wants one assigned rather than chosen.</summary>
         public byte NextEntityTypeId => _nextEntityTypeId;

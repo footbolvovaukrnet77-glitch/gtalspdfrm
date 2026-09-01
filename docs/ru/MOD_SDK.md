@@ -15,7 +15,7 @@
 
 | Имя из промпта | Статус | Примечания |
 | --- | --- | --- |
-| `RegisterEntity()` | **Реализовано** | Регистрирует сетевой тип сущности; возвращает его id на проводе |
+| `RegisterEntity()` | **Реализовано** | Регистрирует сетевой тип сущности; возвращает его id на проводе. Перегрузка с именем мода записывает, кому тип принадлежит, чтобы `entity <id>` и любой баг-репорт могли назвать мод, стоящий за сущностью, а не оставляли читателя гадать |
 | `RegisterSerializer()` | **Реализовано** | Синоним `RegisterEntity` |
 | `RegisterVehicle()` | **Реализовано** | `RegisterEntity` с читаемым именем в месте вызова |
 | `RegisterPed()` | **Реализовано** | то же |
@@ -68,7 +68,10 @@ public void Initialize(IModSdk sdk, ModEnvironment environment)
         Requirement = ModNetworkRequirement.Optional,
     });
 
-    sdk.RegisterEntity(new TurretSerializer());
+    // Назвать мод необязательно, но стоит: без этого сущность такого типа
+    // считается безымянной, и баг-репорт от игрока с шестью модами ничего не
+    // скажет о том, какой из них её создал.
+    sdk.RegisterEntity(new TurretSerializer(), "TurretMod");
 }
 ```
 
