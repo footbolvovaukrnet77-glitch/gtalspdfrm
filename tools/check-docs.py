@@ -12,6 +12,11 @@ a dead link:
    document in `docs/` is supposed to exist in both languages and say so at the
    top; a half-translated set is worse than an untranslated one, because the
    reader cannot tell which pages they are missing.
+4. A protocol version printed in the documentation that is not the one the code
+   actually sends. Both protocol documents said **5** while the constant had
+   been at **8** for some time: a reader implementing against the document would
+   have been rejected at the handshake and told the version they had just read
+   was wrong.
 
 Exit code 0 when clean, 1 with a list of problems otherwise. No dependencies
 beyond the standard library, so CI needs nothing installed.
@@ -111,6 +116,47 @@ def check_translation_pairs(root, problems):
             problems.append("%s is missing (its counterpart exists)" % name)
 
 
+PROTOCOL_IN_DOC = re.compile(r"(?:Protocol version|Версия протокола): \*\*(\d+)\*\*")
+PROTOCOL_IN_CODE = re.compile(r"ProtocolVersion\s*=\s*(\d+)\s*;")
+
+
+def check_protocol_version(root, problems):
+    """The version in the protocol documents must be the one the code sends."""
+    source = os.path.join(root, "src", "Gtamp.Shared", "Protocol", "ProtocolConstants.cs")
+    if not os.path.exists(source):
+        problems.append("src/Gtamp.Shared/Protocol/ProtocolConstants.cs is missing")
+        return
+
+    with io.open(source, encoding="utf-8") as handle:
+        match = PROTOCOL_IN_CODE.search(handle.read())
+
+    if match is None:
+        problems.append("ProtocolConstants.cs no longer declares ProtocolVersion in a readable form")
+        return
+
+    expected = match.group(1)
+    found_anywhere = False
+
+    for name in ("NETWORK_PROTOCOL.md", os.path.join("ru", "NETWORK_PROTOCOL.md")):
+        path = os.path.join(root, "docs", name)
+        if not os.path.exists(path):
+            continue
+
+        with io.open(path, encoding="utf-8") as handle:
+            text = handle.read()
+
+        for stated in PROTOCOL_IN_DOC.findall(text):
+            found_anywhere = True
+            if stated != expected:
+                problems.append(
+                    "docs/%s says protocol version %s; the code sends %s"
+                    % (name.replace(os.sep, "/"), stated, expected))
+
+    if not found_anywhere:
+        problems.append(
+            "neither protocol document states a version any more — the check above cannot work")
+
+
 def main():
     root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
     files = list(markdown_files(root))
@@ -118,6 +164,7 @@ def main():
 
     check_links(root, files, problems)
     check_translation_pairs(root, problems)
+    check_protocol_version(root, problems)
 
     print("checked %d markdown files" % len(files))
     for problem in problems:
@@ -126,7 +173,7 @@ def main():
     if problems:
         print("%d problem(s)" % len(problems))
         return 1
-    print("no broken links, no missing translations")
+    print("no broken links, no missing translations, protocol version agrees with the code")
     return 0
 
 

@@ -57,10 +57,12 @@ Expected: `Passed! - Failed: 0, Passed: 553`.
 python3 tools/check-docs.py    # or python tools\check-docs.py on Windows
 ```
 
-Expected: `no broken links, no missing translations`. It fails on a relative link
-to a file that does not exist, on a `#anchor` naming a heading that is not there,
-and on an English document with no Russian counterpart or the reverse. Needs
-nothing but Python 3 — no packages to install.
+Expected: `no broken links, no missing translations, protocol version agrees with
+the code`. It fails on a relative link to a file that does not exist, on a `#anchor`
+naming a heading that is not there, on an English document with no Russian
+counterpart or the reverse, and on a protocol version printed in the documentation
+that is not the one `ProtocolConstants` actually sends. Needs nothing but Python 3 —
+no packages to install.
 
 ### The same three commands run in CI
 

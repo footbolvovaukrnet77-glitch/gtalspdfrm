@@ -178,8 +178,6 @@ namespace Gtamp.Shared.Protocol
     /// </summary>
     public sealed class ClientStateUpdateMessage
     {
-        public uint ClientTick { get; set; }
-
         public double ClientTime { get; set; }
 
         /// <summary>Highest snapshot id the client has successfully applied. Doubles as the delta baseline ack.</summary>
@@ -240,7 +238,6 @@ namespace Gtamp.Shared.Protocol
         public byte[] Serialize()
         {
             var writer = new NetWriter(128);
-            writer.WriteVarUInt(ClientTick);
             writer.WriteDouble(ClientTime);
             writer.WriteVarUInt(AcknowledgedSnapshotId);
             writer.WriteVarUInt(UpdateSequence);
@@ -305,7 +302,6 @@ namespace Gtamp.Shared.Protocol
             var reader = new NetReader(payload);
             var message = new ClientStateUpdateMessage
             {
-                ClientTick = reader.ReadVarUInt(),
                 ClientTime = reader.ReadDouble(),
                 AcknowledgedSnapshotId = reader.ReadVarUInt(),
                 UpdateSequence = reader.ReadVarUInt(),
