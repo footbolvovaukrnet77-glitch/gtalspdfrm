@@ -655,6 +655,15 @@ namespace Gtamp.Client.Shv.Bridge
                 flags |= VehicleFlags.Undriveable;
             }
 
+            // The game's own answer to "is this wreck a wreck", rather than a threshold
+            // guessed from engine health. It is what tells every other client to draw
+            // the explosion, so getting it from anywhere else would be guessing on
+            // everyone's behalf.
+            if (vehicle.IsDead)
+            {
+                flags |= VehicleFlags.Burnt;
+            }
+
             if (Function.Call<int>(Hash.GET_VEHICLE_DOOR_LOCK_STATUS, vehicle.Handle) == 2)
             {
                 flags |= VehicleFlags.Locked;
@@ -822,6 +831,42 @@ namespace Gtamp.Client.Shv.Bridge
         {
             Vehicle? vehicle = FindVehicle(handle);
             return vehicle == null ? 0u : unchecked((uint)vehicle.Model.Hash);
+        }
+
+        /// <summary>
+        /// Draws the explosion of a vehicle somebody else's game destroyed.
+        /// <para>
+        /// <b>Damage scale zero, and that is not a detail.</b> The server arbitrates
+        /// damage from the victim's own report, exactly as it does for gunfire; an
+        /// explosion that also wounded would wound once per client that happened to
+        /// draw it. The visual and the audio are the whole point of the call.
+        /// </para>
+        /// <para>
+        /// What zero damage does <i>not</i> remove is force: an explosion is a physics
+        /// event, and there is no native flag that suppresses the shove while keeping
+        /// the fireball. So a car blowing up next to you can still move you. That is
+        /// the same trade every collision in this framework already makes — each client
+        /// simulates its own physics and the server arbitrates the health that results
+        /// — and it is stated rather than hidden.
+        /// </para>
+        /// </summary>
+        public void PlayVehicleExplosion(int vehicleHandle)
+        {
+            Vehicle? vehicle = FindVehicle(vehicleHandle);
+            if (vehicle == null || !vehicle.Exists())
+            {
+                return;
+            }
+
+            Vector3 position = vehicle.Position;
+            Function.Call(
+                Hash.ADD_EXPLOSION,
+                position.X, position.Y, position.Z,
+                (int)ExplosionType.Car,
+                0f,     // damageScale — see above
+                true,   // isAudible
+                false,  // isInvisible
+                1f);    // cameraShake
         }
 
         public void SeatRemotePedInVehicle(int pedHandle, int vehicleHandle, sbyte seat)

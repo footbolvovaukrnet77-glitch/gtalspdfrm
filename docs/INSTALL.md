@@ -49,7 +49,7 @@ Expected output: `Build succeeded. 0 Warning(s) 0 Error(s)`.
 ./tools/test.sh          # or tools\test.bat
 ```
 
-Expected: `Passed! - Failed: 0, Passed: 553`.
+Expected: `Passed! - Failed: 0, Passed: 558`.
 
 ### Check the documentation
 

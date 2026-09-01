@@ -248,7 +248,7 @@ machine and real clients, and is not claimed here.
 | Step | What it guards |
 | --- | --- |
 | `dotnet build -c Release -warnaserror` | The zero-warning claim. Without `-warnaserror` it decays the first time a warning lands that nobody scrolls up far enough to see |
-| `dotnet test -c Release` | All 553 tests, with the `.trx` uploaded as an artifact so a failure is readable without re-running anything |
+| `dotnet test -c Release` | All 558 tests, with the `.trx` uploaded as an artifact so a failure is readable without re-running anything |
 | `python3 tools/check-docs.py` | Dead relative links, `#anchors` naming headings that no longer exist, any document that lost its counterpart in the other language, and the three things the documentation asserts about the code: the protocol version, the test count, and the `client.ini` example. All three had drifted before the checks existed |
 
 The whole solution compiles on `ubuntu-latest`, the `net48` client included,
@@ -439,8 +439,21 @@ positions are reconciled afterwards.
 ✅ weapon, selection, aim, fire, reload, ammo, hit, hit position, hit bone,
 damage, armour, ragdoll, death, melee flag, attachments, custom weapons.
 
-❌ **projectile, trajectory, explosion, fire, throwable.** The projectile design
-decision is taken and recorded below; explosions and fire are not started.
+⏸ **explosion**, partly. A vehicle destroyed on one screen now explodes on every
+screen: `VehicleFlags.Burnt` is sampled from the game&#39;s own `IS_ENTITY_DEAD` and the
+receiving client draws the fireball on the transition into it, once, at damage scale
+zero. That covers the explosion players actually see in GTA V. It does **not** cover
+explosions in general, and cannot on this engine: the natives can *create* an
+explosion and answer &#34;is one of type T inside this sphere&#34;, and there is no way to
+enumerate them or ask where one happened. Detecting an arbitrary explosion would mean
+polling dozens of types against guessed spheres every frame and still not knowing the
+position.
+
+❌ **projectile, trajectory, fire, throwable.** The projectile design decision is
+taken and recorded below. A launcher shot is deliberately not echoed as an explosion:
+the shooter knows the muzzle and the aim point but not where the rocket actually
+lands, and drawing the fireball at the aim point after a guessed flight time would put
+it through the wall the rocket really hit.
 
 ### Section 14 — Objects
 

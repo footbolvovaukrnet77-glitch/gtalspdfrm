@@ -257,9 +257,9 @@ its indicators forced off and its handbrake released sixty times a second.
 | `EngineRunning`, `Lights`, `HighBeams`, `SirenActive`, `InteriorLight`, `Locked` | ✅ read and applied from the start |
 | `LeftIndicator`, `RightIndicator`, `SirenMuted` | ✅ now read; they were applied from a value nothing sampled |
 | `HornActive`, `RoofOpen`, `TaxiLight`, `SearchLight`, `Undriveable` | ✅ now read and applied; they did nothing before |
+| `Burnt` | ✅ now read from `IS_ENTITY_DEAD` and used, once, to draw the explosion of a vehicle destroyed on another screen. It was filed as derived from engine and body health, which nothing derived — and which is not reliably derivable: separating "the engine is dead" from "the car exploded" means guessing a threshold below zero, while the engine answers directly |
 | `HazardLights` | derived — GTA V has no hazard state; it is both indicators |
 | `BrakeLights` | derived from `Brake`, which is replicated and applied |
-| `Burnt` | derived from engine and body health |
 | `NeonEnabled` | superseded by `NeonLayout`, which says *which* strips |
 | `Handbrake` | **cannot be replicated.** `SET_VEHICLE_HANDBRAKE` has no paired getter, so it can be written and never read. The apply is removed; the bit stays so a mod tracking it itself has somewhere to put it |
 

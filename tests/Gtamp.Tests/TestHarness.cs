@@ -362,6 +362,11 @@ namespace Gtamp.Tests
 
         public int GetLocalPlayerVehicleHandle() => LocalVehicleHandle;
 
+        /// <summary>Vehicle handles this client has drawn an explosion for, in order.</summary>
+        public List<int> VehicleExplosions { get; } = new List<int>();
+
+        public void PlayVehicleExplosion(int vehicleHandle) => VehicleExplosions.Add(vehicleHandle);
+
         public uint GetVehicleModel(int handle) =>
             Vehicles.TryGetValue(handle, out VehicleEntity? vehicle) ? vehicle.ModelHash : 0u;
 

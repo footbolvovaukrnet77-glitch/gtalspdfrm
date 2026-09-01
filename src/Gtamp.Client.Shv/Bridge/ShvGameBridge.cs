@@ -1566,6 +1566,8 @@ namespace Gtamp.Client.Shv.Bridge
 
         public uint GetVehicleModel(int handle) => _vehicles.GetVehicleModel(handle);
 
+        public void PlayVehicleExplosion(int vehicleHandle) => _vehicles.PlayVehicleExplosion(vehicleHandle);
+
         public int CreateRemoteObject(uint modelHash, NetVector3 position, float heading) =>
             _vehicles.CreateRemoteObject(modelHash, position, heading);
 

@@ -29,6 +29,17 @@ namespace Gtamp.Client.Entities
         private readonly Dictionary<EntityId, int> _objects = new Dictionary<EntityId, int>();
         private readonly Dictionary<EntityId, int> _appliedNpcAppearance = new Dictionary<EntityId, int>();
         private readonly Dictionary<EntityId, uint> _appliedNpcGroup = new Dictionary<EntityId, uint>();
+
+        /// <summary>
+        /// Whether each replicated vehicle was a wreck the last time it was drawn.
+        /// <para>
+        /// The explosion is played on the <i>transition</i> into destruction and only
+        /// then. A vehicle that was already burnt when this client first saw it — a
+        /// wreck left in the street before you joined — must not detonate again on
+        /// arrival, and one that stays burnt must not detonate every frame.
+        /// </para>
+        /// </summary>
+        private readonly Dictionary<EntityId, bool> _vehicleWasDestroyed = new Dictionary<EntityId, bool>();
         private readonly Dictionary<EntityId, int> _appliedVehicleAppearance = new Dictionary<EntityId, int>();
         private readonly List<EntityId> _removalBuffer = new List<EntityId>();
 
@@ -51,6 +62,9 @@ namespace Gtamp.Client.Entities
         public int ObjectCount => _objects.Count;
 
         public IEnumerable<RemoteVehicle> Vehicles => _vehicles.Values;
+
+        /// <summary>Explosions drawn for vehicles somebody else's game destroyed.</summary>
+        public int VehicleExplosionsDrawn { get; private set; }
 
         public bool TryGetVehicle(EntityId id, out RemoteVehicle vehicle) => _vehicles.TryGetValue(id, out vehicle!);
 
@@ -253,6 +267,7 @@ namespace Gtamp.Client.Entities
                     : 0;
 
                 _bridge.ApplyRemoteVehicle(vehicle.VehicleHandle, in frame, trailerHandle);
+                PlayDestructionIfJustDestroyed(vehicle, in frame);
             }
 
             RenderNpcs(renderTime);
@@ -370,6 +385,45 @@ namespace Gtamp.Client.Entities
             _appliedNpcGroup.Remove(id);
         }
 
+        /// <summary>
+        /// Draws the explosion of a vehicle that was destroyed on somebody else's
+        /// screen.
+        /// <para>
+        /// Until this ran, a car blowing up in front of another player turned into a
+        /// blackened wreck between two frames on every screen but theirs: no fireball,
+        /// no sound, no reason. The state that says it happened —
+        /// <see cref="VehicleFlags.Burnt"/> — was declared from the first version of
+        /// the flags, derived by nothing, sampled by nothing and read by nothing.
+        /// </para>
+        /// <para>
+        /// The first sighting of a vehicle only records what it is; it never explodes.
+        /// Otherwise every wreck already standing in the street would detonate again
+        /// for each player who walked into view of it.
+        /// </para>
+        /// </summary>
+        private void PlayDestructionIfJustDestroyed(RemoteVehicle vehicle, in RemoteVehicleFrame frame)
+        {
+            bool destroyed = (frame.Flags & VehicleFlags.Burnt) != 0;
+            if (!_vehicleWasDestroyed.TryGetValue(vehicle.EntityId, out bool wasDestroyed))
+            {
+                // First sighting: remember the state, show nothing.
+                _vehicleWasDestroyed[vehicle.EntityId] = destroyed;
+                return;
+            }
+
+            if (destroyed == wasDestroyed)
+            {
+                return;
+            }
+
+            _vehicleWasDestroyed[vehicle.EntityId] = destroyed;
+            if (destroyed)
+            {
+                VehicleExplosionsDrawn++;
+                _bridge.PlayVehicleExplosion(vehicle.VehicleHandle);
+            }
+        }
+
         private void ApplyAppearanceIfChanged(RemoteVehicle vehicle)
         {
             if (_appliedVehicleAppearance.TryGetValue(vehicle.EntityId, out int applied)
@@ -402,6 +456,7 @@ namespace Gtamp.Client.Entities
 
             _vehicles.Remove(id);
             _appliedVehicleAppearance.Remove(id);
+            _vehicleWasDestroyed.Remove(id);
         }
 
         public void RemoveObject(EntityId id)
@@ -440,6 +495,7 @@ namespace Gtamp.Client.Entities
             _npcs.Clear();
             _objects.Clear();
             _appliedVehicleAppearance.Clear();
+            _vehicleWasDestroyed.Clear();
             _appliedNpcAppearance.Clear();
             _appliedNpcGroup.Clear();
         }

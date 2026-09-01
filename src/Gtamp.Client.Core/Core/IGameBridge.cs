@@ -189,6 +189,13 @@ namespace Gtamp.Client.Core
         /// <summary>Model hash of a local vehicle handle, or 0 when the handle is not valid.</summary>
         uint GetVehicleModel(int handle);
 
+        /// <summary>
+        /// Draws the explosion of a replicated vehicle that has just been destroyed.
+        /// Called once, on the frame the destruction is first seen — never for a wreck
+        /// that was already a wreck when this client arrived.
+        /// </summary>
+        void PlayVehicleExplosion(int vehicleHandle);
+
         // --- objects -------------------------------------------------------
 
         int CreateRemoteObject(uint modelHash, NetVector3 position, float heading);

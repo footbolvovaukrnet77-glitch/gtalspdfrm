@@ -32,6 +32,21 @@ namespace Gtamp.Shared.Entities
         InteriorLight = 1 << 11,
         TaxiLight = 1 << 12,
         Undriveable = 1 << 15,
+
+        /// <summary>
+        /// The vehicle has been destroyed — the game's own <c>IS_ENTITY_DEAD</c>, not a
+        /// number this side interprets.
+        /// <para>
+        /// This was filed under "derived from engine and body health" and sampled by
+        /// nothing, which was wrong twice over. Nothing derived it, so it was always
+        /// false; and it is not reliably derivable — telling "the engine is dead" from
+        /// "the car exploded" means picking a threshold below zero and hoping, while
+        /// the engine will simply answer the question. The receiving client uses the
+        /// transition into it, once, to draw the explosion everyone else's screen was
+        /// missing.
+        /// </para>
+        /// </summary>
+        Burnt = 1 << 14,
         SearchLight = 1 << 18,
 
         // --- carried, but derived from something else that is already replicated ---
@@ -45,9 +60,6 @@ namespace Gtamp.Shared.Entities
 
         /// <summary>Follows from <see cref="VehicleEntity.Brake"/>, which is replicated and applied.</summary>
         BrakeLights = 1 << 13,
-
-        /// <summary>Follows from engine and body health, which are replicated.</summary>
-        Burnt = 1 << 14,
 
         /// <summary>Superseded by <see cref="VehicleEntity.NeonLayout"/>, which says which strips as well as whether.</summary>
         NeonEnabled = 1 << 17,
