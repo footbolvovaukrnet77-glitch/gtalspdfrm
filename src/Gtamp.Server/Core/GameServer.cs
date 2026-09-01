@@ -37,6 +37,13 @@ namespace Gtamp.Server.Core
         public const double AuthorityHoldTimeoutSeconds = 10d;
 
         /// <summary>
+        /// The model hold's own timeout. Longer than the rest because applying a model
+        /// is not one frame's work on the client: it waits for the model to stream in
+        /// and refuses to do it at all while the player is in a vehicle.
+        /// </summary>
+        public const double ModelHoldTimeoutSeconds = 20d;
+
+        /// <summary>
         /// How far a gunshot is relayed. A rifle report carries a few hundred metres
         /// in the game and a muzzle flash is invisible long before that, so 250 m
         /// covers everyone who could notice and drops the rest. This filters
@@ -953,7 +960,14 @@ namespace Gtamp.Server.Core
             entity.Heading = update.Heading;
             entity.Armor = update.Armor;
             entity.Movement = update.Movement;
-            entity.ModelHash = update.ModelHash;
+
+            // Held while the client has not yet applied a model the server set. This
+            // one is held for longer than the rest by nature: the client cannot change
+            // a player's model in a vehicle, and has to wait for it to stream in.
+            if (!IsModelHeld(session, update.AcknowledgedSnapshotId))
+            {
+                entity.ModelHash = update.ModelHash;
+            }
             entity.CurrentWeaponHash = update.CurrentWeaponHash;
             entity.Ammo = update.Ammo;
             entity.WeaponTint = update.WeaponTint;
@@ -1086,6 +1100,50 @@ namespace Gtamp.Server.Core
         {
             session.PendingWantedHold = true;
             session.WantedHoldSnapshot = 0;
+        }
+
+        /// <summary>True while the client has not yet applied a model the server set.</summary>
+        private bool IsModelHeld(PlayerSession session, uint acknowledgedSnapshotId)
+        {
+            if (session.PendingModelHold)
+            {
+                return true;
+            }
+
+            if (session.ModelHoldSnapshot == 0)
+            {
+                return false;
+            }
+
+            if (acknowledgedSnapshotId >= session.ModelHoldSnapshot || _now >= session.ModelHoldExpiry)
+            {
+                session.ModelHoldSnapshot = 0;
+                session.ModelHoldExpiry = 0;
+                return false;
+            }
+
+            return true;
+        }
+
+        /// <summary>
+        /// Sets a player's model from the server side. The client may take several
+        /// seconds to apply it, or fail to — it says so in its log and its diagnostic
+        /// bundle when it gives up — so the server's value is what other players see
+        /// either way.
+        /// </summary>
+        public bool SetPlayerModel(PlayerSession session, uint modelHash)
+        {
+            PlayerEntity? entity = World.GetPlayer(session.EntityId);
+            if (entity == null || modelHash == 0)
+            {
+                return false;
+            }
+
+            entity.ModelHash = modelHash;
+            session.PendingModelHold = true;
+            session.ModelHoldSnapshot = 0;
+            World.Touch(entity);
+            return true;
         }
 
         /// <summary>
@@ -1536,6 +1594,16 @@ namespace Gtamp.Server.Core
                     session.WantedHoldExpiry = _now + AuthorityHoldTimeoutSeconds;
                 }
 
+                if (session.PendingModelHold)
+                {
+                    session.PendingModelHold = false;
+                    session.ModelHoldSnapshot = snapshotId;
+
+                    // Longer than the others on purpose: the client has to stream the
+                    // model in and may be waiting to get out of a car.
+                    session.ModelHoldExpiry = _now + ModelHoldTimeoutSeconds;
+                }
+
                 SnapshotWriteResult result = SnapshotCodec.Write(
                     World.State, baseline, Registry, order, snapshotId, budget,
                     session.LastProcessedUpdateSequence,
@@ -1685,6 +1753,15 @@ namespace Gtamp.Server.Core
             {
                 // Restored, so the client has to be told before its own reports count.
                 HoldWantedAuthority(session);
+            }
+
+            if (entity.ModelHash != 0)
+            {
+                // The same for a restored model, which the client's fresh session knows
+                // nothing about and would otherwise overwrite with whatever character
+                // single player left it as.
+                session.PendingModelHold = true;
+                session.ModelHoldSnapshot = 0;
             }
 
             return World.Spawn(entity);

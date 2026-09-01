@@ -66,6 +66,18 @@ namespace Gtamp.Client.Core
         /// </summary>
         void SetLocalWantedLevel(int level);
 
+        /// <summary>
+        /// Changes the local player's own model, because the server decided it: a
+        /// restored save, an admin command, a mod handing out a skin.
+        /// <para>
+        /// Returns false when it cannot be done this frame rather than forcing it: the
+        /// model may still be streaming in, and the game builds a new ped for the
+        /// player, which it will not do sanely while they are in a vehicle or dead. The
+        /// caller retries, and gives up loudly rather than silently.
+        /// </para>
+        /// </summary>
+        bool TrySetLocalPlayerModel(uint modelHash);
+
         /// <summary>Creates a ped representing another player. Returns a handle, or 0 on failure.</summary>
         int CreateRemotePed(uint modelHash, NetVector3 position, float heading);
 

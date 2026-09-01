@@ -60,6 +60,7 @@ namespace Gtamp.Server.Admin
                 "kill" => Kill(args),
                 "respawn" => RespawnCommand(args),
                 "wanted" => Wanted(args),
+                "model" => ModelCommand(args),
                 "say" => Say(args),
                 "time" => Time(args),
                 "weather" => Weather(args),
@@ -88,6 +89,7 @@ namespace Gtamp.Server.Admin
             "  kill <playerId>     kill a player",
             "  respawn <playerId>  respawn a dead player immediately",
             "  wanted <playerId> <0-5>  set a player's wanted level",
+            "  model <playerId> <hash>  set a player's model, decimal or 0x hex",
             "  say <text>          broadcast a chat message as the server",
             "  time <HH:MM>        set the world clock",
             "  weather <name>      set the weather (e.g. EXTRASUNNY, RAIN, THUNDER)",
@@ -426,6 +428,40 @@ namespace Gtamp.Server.Admin
 
             return _server.SetWantedLevel(session, level)
                 ? $"{session.Name} is now wanted at level {level}."
+                : $"{session.Name} has no character in the world.";
+        }
+
+        /// <summary>
+        /// Sets a player's model. The client applies it over the next few frames — it
+        /// has to stream the model in, and the game will not change a player's model
+        /// while they are in a vehicle — and says so in its log if it cannot.
+        /// </summary>
+        private string ModelCommand(string[] args)
+        {
+            if (args.Length < 2 || !uint.TryParse(args[0], out uint playerId))
+            {
+                return "Usage: model <playerId> <hash>";
+            }
+
+            string raw = args[1];
+            bool hex = raw.StartsWith("0x", StringComparison.OrdinalIgnoreCase);
+            if (!uint.TryParse(
+                    hex ? raw.Substring(2) : raw,
+                    hex ? NumberStyles.HexNumber : NumberStyles.Integer,
+                    CultureInfo.InvariantCulture,
+                    out uint modelHash)
+                || modelHash == 0)
+            {
+                return "Usage: model <playerId> <hash>";
+            }
+
+            if (!_server.Players.TryGetByPlayerId(playerId, out PlayerSession session))
+            {
+                return $"No player with id {playerId}.";
+            }
+
+            return _server.SetPlayerModel(session, modelHash)
+                ? $"{session.Name} is now model 0x{modelHash:X8}. Their client applies it over the next few frames."
                 : $"{session.Name} has no character in the world.";
         }
 

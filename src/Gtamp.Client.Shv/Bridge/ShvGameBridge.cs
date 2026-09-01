@@ -310,6 +310,69 @@ namespace Gtamp.Client.Shv.Bridge
         }
 
 
+
+        /// <summary>
+        /// Changes the local player's model.
+        /// <para>
+        /// <c>SET_PLAYER_MODEL</c> does not dress the existing ped — it builds a new
+        /// one and points the player at it. The old handle is stale afterwards, and
+        /// health, armour, place and clothing do not come across, so they are read
+        /// first and written back. Refused rather than forced while the player is in a
+        /// vehicle or dead: the game's own behaviour there is to eject or to leave a
+        /// corpse behind, and both are worse than waiting a frame.
+        /// </para>
+        /// </summary>
+        public bool TrySetLocalPlayerModel(uint modelHash)
+        {
+            if (modelHash == 0)
+            {
+                return false;
+            }
+
+            Ped player = Game.Player.Character;
+            if (player == null || !player.Exists() || player.IsDead || player.IsInVehicle())
+            {
+                return false;
+            }
+
+            if (unchecked((uint)player.Model.Hash) == modelHash)
+            {
+                return true;
+            }
+
+            var model = new Model(unchecked((int)modelHash));
+            if (!model.IsValid || !model.IsInCdImage)
+            {
+                // A model this client does not have. Reported as a failure so the
+                // caller stops asking, rather than retried until the session ends.
+                return false;
+            }
+
+            if (!model.IsLoaded)
+            {
+                model.Request();
+                return false;
+            }
+
+            int health = player.Health;
+            int armor = player.Armor;
+            float heading = player.Heading;
+            Vector3 position = player.Position;
+
+            Function.Call(Hash.SET_PLAYER_MODEL, Game.Player.Handle, model.Hash);
+            model.MarkAsNoLongerNeeded();
+
+            // A different ped from here on: the variable above no longer refers to the
+            // player's character.
+            Ped rebuilt = Game.Player.Character;
+            Function.Call(Hash.SET_PED_DEFAULT_COMPONENT_VARIATION, rebuilt.Handle);
+            rebuilt.Position = position;
+            rebuilt.Heading = heading;
+            rebuilt.Health = health;
+            rebuilt.Armor = armor;
+            return true;
+        }
+
         /// <summary>
         /// Applies a wanted level the server decided.
         /// <para>

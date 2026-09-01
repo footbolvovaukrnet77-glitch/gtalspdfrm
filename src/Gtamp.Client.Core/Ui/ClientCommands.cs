@@ -433,7 +433,16 @@ namespace Gtamp.Client.Ui
             builder.AppendLine($"  snapshots       {client.ReplicatedWorld.SnapshotsApplied} applied / {client.ReplicatedWorld.SnapshotsDropped} dropped");
             builder.AppendLine($"  resyncs         {client.ResyncsRequested}");
             builder.AppendLine($"  shots           {client.ShotsFired} fired / {client.ShotsSeen} seen");
-            builder.Append($"  hits            {client.HitsReported} reported");
+            builder.AppendLine($"  hits            {client.HitsReported} reported");
+            builder.AppendLine(
+                $"  corrections     {client.CorrectionsApplied} position / " +
+                $"{client.WantedLevelCorrectionsApplied} wanted level");
+
+            // A model the server set and this client could not apply is the one line
+            // here a player actually has to act on, so it is never folded away.
+            builder.Append(
+                $"  models          {client.ModelChangesApplied} applied / " +
+                $"{client.ModelChangesRefused} given up on");
             return builder.ToString();
         }
 

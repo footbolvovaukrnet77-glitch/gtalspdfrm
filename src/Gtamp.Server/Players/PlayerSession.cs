@@ -138,6 +138,18 @@ namespace Gtamp.Server.Players
 
         public double WantedHoldExpiry { get; set; }
 
+        /// <summary>
+        /// And again for the player's model, which the server sets when it restores a
+        /// save or a mod hands out a skin. The client needs several frames to apply one
+        /// — the model has to stream in, and the game refuses the change in a vehicle —
+        /// so this hold matters for longer than the others.
+        /// </summary>
+        public bool PendingModelHold { get; set; }
+
+        public uint ModelHoldSnapshot { get; set; }
+
+        public double ModelHoldExpiry { get; set; }
+
         /// <summary>Set once a disconnect has been decided, so the tick loop can reap the session.</summary>
         public bool PendingRemoval { get; set; }
 

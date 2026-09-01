@@ -238,6 +238,96 @@ namespace Gtamp.Tests
             Assert.Equal(0, entity!.WantedLevel);
         }
 
+        /// <summary>
+        /// A model the server sets reaches the player's own game.
+        /// <para>
+        /// The same hole as the wanted level, one field over: the client reported its
+        /// model, the server took it, persisted it and replicated it, and a model the
+        /// server set itself — a restored save, a mod handing out a skin — was
+        /// overwritten by the client's next update without ever reaching the game. Other
+        /// players saw the skin; the player wearing it did not.
+        /// </para>
+        /// </summary>
+        [Fact]
+        public void AModelTheServerSetsReachesThePlayersOwnGame()
+        {
+            using var harness = new TestHarness();
+            TestClient player = Join(harness, "skin");
+            Assert.True(harness.AdvanceUntil(() => player.Client.IsConnected));
+            Assert.True(harness.AdvanceUntil(() => player.Client.LocalEntityId.IsValid));
+            harness.Advance(1d);
+
+            const uint Skin = 0x9C9EFFD8u;
+            Assert.True(harness.Server.Players.TryGetByPlayerId(
+                player.Client.LocalPlayerId, out PlayerSession session));
+            Assert.True(harness.Server.SetPlayerModel(session, Skin));
+
+            Assert.True(harness.AdvanceUntil(() => player.Bridge.LocalModelHash == Skin));
+            Assert.Equal(1, player.Client.ModelChangesApplied);
+
+            // And it stays: the client now reports the model it was given, and the
+            // server's own value is not undone by the reports that were already in
+            // flight when it was set.
+            harness.Advance(1d);
+            Assert.Equal(Skin, harness.Server.World.GetPlayer(player.Client.LocalEntityId)!.ModelHash);
+        }
+
+        /// <summary>
+        /// A game that says "not now" is retried, not obeyed once and forgotten. The
+        /// real one refuses while the player is in a vehicle or dead, and while the
+        /// model is still streaming in.
+        /// </summary>
+        [Fact]
+        public void AModelChangeTheGameRefusesIsRetried()
+        {
+            using var harness = new TestHarness();
+            TestClient player = Join(harness, "skin");
+            Assert.True(harness.AdvanceUntil(() => player.Client.IsConnected));
+            Assert.True(harness.AdvanceUntil(() => player.Client.LocalEntityId.IsValid));
+            harness.Advance(1d);
+
+            const uint Skin = 0x9C9EFFD8u;
+            player.Bridge.ModelChangeRefusals = 3;
+
+            Assert.True(harness.Server.Players.TryGetByPlayerId(
+                player.Client.LocalPlayerId, out PlayerSession session));
+            Assert.True(harness.Server.SetPlayerModel(session, Skin));
+
+            Assert.True(harness.AdvanceUntil(() => player.Bridge.LocalModelHash == Skin, timeoutSeconds: 5d));
+            Assert.True(player.Bridge.ModelChangeAttempts >= 4);
+            Assert.Equal(0, player.Client.ModelChangesRefused);
+        }
+
+        /// <summary>
+        /// And a model that never applies is given up on out loud rather than retried
+        /// for the rest of the session. A skin this client does not have is a missing
+        /// mod, and the player is the last person who should have to guess.
+        /// </summary>
+        [Fact]
+        public void AModelThatNeverAppliesIsGivenUpOnAndReported()
+        {
+            using var harness = new TestHarness();
+            TestClient player = Join(harness, "skin");
+            Assert.True(harness.AdvanceUntil(() => player.Client.IsConnected));
+            Assert.True(harness.AdvanceUntil(() => player.Client.LocalEntityId.IsValid));
+            harness.Advance(1d);
+
+            player.Bridge.ModelChangeRefusals = int.MaxValue;
+
+            Assert.True(harness.Server.Players.TryGetByPlayerId(
+                player.Client.LocalPlayerId, out PlayerSession session));
+            Assert.True(harness.Server.SetPlayerModel(session, 0x9C9EFFD8u));
+
+            Assert.True(harness.AdvanceUntil(() => player.Client.ModelChangesRefused > 0, timeoutSeconds: 20d));
+            Assert.Equal(0u, player.Bridge.LocalModelHash);
+
+            int attempts = player.Bridge.ModelChangeAttempts;
+            harness.Advance(5d);
+
+            // Given up on means given up on: no more attempts after the warning.
+            Assert.Equal(attempts, player.Bridge.ModelChangeAttempts);
+        }
+
         [Fact]
         public void ASeatIsClaimedByOneOccupantAtATime()
         {

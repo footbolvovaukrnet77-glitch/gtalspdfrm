@@ -60,16 +60,29 @@ namespace Gtamp.Client.Core
         /// that is not judged at all rather than judged against the wrong report.
         /// </para>
         /// </summary>
+        /// <summary>
+        /// How often a refused model change is retried, and how many times before it is
+        /// given up on. Four times a second for ten seconds: long enough to cover a
+        /// model streaming in or a player getting out of a car, short enough that a
+        /// model this client does not have is reported while the player is still
+        /// wondering why nothing happened.
+        /// </summary>
+        private const double ModelRetryIntervalSeconds = 0.25d;
+
+        private const int MaxModelAttempts = 40;
+
         private readonly ReportedState[] _reportHistory = new ReportedState[64];
 
         private readonly struct ReportedState
         {
-            public ReportedState(uint sequence, NetVector3 position, int health, byte wantedLevel)
+            public ReportedState(
+                uint sequence, NetVector3 position, int health, byte wantedLevel, uint modelHash)
             {
                 Sequence = sequence;
                 Position = position;
                 Health = health;
                 WantedLevel = wantedLevel;
+                ModelHash = modelHash;
             }
 
             public uint Sequence { get; }
@@ -79,6 +92,8 @@ namespace Gtamp.Client.Core
             public int Health { get; }
 
             public byte WantedLevel { get; }
+
+            public uint ModelHash { get; }
         }
 
         private double _lastStateSendTime;
@@ -89,7 +104,17 @@ namespace Gtamp.Client.Core
         private NetVector3 _lastReportedPosition;
         private int _lastReportedHealth;
         private byte _lastReportedWantedLevel;
+        private uint _lastReportedModelHash;
         private bool _hasReportedState;
+
+        /// <summary>
+        /// A model the server set that this client has not managed to apply yet. The
+        /// game refuses the change while the player is in a vehicle or dead, and the
+        /// model itself may still be streaming, so it is retried rather than dropped.
+        /// </summary>
+        private uint _pendingModelHash;
+        private double _nextModelAttempt;
+        private int _modelAttempts;
 
         public MultiplayerClient(
             ClientConfig config,
@@ -271,6 +296,11 @@ namespace Gtamp.Client.Core
         /// so it stays at zero through a whole ordinary session.
         /// </summary>
         public int WantedLevelCorrectionsApplied { get; private set; }
+
+        /// <summary>Models the server has set for this player, and models it gave up on.</summary>
+        public int ModelChangesApplied { get; private set; }
+
+        public int ModelChangesRefused { get; private set; }
 
         /// <summary>
         /// Rounds this client has reported firing, and rounds it has drawn for other
@@ -698,6 +728,7 @@ namespace Gtamp.Client.Core
             LocalPlayerSample local = Bridge.SampleLocalPlayer();
 
             ApplyAuthoritativeWantedLevel(authoritative, local);
+            ApplyAuthoritativeModel(authoritative, local);
 
             // Compared against what was last *reported*, not against where the player
             // is *now*.
@@ -757,7 +788,8 @@ namespace Gtamp.Client.Core
                 _serverAcknowledgedSequence,
                 authoritative.Position,
                 authoritative.Health,
-                _lastReportedWantedLevel);
+                _lastReportedWantedLevel,
+                _lastReportedModelHash);
 
             _lastReportedPosition = authoritative.Position;
             _lastReportedHealth = authoritative.Health;
@@ -827,8 +859,112 @@ namespace Gtamp.Client.Core
             {
                 ReportedState answered = _reportHistory[_serverAcknowledgedSequence % _reportHistory.Length];
                 _reportHistory[_serverAcknowledgedSequence % _reportHistory.Length] = new ReportedState(
-                    answered.Sequence, answered.Position, answered.Health, authoritative.WantedLevel);
+                    answered.Sequence,
+                    answered.Position,
+                    answered.Health,
+                    authoritative.WantedLevel,
+                    answered.ModelHash);
             }
+        }
+
+        /// <summary>
+        /// Applies a model the server set for the local player.
+        /// <para>
+        /// The client reports its own model upward and the server takes it, which is
+        /// right until the server has a model of its own: a restored save, or a mod
+        /// handing out a skin. Neither reached the game. A player's saved model was
+        /// read out of the database on connect and overwritten by their client's next
+        /// update, and a server that set a skin watched its own value disappear.
+        /// </para>
+        /// <para>
+        /// Unlike the wanted level this cannot always be done at the moment it is
+        /// asked: the game builds a new ped for the player, refuses to do so sanely in
+        /// a vehicle or dead, and may not have the model streamed in yet. So it is
+        /// retried on a cooldown and then given up on <i>out loud</i> — a skin that
+        /// never arrives is a missing mod, and the player should be told rather than
+        /// left looking like somebody else to everyone but themselves.
+        /// </para>
+        /// </summary>
+        private void ApplyAuthoritativeModel(PlayerEntity authoritative, LocalPlayerSample local)
+        {
+            if (_pendingModelHash != 0)
+            {
+                RetryPendingModel(local);
+                return;
+            }
+
+            if (authoritative.ModelHash == 0)
+            {
+                return;
+            }
+
+            uint reported;
+            if (_hasReportedState)
+            {
+                ReportedState answered = _reportHistory[_serverAcknowledgedSequence % _reportHistory.Length];
+                if (answered.Sequence != _serverAcknowledgedSequence || _serverAcknowledgedSequence == 0)
+                {
+                    // Nothing of ours confirmed yet: a difference here is as likely to
+                    // be the server not having heard us. Same rule as the wanted level.
+                    return;
+                }
+
+                reported = answered.ModelHash;
+            }
+            else
+            {
+                reported = local.ModelHash;
+            }
+
+            if (authoritative.ModelHash == reported || authoritative.ModelHash == local.ModelHash)
+            {
+                return;
+            }
+
+            _pendingModelHash = authoritative.ModelHash;
+            _nextModelAttempt = 0d;
+            _modelAttempts = 0;
+            RetryPendingModel(local);
+        }
+
+        /// <summary>One attempt at the pending model change, at most four times a second.</summary>
+        private void RetryPendingModel(LocalPlayerSample local)
+        {
+            if (_now < _nextModelAttempt)
+            {
+                return;
+            }
+
+            _nextModelAttempt = _now + ModelRetryIntervalSeconds;
+            _modelAttempts++;
+
+            if (Bridge.TrySetLocalPlayerModel(_pendingModelHash))
+            {
+                Log.Info(
+                    LogCategory.Client,
+                    $"Server set this player's model to 0x{_pendingModelHash:X8}.");
+
+                ModelChangesApplied++;
+                _lastReportedModelHash = _pendingModelHash;
+                _pendingModelHash = 0;
+                return;
+            }
+
+            if (_modelAttempts < MaxModelAttempts)
+            {
+                return;
+            }
+
+            // Given up on, and said so. Silence here is how a player ends up looking
+            // like one character to themselves and another to everyone else.
+            Log.Warning(
+                LogCategory.Client,
+                $"The server set this player's model to 0x{_pendingModelHash:X8} and it could not be " +
+                $"applied after {_modelAttempts} attempts. The model is probably not installed on this " +
+                "client; other players see the model the server has, not the one on screen here.");
+
+            ModelChangesRefused++;
+            _pendingModelHash = 0;
         }
 
         private void RequestResync(string reason)
@@ -997,11 +1133,13 @@ namespace Gtamp.Client.Core
             Connection.Peer?.Send(NetMessageType.ClientStateUpdate, update.Serialize(), DeliveryMethod.Unreliable);
 
             _reportHistory[_updateSequence % _reportHistory.Length] =
-                new ReportedState(_updateSequence, sample.Position, sample.Health, sample.WantedLevel);
+                new ReportedState(
+                    _updateSequence, sample.Position, sample.Health, sample.WantedLevel, sample.ModelHash);
 
             _lastReportedPosition = sample.Position;
             _lastReportedHealth = sample.Health;
             _lastReportedWantedLevel = sample.WantedLevel;
+            _lastReportedModelHash = sample.ModelHash;
             _hasReportedState = true;
         }
 

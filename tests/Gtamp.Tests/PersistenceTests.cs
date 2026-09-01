@@ -277,6 +277,67 @@ namespace Gtamp.Tests
             Assert.Equal(3, restarted.Server.World.GetPlayer(aliceAgain.Client.LocalEntityId)!.WantedLevel);
         }
 
+        /// <summary>
+        /// The model comes back too, and reaches the game rather than the database only.
+        /// <para>
+        /// A restored model was written into the player's entity on connect and
+        /// overwritten by their client's first update — which reports whatever character
+        /// single player happened to leave the game as. Other players saw the restored
+        /// model for the fraction of a second it survived.
+        /// </para>
+        /// </summary>
+        [Fact]
+        public void APlayersModelSurvivesARestartAndReachesTheirGame()
+        {
+            using var key = Gtamp.Shared.Security.IdentityKey.Create();
+            string identity = key.ExportPrivateBlob();
+            const uint Skin = 0x9C9EFFD8u;
+
+            var firstConfig = new ServerConfig
+            {
+                ServerName = "model-restart-test",
+                PersistenceEnabled = true,
+                DatabasePath = _databasePath,
+                SaveIntervalSeconds = 0,
+                StartTime = "12:00",
+            };
+
+            using (var harness = new TestHarness(firstConfig, new SqlitePersistenceStore(_databasePath)))
+            {
+                TestClient alice = harness.CreateClient("alice", identity);
+                alice.Client.Connect("127.0.0.1", TestHarness.ServerEndPoint.Port);
+                Assert.True(harness.AdvanceUntil(() => alice.PlayerCount >= 1));
+
+                harness.Advance(1d);
+                alice.Bridge.Sample.ModelHash = Skin;
+                harness.Advance(1d);
+
+                Assert.Equal(Skin, harness.Server.World.GetPlayer(alice.Client.LocalEntityId)!.ModelHash);
+            }
+
+            var secondConfig = new ServerConfig
+            {
+                ServerName = "model-restart-test",
+                PersistenceEnabled = true,
+                DatabasePath = _databasePath,
+                SaveIntervalSeconds = 0,
+                StartTime = "12:00",
+            };
+
+            using var restarted = new TestHarness(secondConfig, new SqlitePersistenceStore(_databasePath));
+
+            // A fresh session, as a new game is: her client reports the default model
+            // until it is told otherwise.
+            TestClient aliceAgain = restarted.CreateClient("alice", identity);
+            aliceAgain.Client.Connect("127.0.0.1", TestHarness.ServerEndPoint.Port);
+            Assert.True(restarted.AdvanceUntil(() => aliceAgain.PlayerCount >= 1));
+
+            Assert.True(restarted.AdvanceUntil(() => aliceAgain.Bridge.LocalModelHash == Skin));
+            restarted.Advance(1d);
+
+            Assert.Equal(Skin, restarted.Server.World.GetPlayer(aliceAgain.Client.LocalEntityId)!.ModelHash);
+        }
+
         [Fact]
         public void EntityIdsAreNeverReusedAfterARestart()
         {

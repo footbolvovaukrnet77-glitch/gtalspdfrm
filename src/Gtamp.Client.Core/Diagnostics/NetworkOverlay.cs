@@ -86,7 +86,8 @@ namespace Gtamp.Client.Diagnostics
             // A resync is recoverable but never routine: it means a delta could not be
             // decoded, which is a version or mod mismatch far more often than congestion.
             lines.Add(new OverlayLine(
-                $"resyncs {client.ResyncsRequested}   corrections {client.CorrectionsApplied}",
+                $"resyncs {client.ResyncsRequested}   corrections {client.CorrectionsApplied}"
+                    + (client.ModelChangesRefused > 0 ? $"   models refused {client.ModelChangesRefused}" : string.Empty),
                 client.ResyncsRequested > 0 ? OverlaySeverity.Bad : OverlaySeverity.Normal));
 
             lines.Add(new OverlayLine(

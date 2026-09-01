@@ -88,6 +88,31 @@ namespace Gtamp.Tests
 
         public int LocalWantedLevelApplications { get; private set; }
 
+        /// <summary>
+        /// Models this client has been asked to become. <see cref="ModelChangeRefusals"/>
+        /// is how many were refused before one was accepted, so a test can make the
+        /// game say "not now" the way a vehicle or a streaming model does.
+        /// </summary>
+        public uint LocalModelHash { get; private set; }
+
+        public int ModelChangeRefusals { get; set; }
+
+        public int ModelChangeAttempts { get; private set; }
+
+        public bool TrySetLocalPlayerModel(uint modelHash)
+        {
+            ModelChangeAttempts++;
+            if (ModelChangeRefusals > 0)
+            {
+                ModelChangeRefusals--;
+                return false;
+            }
+
+            LocalModelHash = modelHash;
+            Sample.ModelHash = modelHash;
+            return true;
+        }
+
         public void SetLocalWantedLevel(int level)
         {
             LocalWantedLevel = level;

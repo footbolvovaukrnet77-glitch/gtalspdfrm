@@ -108,6 +108,15 @@ carrying it has been written. The hold ends when the client acknowledges that
 snapshot, or on the same timeout the others use, so a client that cannot apply the
 level does not freeze the field for the rest of the session.
 
+The player's model is held the same way, on a longer timeout, because applying one
+is not a single frame's work on the client: `SET_PLAYER_MODEL` builds a new ped, the
+model has to stream in first, and the game will not do it sanely while the player is
+in a vehicle or dead. The client retries four times a second for ten seconds and
+then gives up **out loud** — a warning in the log, a counter in `net` and in the
+diagnostic bundle — because a model that never applies means this client does not
+have it installed, and the player would otherwise look like one character to
+themselves and another to everyone else with nothing on screen to say so.
+
 So neither. The server records the snapshot id that carries the move and ignores
 that client's state updates until one arrives acknowledging it:
 
@@ -376,7 +385,7 @@ Roles are `Player`, `Moderator`, `Admin`, persisted per identity.
 | Role | May |
 | --- | --- |
 | `Player` | nothing over the network |
-| `Moderator` | inspect, announce, kick, ban, move/kill/respawn players, set a wanted level |
+| `Moderator` | inspect, announce, kick, ban, move/kill/respawn players, set a wanted level or model |
 | `Admin` | all of that, plus the world clock and weather, saving, roles and shutdown |
 
 A moderator cannot change roles, including their own: a moderator who can promote
