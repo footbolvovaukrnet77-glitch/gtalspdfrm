@@ -223,6 +223,14 @@ burst, bits 8-15 broken or punctured.
 combat target, a relationship group and a free-form group id, so a mod can keep a
 set of peds together without inventing its own registry.
 
+**Its behaviour fields are replicated and not applied.** `Behaviour`, `AlertLevel`,
+`TaskHash`, `ScenarioHash`, `CombatTargetId`, `RelationshipGroupHash` and `GroupId`
+cross the wire and nothing in the game layer reads them. That is not an oversight
+being hidden: an NPC's *decisions* belong to the server, and the server has no AI
+that produces them, so there is nothing to apply yet. They are listed here rather
+than left looking supported — a field that describes nothing is worse than an
+absent one, which is the same rule the reserved entity ids follow.
+
 `RemoteEntityManager` creates and drives a ped for each one, through the same
 `RemotePedController` a player's ped uses — the gait selection, the correction
 thresholds, the ragdoll pose and the death handling are the same problem, and a

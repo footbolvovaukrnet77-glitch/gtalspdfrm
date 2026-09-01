@@ -199,9 +199,16 @@ namespace Gtamp.Tests
             return handle;
         }
 
-        public void ApplyRemoteVehicle(int handle, in RemoteVehicleFrame frame)
+        /// <summary>Trailer handle each vehicle was last told to tow, 0 for none.</summary>
+        public Dictionary<int, int> Towing { get; } = new Dictionary<int, int>();
+
+        /// <summary>Attachment parent handle each object was last told to hang off, 0 for none.</summary>
+        public Dictionary<int, int> AttachedTo { get; } = new Dictionary<int, int>();
+
+        public void ApplyRemoteVehicle(int handle, in RemoteVehicleFrame frame, int trailerHandle)
         {
             VehicleFrames[handle] = frame;
+            Towing[handle] = trailerHandle;
             if (Vehicles.TryGetValue(handle, out VehicleEntity? vehicle))
             {
                 vehicle.Position = frame.Position;
@@ -281,8 +288,9 @@ namespace Gtamp.Tests
             return handle;
         }
 
-        public void ApplyRemoteObject(int handle, ObjectEntity state)
+        public void ApplyRemoteObject(int handle, ObjectEntity state, int attachParentHandle)
         {
+            AttachedTo[handle] = attachParentHandle;
             if (Objects.TryGetValue(handle, out ObjectEntity? prop))
             {
                 prop.Position = state.Position;

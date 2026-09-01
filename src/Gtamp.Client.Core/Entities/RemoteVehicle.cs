@@ -24,7 +24,6 @@ namespace Gtamp.Client.Entities
         public float EngineRpm;
         public sbyte Gear;
         public VehicleFlags Flags;
-        public byte RadioStation;
         public VehicleDoorStates Doors;
         public byte Windows;
         public VehicleTireStates Tires;
@@ -104,7 +103,6 @@ namespace Gtamp.Client.Entities
             frame.DirtLevel = after.DirtLevel;
             frame.Gear = after.Gear;
             frame.Flags = after.Flags;
-            frame.RadioStation = after.RadioStation;
             frame.Doors = after.Doors;
             frame.Windows = after.Windows;
             frame.Tires = after.Tires;
@@ -122,6 +120,7 @@ namespace Gtamp.Client.Entities
             || previous.Extras != current.Extras
             || previous.NeonColor != current.NeonColor
             || previous.NeonLayout != current.NeonLayout
+            || previous.RadioStation != current.RadioStation
             || previous.LicensePlate != current.LicensePlate
             || previous.Mods.Count != current.Mods.Count;
     }

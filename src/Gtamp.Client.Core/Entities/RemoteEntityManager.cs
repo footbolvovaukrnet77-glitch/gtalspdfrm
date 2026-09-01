@@ -131,7 +131,38 @@ namespace Gtamp.Client.Entities
 
             // Objects are placed, not interpolated: a prop that moves smoothly is a
             // physics object, and a physics object has an owner reporting it.
-            _bridge.ApplyRemoteObject(handle, state);
+            // An object may hang off a vehicle, a ped or another object. Whichever it
+            // is, only this class knows what the local game has built for that id.
+            _bridge.ApplyRemoteObject(handle, state, ResolveAttachParent(state.AttachedToId));
+        }
+
+        /// <summary>
+        /// Local handle of whatever an object is attached to, or 0.
+        /// <para>
+        /// Objects attach to vehicles, to peds and to other objects, so all three
+        /// tables are searched. `ResolveVehicleHandle` on the player manager covers a
+        /// vehicle this client owns; an object's parent is always a replicated entity,
+        /// because an object the client owns is not driven from here at all.
+        /// </para>
+        /// </summary>
+        private int ResolveAttachParent(EntityId id)
+        {
+            if (!id.IsValid)
+            {
+                return 0;
+            }
+
+            if (_vehicles.TryGetValue(id, out RemoteVehicle? vehicle))
+            {
+                return vehicle.VehicleHandle;
+            }
+
+            if (_npcs.TryGetValue(id, out RemoteNpc? npc))
+            {
+                return npc.PedHandle;
+            }
+
+            return _objects.TryGetValue(id, out int handle) ? handle : 0;
         }
 
         private void RemoveVanished(EntitySnapshotView view)
@@ -214,7 +245,13 @@ namespace Gtamp.Client.Entities
                 }
 
                 ApplyAppearanceIfChanged(vehicle);
-                _bridge.ApplyRemoteVehicle(vehicle.VehicleHandle, in frame);
+                VehicleEntity? latestState = vehicle.Latest;
+                int trailerHandle = latestState != null && latestState.TrailerId.IsValid
+                    && _vehicles.TryGetValue(latestState.TrailerId, out RemoteVehicle? trailer)
+                    ? trailer.VehicleHandle
+                    : 0;
+
+                _bridge.ApplyRemoteVehicle(vehicle.VehicleHandle, in frame, trailerHandle);
             }
 
             RenderNpcs(renderTime);

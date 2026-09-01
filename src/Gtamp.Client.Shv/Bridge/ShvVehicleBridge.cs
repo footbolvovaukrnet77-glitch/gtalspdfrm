@@ -26,6 +26,26 @@ namespace Gtamp.Client.Shv.Bridge
     /// </summary>
     public sealed class ShvVehicleBridge
     {
+        /// <summary>Neon strip bits, matching <see cref="VehicleEntity.NeonLayout"/>'s documented order.</summary>
+        private const byte NeonLeft = 1 << 0;
+        private const byte NeonRight = 1 << 1;
+        private const byte NeonFront = 1 << 2;
+        private const byte NeonBack = 1 << 3;
+
+        /// <summary>
+        /// Radio index meaning "off". 255 rather than 0, because 0 is a real station
+        /// and treating it as silence would mute one station for everybody.
+        /// </summary>
+        private const byte RadioOff = 255;
+
+        /// <summary>
+        /// Hitch search radius the trailer native takes. Generous: the two vehicles
+        /// are each a round trip out of position when the attach is issued, and a
+        /// radius that just fails leaves the trailer loose with no second attempt
+        /// until the towing state changes again.
+        /// </summary>
+        private const float TrailerHitchRadius = 4f;
+
         private const int DoorCount = 8;
         private const int TireCount = 8;
 
@@ -38,6 +58,12 @@ namespace Gtamp.Client.Shv.Bridge
         /// the rim is the usual one -- is re-applied every frame, which is an argument
         /// with the engine at sixty hertz and looks like flickering.
         /// </summary>
+        /// <summary>Which trailer each replicated vehicle is currently hitched to, so it is attached on change only.</summary>
+        private readonly Dictionary<int, int> _towing = new Dictionary<int, int>();
+
+        /// <summary>Which entity each replicated object is currently attached to.</summary>
+        private readonly Dictionary<int, int> _attachedTo = new Dictionary<int, int>();
+
         private readonly VehicleDamageTracker _damage = new VehicleDamageTracker();
         private readonly Dictionary<int, Prop> _objects = new Dictionary<int, Prop>();
 
@@ -89,7 +115,7 @@ namespace Gtamp.Client.Shv.Bridge
             }
         }
 
-        public void ApplyRemoteVehicle(int handle, in RemoteVehicleFrame frame)
+        public void ApplyRemoteVehicle(int handle, in RemoteVehicleFrame frame, int trailerHandle)
         {
             if (!_vehicles.TryGetValue(handle, out Vehicle vehicle) || !vehicle.Exists())
             {
@@ -129,6 +155,7 @@ namespace Gtamp.Client.Shv.Bridge
                 Function.Call(Hash.SET_VEHICLE_ENGINE_ON, vehicle.Handle, engineRunning, true, true);
             }
 
+            ApplyTrailer(vehicle, trailerHandle);
             ApplyLights(vehicle, frame.Flags);
             VehicleDamageTracker.Change damage = _damage.Observe(handle, frame.Doors, frame.Windows, frame.Tires);
             if (damage.Doors)
@@ -261,6 +288,7 @@ namespace Gtamp.Client.Shv.Bridge
             }
 
             Function.Call(Hash.SET_VEHICLE_MOD_KIT, vehicle.Handle, 0);
+            ApplyNeonAndRadio(vehicle, state);
 
             VehicleModCollection mods = vehicle.Mods;
             mods.PrimaryColor = (VehicleColor)state.Colors.Primary;
@@ -303,6 +331,173 @@ namespace Gtamp.Client.Shv.Bridge
             }
         }
 
+        /// <summary>
+        /// Neon strips: which are lit, and what colour.
+        /// <para>
+        /// <c>HasNeonLight</c> is asked first because a model without the strip
+        /// answers <c>IsNeonLightsOn</c> with something meaningless, and reporting
+        /// that would light up strips on every other player's copy of a car that has
+        /// none.
+        /// </para>
+        /// </summary>
+        private static void ReadNeon(Vehicle vehicle, VehicleEntity into)
+        {
+            VehicleModCollection neon = vehicle.Mods;
+            byte layout = 0;
+            if (neon.HasNeonLight(VehicleNeonLight.Left) && neon.IsNeonLightsOn(VehicleNeonLight.Left))
+            {
+                layout |= NeonLeft;
+            }
+
+            if (neon.HasNeonLight(VehicleNeonLight.Right) && neon.IsNeonLightsOn(VehicleNeonLight.Right))
+            {
+                layout |= NeonRight;
+            }
+
+            if (neon.HasNeonLight(VehicleNeonLight.Front) && neon.IsNeonLightsOn(VehicleNeonLight.Front))
+            {
+                layout |= NeonFront;
+            }
+
+            if (neon.HasNeonLight(VehicleNeonLight.Back) && neon.IsNeonLightsOn(VehicleNeonLight.Back))
+            {
+                layout |= NeonBack;
+            }
+
+            into.NeonLayout = layout;
+
+            System.Drawing.Color colour = neon.NeonLightsColor;
+            into.NeonColor = unchecked((uint)((colour.R << 16) | (colour.G << 8) | colour.B));
+        }
+
+        /// <summary>
+        /// The station the local player is listening to, or <see cref="RadioOff"/>.
+        /// <para>
+        /// There is no native for "what station is <em>this vehicle</em> playing"; the
+        /// radio is a property of the listening player. That is exactly right here
+        /// anyway — the only vehicle this client reports is the one it is driving.
+        /// </para>
+        /// </summary>
+        private static byte ReadRadioStation(Vehicle vehicle)
+        {
+            if (!Function.Call<bool>(Hash.IS_VEHICLE_RADIO_ON, vehicle.Handle))
+            {
+                return RadioOff;
+            }
+
+            int index = Function.Call<int>(Hash.GET_PLAYER_RADIO_STATION_INDEX);
+            return index < 0 || index >= RadioOff ? RadioOff : (byte)index;
+        }
+
+        /// <summary>
+        /// Applies the neon strips and the radio station.
+        /// <para>
+        /// Both were replicated from the day <c>VehicleEntity</c> was written and
+        /// neither was ever read from the game or written to it: the fields travelled
+        /// as their defaults, cost a delta bit and described nothing. Every replicated
+        /// car was silent, with its neon off, whatever its owner had set.
+        /// </para>
+        /// </summary>
+        private static void ApplyNeonAndRadio(Vehicle vehicle, VehicleEntity state)
+        {
+            System.Drawing.Color colour = System.Drawing.Color.FromArgb(
+                (int)((state.NeonColor >> 16) & 0xFF),
+                (int)((state.NeonColor >> 8) & 0xFF),
+                (int)(state.NeonColor & 0xFF));
+
+            VehicleModCollection neon = vehicle.Mods;
+            if (neon.HasNeonLights)
+            {
+                neon.NeonLightsColor = colour;
+                SetNeon(neon, VehicleNeonLight.Left, (state.NeonLayout & NeonLeft) != 0);
+                SetNeon(neon, VehicleNeonLight.Right, (state.NeonLayout & NeonRight) != 0);
+                SetNeon(neon, VehicleNeonLight.Front, (state.NeonLayout & NeonFront) != 0);
+                SetNeon(neon, VehicleNeonLight.Back, (state.NeonLayout & NeonBack) != 0);
+            }
+
+            ApplyRadioStation(vehicle, state.RadioStation);
+        }
+
+        private static void SetNeon(VehicleModCollection neon, VehicleNeonLight light, bool on)
+        {
+            if (neon.HasNeonLight(light))
+            {
+                neon.SetNeonLightsOn(light, on);
+            }
+        }
+
+        /// <summary>
+        /// Tunes a replicated vehicle's radio by station <em>name</em>, resolved from
+        /// the index on this machine.
+        /// <para>
+        /// The index is not a stable identity: a client with a radio mod installed
+        /// numbers its stations differently from one without, so an index applied
+        /// directly plays the wrong station or none. Resolving it to a name here and
+        /// dropping it when the name comes back empty means an unknown station leaves
+        /// the radio alone instead of throwing or retuning to something arbitrary —
+        /// the failure GTACoOp records as "Fix Sync error if radiostation doesn't
+        /// exist".
+        /// </para>
+        /// </summary>
+        private static void ApplyRadioStation(Vehicle vehicle, byte station)
+        {
+            if (station == RadioOff)
+            {
+                Function.Call(Hash.SET_VEHICLE_RADIO_ENABLED, vehicle.Handle, false);
+                return;
+            }
+
+            string name = Function.Call<string>(Hash.GET_RADIO_STATION_NAME, (int)station);
+            if (string.IsNullOrEmpty(name))
+            {
+                // A station this client does not have. Silence is wrong; the wrong
+                // station is worse, and an exception is worst of all.
+                return;
+            }
+
+            Function.Call(Hash.SET_VEHICLE_RADIO_ENABLED, vehicle.Handle, true);
+            Function.Call(Hash.SET_VEH_RADIO_STATION, vehicle.Handle, name);
+        }
+
+        /// <summary>
+        /// Hitches or unhitches a replicated trailer.
+        /// <para>
+        /// <c>TrailerId</c> travelled from the first version of the vehicle entity and
+        /// nothing ever attached anything: a lorry and its trailer replicated as two
+        /// unrelated vehicles, each corrected to its own reported position, which is
+        /// the same trailer jack-knifing through the cab on every screen but the
+        /// driver's.
+        /// </para>
+        /// <para>
+        /// Attach only on a change. <c>ATTACH_VEHICLE_TO_TRAILER</c> snaps the trailer
+        /// to the hitch, so calling it every frame pins it there rigidly and it stops
+        /// swinging behind the cab at all.
+        /// </para>
+        /// </summary>
+        private void ApplyTrailer(Vehicle vehicle, int trailerHandle)
+        {
+            _towing.TryGetValue(vehicle.Handle, out int towed);
+            if (towed == trailerHandle)
+            {
+                return;
+            }
+
+            if (trailerHandle == 0)
+            {
+                Function.Call(Hash.DETACH_VEHICLE_FROM_TRAILER, vehicle.Handle);
+                _towing.Remove(vehicle.Handle);
+                return;
+            }
+
+            if (!_vehicles.TryGetValue(trailerHandle, out Vehicle trailer) || !trailer.Exists())
+            {
+                return;
+            }
+
+            Function.Call(Hash.ATTACH_VEHICLE_TO_TRAILER, vehicle.Handle, trailer.Handle, TrailerHitchRadius);
+            _towing[vehicle.Handle] = trailerHandle;
+        }
+
         /// <summary>Reads a vehicle this client owns so its state can be reported to the server.</summary>
         public bool TryReadVehicle(int handle, VehicleEntity into)
         {
@@ -335,6 +530,9 @@ namespace Gtamp.Client.Shv.Bridge
             VehicleModCollection mods = vehicle.Mods;
             into.LicensePlate = mods.LicensePlate ?? string.Empty;
             into.PlateType = (byte)mods.LicensePlateStyle;
+
+            ReadNeon(vehicle, into);
+            into.RadioStation = ReadRadioStation(vehicle);
 
             into.Colors = new VehicleColors(
                 (byte)mods.PrimaryColor,
@@ -585,7 +783,7 @@ namespace Gtamp.Client.Shv.Bridge
             }
         }
 
-        public void ApplyRemoteObject(int handle, ObjectEntity state)
+        public void ApplyRemoteObject(int handle, ObjectEntity state, int attachParentHandle)
         {
             if (!_objects.TryGetValue(handle, out Prop prop) || !prop.Exists())
             {
@@ -602,6 +800,63 @@ namespace Gtamp.Client.Shv.Bridge
             prop.IsVisible = state.HasFlag(ObjectFlags.Visible);
             prop.IsCollisionEnabled = state.HasFlag(ObjectFlags.HasCollision);
             prop.IsPositionFrozen = state.HasFlag(ObjectFlags.Frozen);
+
+            ApplyAttachment(prop, state, attachParentHandle);
+        }
+
+        /// <summary>
+        /// Attaches a replicated object to whatever it says it is attached to.
+        /// <para>
+        /// <c>AttachedToId</c>, <c>AttachOffset</c> and <c>AttachBone</c> were
+        /// declared, serialised, delta encoded and persisted, and nothing ever called
+        /// an attach native: a briefcase carried by a player, a light bar on a car, a
+        /// crate on a forklift all sat at their last replicated world position while
+        /// the thing carrying them drove off.
+        /// </para>
+        /// <para>
+        /// The position write above and an attachment are mutually exclusive — the
+        /// game ignores coordinates on an attached entity — so the order matters only
+        /// for the frame an object detaches on, where the coordinate wins and the
+        /// object lands where it was left.
+        /// </para>
+        /// </summary>
+        private void ApplyAttachment(Prop prop, ObjectEntity state, int attachParentHandle)
+        {
+            _attachedTo.TryGetValue(prop.Handle, out int attached);
+
+            if (!state.IsAttached || attachParentHandle == 0)
+            {
+                // Attached to something this client does not have is the same as not
+                // attached, as far as this machine can act on it.
+                if (attached != 0)
+                {
+                    Function.Call(Hash.DETACH_ENTITY, prop.Handle, true, true);
+                    _attachedTo.Remove(prop.Handle);
+                }
+
+                return;
+            }
+
+            if (attached == attachParentHandle)
+            {
+                return;
+            }
+
+            Function.Call(
+                Hash.ATTACH_ENTITY_TO_ENTITY,
+                prop.Handle,
+                attachParentHandle,
+                (int)state.AttachBone,
+                state.AttachOffset.X, state.AttachOffset.Y, state.AttachOffset.Z,
+                0f, 0f, 0f,
+                false,  // p9
+                false,  // useSoftPinning
+                state.HasFlag(ObjectFlags.HasCollision),
+                false,  // isPed
+                2,      // vertexIndex: rotation order, matching SET_ENTITY_ROTATION above
+                true);  // fixedRot
+
+            _attachedTo[prop.Handle] = attachParentHandle;
         }
 
         public void DestroyRemoteObject(int handle)

@@ -114,7 +114,11 @@ namespace Gtamp.Client.Core
         int CreateRemoteVehicle(uint modelHash, NetVector3 position, float heading);
 
         /// <summary>Drives one replicated vehicle for this frame.</summary>
-        void ApplyRemoteVehicle(int handle, in RemoteVehicleFrame frame);
+        /// <summary>
+        /// Drives one replicated vehicle for this frame. <paramref name="trailerHandle"/>
+        /// is the local handle of the trailer it is towing, or 0.
+        /// </summary>
+        void ApplyRemoteVehicle(int handle, in RemoteVehicleFrame frame, int trailerHandle);
 
         /// <summary>Applies paint, livery, mods and plate. Called only when they change.</summary>
         void ApplyRemoteVehicleAppearance(int handle, VehicleEntity state);
@@ -142,7 +146,12 @@ namespace Gtamp.Client.Core
 
         int CreateRemoteObject(uint modelHash, NetVector3 position, float heading);
 
-        void ApplyRemoteObject(int handle, ObjectEntity state);
+        /// <summary>
+        /// Applies one replicated object. <paramref name="attachParentHandle"/> is the
+        /// local handle of the entity it is attached to, resolved by the caller, or 0
+        /// when it is attached to nothing this client has.
+        /// </summary>
+        void ApplyRemoteObject(int handle, ObjectEntity state, int attachParentHandle);
 
         void DestroyRemoteObject(int handle);
 
