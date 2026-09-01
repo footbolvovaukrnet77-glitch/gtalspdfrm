@@ -28,6 +28,21 @@ namespace Gtamp.Shared.Entities
         Parachuting = 1 << 15,
         InCover = 1 << 16,
         Invincible = 1 << 17,
+
+        /// <summary>
+        /// The character is alight. Read from <c>IS_ENTITY_ON_FIRE</c> and written with
+        /// <c>START_ENTITY_FIRE</c>/<c>STOP_ENTITY_FIRE</c>, which is the rare case of a
+        /// state the engine both answers and accepts — most of the flags above are one
+        /// or the other, and that asymmetry is why several of them are not applied.
+        /// <para>
+        /// Applied on the transition, both ways: fire is a mode, and re-lighting a ped
+        /// that is already burning restarts the effect every frame. It is visual only
+        /// here — a replicated ped is created fire-proof, so it burns without being
+        /// harmed, and the health that results is the server&#39;s to arbitrate from the
+        /// victim&#39;s own report exactly as it is for a bullet.
+        /// </para>
+        /// </summary>
+        OnFire = 1 << 18,
     }
 
     /// <summary>Coarse locomotion state; the client picks the matching animation set.</summary>

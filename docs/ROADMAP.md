@@ -248,7 +248,7 @@ machine and real clients, and is not claimed here.
 | Step | What it guards |
 | --- | --- |
 | `dotnet build -c Release -warnaserror` | The zero-warning claim. Without `-warnaserror` it decays the first time a warning lands that nobody scrolls up far enough to see |
-| `dotnet test -c Release` | All 558 tests, with the `.trx` uploaded as an artifact so a failure is readable without re-running anything |
+| `dotnet test -c Release` | All 561 tests, with the `.trx` uploaded as an artifact so a failure is readable without re-running anything |
 | `python3 tools/check-docs.py` | Dead relative links, `#anchors` naming headings that no longer exist, any document that lost its counterpart in the other language, and the three things the documentation asserts about the code: the protocol version, the test count, and the `client.ini` example. All three had drifted before the checks existed |
 
 The whole solution compiles on `ubuntu-latest`, the `net48` client included,
@@ -449,7 +449,14 @@ enumerate them or ask where one happened. Detecting an arbitrary explosion would
 polling dozens of types against guessed spheres every frame and still not knowing the
 position.
 
-❌ **projectile, trajectory, fire, throwable.** The projectile design decision is
+⏸ **fire**, on characters. A burning player or NPC burns on every screen:
+`PlayerFlags.OnFire` is read from `IS_ENTITY_ON_FIRE` and applied on the transition,
+both ways, with `START_ENTITY_FIRE`/`STOP_ENTITY_FIRE`. It is one of the few states
+the engine both answers and accepts, which is exactly why it could be done — most of
+the unapplied posture flags are one or the other. World fire (`START_SCRIPT_FIRE`, a
+fire that belongs to a place rather than an entity) is not done.
+
+❌ **projectile, trajectory, throwable.** The projectile design decision is
 taken and recorded below. A launcher shot is deliberately not echoed as an explosion:
 the shooter knows the muzzle and the aim point but not where the rocket actually
 lands, and drawing the fireball at the aim point after a guessed flight time would put

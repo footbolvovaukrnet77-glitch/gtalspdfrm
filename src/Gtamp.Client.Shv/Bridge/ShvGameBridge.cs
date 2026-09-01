@@ -1013,6 +1013,24 @@ namespace Gtamp.Client.Shv.Bridge
                 Function.Call(Hash.SET_PED_STEALTH_MOVEMENT, ped.Handle, crouching, 0);
             }
 
+            // Fire is a mode, not a frame: START_ENTITY_FIRE on a ped that is already
+            // alight restarts the effect, so a burning player would flicker rather than
+            // burn. Both directions are applied — a player who puts themselves out has
+            // to stop burning on every other screen too, and there is no other signal
+            // that says so.
+            //
+            // A replicated ped is created fire-proof, so this is the flame and nothing
+            // else. Any health it costs is reported by the victim's own client and
+            // arbitrated by the server, exactly as a bullet is.
+            bool onFire = (command.Flags & PlayerFlags.OnFire) != 0;
+            if (state.OnFire != onFire)
+            {
+                state.OnFire = onFire;
+                Function.Call(
+                    onFire ? Hash.START_ENTITY_FIRE : Hash.STOP_ENTITY_FIRE,
+                    ped.Handle);
+            }
+
             bool reloading = (command.Flags & PlayerFlags.Reloading) != 0;
             if (reloading && !state.Reloading)
             {
@@ -1812,6 +1830,11 @@ namespace Gtamp.Client.Shv.Bridge
                 flags |= PlayerFlags.Invincible;
             }
 
+            if (ped.IsOnFire)
+            {
+                flags |= PlayerFlags.OnFire;
+            }
+
             return flags;
         }
 
@@ -1866,6 +1889,9 @@ namespace Gtamp.Client.Shv.Bridge
             public float TaskBlend;
             /// <summary>Stealth movement is a mode, so it is written on change rather than every frame.</summary>
             public bool Crouching;
+
+            /// <summary>Alight or not, written on change for the same reason.</summary>
+            public bool OnFire;
 
             /// <summary>Whether the reload task has already been issued for the reload in progress.</summary>
             public bool Reloading;

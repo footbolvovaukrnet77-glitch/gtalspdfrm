@@ -125,8 +125,8 @@ appearance changes at spawn and when a player changes clothes — not per frame.
 
 ### Every posture flag, and what actually applies it
 
-Eighteen flags are sampled from the local player and replicated. That is not the
-same as eighteen flags being *used*, and the difference is exactly the kind of gap
+Nineteen flags are sampled from the local player and replicated. That is not the
+same as nineteen flags being *used*, and the difference is exactly the kind of gap
 that hides for a whole project: the state travels, stores and prints correctly and
 never reaches the ped. So the whole set is listed, applied or not.
 
@@ -148,10 +148,15 @@ never reaches the ped. So the whole set is listed, applied or not.
 | `Parachuting` | **not applied** | Needs the parachute prop, its own task set and a canopy state machine. Scheduled with the wider animation work |
 | `EnteringVehicle` | **not applied** | A ped is seated outright; the entry animation is not played, so a player appears in a car rather than climbing into it |
 | `Invincible` | server-side only | Read by the anti-cheat as a god-mode signal. Never applied to a remote ped — a remote ped is already invincible, because its health comes from the server |
+| `OnFire` | `START_ENTITY_FIRE` / `STOP_ENTITY_FIRE`, on change | One of the few states the engine both answers and accepts: `IS_ENTITY_ON_FIRE` reads it. Both directions are applied, because a player who puts themselves out has to stop burning on every screen and nothing else says so. Visual only — a replicated ped is created fire-proof, so it burns without being harmed and the health that results is arbitrated from the victim's own report, exactly as a bullet is |
 
-Six applied, one superseded, one server-side, ten not applied. The ten are a real
+Seven applied, one superseded, one server-side, ten not applied. The ten are a real
 gap and are stated as one; each is here because applying it badly is visibly worse
 than not applying it, not because it was overlooked.
+
+The asymmetry is worth naming, because it is what decides most of that table: GTA V
+will usually *tell* you a state or *accept* one, and rarely both. Fire is the
+exception, which is why it could be added at all.
 
 ### The ragdoll pose
 

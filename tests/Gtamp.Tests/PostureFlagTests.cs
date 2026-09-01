@@ -81,5 +81,73 @@ namespace Gtamp.Tests
             Assert.Equal(RemotePedAction.Walk, command.Action);
             Assert.True((command.Flags & PlayerFlags.Crouching) != 0);
         }
+        /// <summary>
+        /// Fire is one of the few states GTA V both answers and accepts:
+        /// <c>IS_ENTITY_ON_FIRE</c> reads it, <c>START_ENTITY_FIRE</c> and
+        /// <c>STOP_ENTITY_FIRE</c> write it. Most of the flags beside it are one or the
+        /// other, which is why several are replicated and deliberately not applied.
+        /// </summary>
+        [Fact]
+        public void BurningTravelsToTheCommandLikeAnyOtherPosture()
+        {
+            RemotePedCommand command = RemotePedController.Decide(
+                Frame(PlayerFlags.OnFire), new NetVector3(10f, 10f, 30f));
+
+            Assert.True((command.Flags & PlayerFlags.OnFire) != 0);
+        }
+
+        /// <summary>
+        /// A duplicated bit makes two unrelated states the same state. `VehicleFlags`
+        /// has had this check for a while and `PlayerFlags` — which is larger and older
+        /// — had none, so a hand-written shift could collide in silence.
+        /// </summary>
+        [Fact]
+        public void EveryPlayerFlagHasADistinctBit()
+        {
+            var seen = new System.Collections.Generic.Dictionary<uint, string>();
+            foreach (PlayerFlags flag in System.Enum.GetValues(typeof(PlayerFlags)))
+            {
+                if (flag == PlayerFlags.None)
+                {
+                    continue;
+                }
+
+                uint bit = (uint)flag;
+                Assert.False(
+                    seen.ContainsKey(bit),
+                    $"{flag} shares bit {bit} with {(seen.TryGetValue(bit, out string? other) ? other : "?")}");
+                seen[bit] = flag.ToString();
+            }
+
+            Assert.Equal(19, seen.Count);
+        }
+
+        /// <summary>
+        /// And every one of them survives the wire. A flag added past the width of the
+        /// field that carries it would arrive as zero, which reads exactly like a state
+        /// that is simply false.
+        /// </summary>
+        [Fact]
+        public void TheWholeFlagSetSurvivesTheWire()
+        {
+            PlayerFlags all = PlayerFlags.None;
+            foreach (PlayerFlags flag in System.Enum.GetValues(typeof(PlayerFlags)))
+            {
+                all |= flag;
+            }
+
+            var baseline = new PlayerEntity(new EntityId(3));
+            var current = new PlayerEntity(new EntityId(3)) { Flags = all };
+
+            var serializer = new PlayerEntitySerializer();
+            var writer = new Gtamp.Shared.Net.NetWriter(128);
+            serializer.WriteDelta(writer, baseline, current);
+
+            var applied = new PlayerEntity(new EntityId(3));
+            serializer.ReadDelta(new Gtamp.Shared.Net.NetReader(writer.ToArray()), applied);
+
+            Assert.Equal(all, applied.Flags);
+        }
+
     }
 }
