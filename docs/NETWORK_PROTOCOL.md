@@ -393,6 +393,27 @@ snapshot actually answers.
 Regression test:
 `CorrectionTests.AnAcceptedChangeIsNotUndoneByASnapshotThatPredatesIt`.
 
+## Orientation
+
+Orientation travels as three angles — pitch, roll and heading — because that is
+what the game hands over and what it takes back, and the round trip is exact. The
+wire format was never the problem.
+
+Interpolating those three *independently* was. Pitch, roll and yaw are not
+independent axes: blending each on its own passes through orientations on no path
+between the two ends, so a car rolling onto its roof swings its nose through the
+turn on the way, and an entity pitched near vertical loses an axis outright —
+gimbal lock arriving in the interpolator rather than in the format.
+
+`NetQuaternion.LerpEuler` converts both ends to quaternions, spherically
+interpolates and converts back. `FromEuler` and `ToEuler` are exact inverses by
+construction, which is the property that matters: every sample endpoint is
+bit-identical to what the game reported, and any disagreement with the engine's
+own axis order is confined to the frames strictly between two samples.
+
+Peds keep the cheaper single-angle blend. A ped has one axis that matters and no
+pitch or roll to couple it to.
+
 ## Gunshots
 
 A shot is an event, not a state, so it does not travel on the snapshot. The

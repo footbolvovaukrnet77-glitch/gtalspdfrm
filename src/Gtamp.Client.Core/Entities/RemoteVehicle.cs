@@ -86,9 +86,19 @@ namespace Gtamp.Client.Entities
 
             frame.Velocity = NetVector3.Lerp(before.Velocity, after.Velocity, blend);
             frame.AngularVelocity = NetVector3.Lerp(before.AngularVelocity, after.AngularVelocity, blend);
-            frame.Heading = RemotePlayer.LerpAngle(before.Heading, after.Heading, blend);
-            frame.Pitch = RemotePlayer.LerpAngle(before.Pitch, after.Pitch, blend);
-            frame.Roll = RemotePlayer.LerpAngle(before.Roll, after.Roll, blend);
+            // All three axes together, not one at a time. Blending pitch, roll and
+            // yaw independently walks through orientations on no path between the two
+            // ends: a car rolling onto its roof swings its nose through the turn on
+            // the way, and an aircraft pitched near vertical loses an axis outright.
+            NetQuaternion.LerpEuler(
+                before.Pitch, before.Roll, before.Heading,
+                after.Pitch, after.Roll, after.Heading,
+                blend,
+                out float pitch, out float roll, out float yaw);
+
+            frame.Heading = yaw;
+            frame.Pitch = pitch;
+            frame.Roll = roll;
             frame.Steering = Lerp(before.Steering, after.Steering, blend);
             frame.Throttle = Lerp(before.Throttle, after.Throttle, blend);
             frame.Brake = Lerp(before.Brake, after.Brake, blend);
