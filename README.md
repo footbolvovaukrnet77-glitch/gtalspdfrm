@@ -179,6 +179,7 @@ Full walkthrough, including prerequisites and how to uninstall:
 | [docs/DEVELOPER_CONSOLE.md](docs/DEVELOPER_CONSOLE.md) | Console, colours, commands, bug reports |
 | [docs/ROADMAP.md](docs/ROADMAP.md) | Phases 1–12 and what was deliberately not faked |
 | [docs/INSTALL.md](docs/INSTALL.md) | Concrete install, verify and rollback commands |
+| [docs/THIRD_PARTY.md](docs/THIRD_PARTY.md) | Every project read, its licence, what was learned from it and what was deliberately not taken |
 | [DEV_COMMANDS.md](DEV_COMMANDS.md) | Every build, test, run and console command |
 | [TROUBLESHOOTING.md](TROUBLESHOOTING.md) | Symptom → cause → fix |
 

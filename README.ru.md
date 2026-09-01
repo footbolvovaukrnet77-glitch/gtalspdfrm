@@ -187,6 +187,7 @@ ScriptHookVDotNet и двух мостов между хостами плаги�
 | [docs/ru/DEVELOPER_CONSOLE.md](docs/ru/DEVELOPER_CONSOLE.md) | Консоль, цвета, команды, баг-репорты |
 | [docs/ru/ROADMAP.md](docs/ru/ROADMAP.md) | Фазы 1–12 и что сознательно не подделывалось |
 | [docs/ru/INSTALL.md](docs/ru/INSTALL.md) | Конкретные команды установки, проверки и отката |
+| [docs/ru/THIRD_PARTY.md](docs/ru/THIRD_PARTY.md) | Каждый прочитанный проект, его лицензия, что из него узнано и что сознательно не взято |
 | [DEV_COMMANDS.ru.md](DEV_COMMANDS.ru.md) | Все команды сборки, тестов, запуска и консоли |
 | [TROUBLESHOOTING.ru.md](TROUBLESHOOTING.ru.md) | Симптом → причина → решение |
 
