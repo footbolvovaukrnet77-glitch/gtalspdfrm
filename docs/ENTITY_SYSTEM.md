@@ -245,5 +245,28 @@ replicated and accepted by the damage arbiter, and no client created anything fo
 it. A spawned NPC appeared in the world state and in every diagnostic and was
 invisible in the game.
 
+### Every vehicle flag, and what actually applies it
+
+Nineteen flags, audited the same way as the posture flags. The audit found four
+that were *applied and never sampled*, which is worse than an unimplemented one:
+a flag that is written but never read is always false, so every replicated car had
+its indicators forced off and its handbrake released sixty times a second.
+
+| Flag | State |
+| --- | --- |
+| `EngineRunning`, `Lights`, `HighBeams`, `SirenActive`, `InteriorLight`, `Locked` | ✅ read and applied from the start |
+| `LeftIndicator`, `RightIndicator`, `SirenMuted` | ✅ now read; they were applied from a value nothing sampled |
+| `HornActive`, `RoofOpen`, `TaxiLight`, `SearchLight`, `Undriveable` | ✅ now read and applied; they did nothing before |
+| `HazardLights` | derived — GTA V has no hazard state; it is both indicators |
+| `BrakeLights` | derived from `Brake`, which is replicated and applied |
+| `Burnt` | derived from engine and body health |
+| `NeonEnabled` | superseded by `NeonLayout`, which says *which* strips |
+| `Handbrake` | **cannot be replicated.** `SET_VEHICLE_HANDBRAKE` has no paired getter, so it can be written and never read. The apply is removed; the bit stays so a mod tracking it itself has somewhere to put it |
+
+The horn is edge-triggered rather than level-applied: `START_VEHICLE_HORN` begins a
+sound with a duration, so applying it every frame stutters instead of sounding. It
+is held for three seconds — longer than a snapshot interval so it does not lapse
+between updates, short enough that a lost "stopped" cannot leave a car blaring.
+
 **`ObjectEntity`** adds model, rotation, health, flags and attachment to another
 entity.

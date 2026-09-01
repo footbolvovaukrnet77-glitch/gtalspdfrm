@@ -44,6 +44,13 @@ namespace Gtamp.Client.Shv.Bridge
         /// radius that just fails leaves the trailer loose with no second attempt
         /// until the towing state changes again.
         /// </summary>
+        /// <summary>
+        /// How long a sounded horn is asked to hold. Longer than a snapshot interval
+        /// so it does not lapse between updates, short enough that a lost "stopped"
+        /// message cannot leave a car blaring indefinitely.
+        /// </summary>
+        private const int HornHoldMilliseconds = 3000;
+
         private const float TrailerHitchRadius = 4f;
 
         private const int DoorCount = 8;
@@ -58,6 +65,9 @@ namespace Gtamp.Client.Shv.Bridge
         /// the rim is the usual one -- is re-applied every frame, which is an argument
         /// with the engine at sixty hertz and looks like flickering.
         /// </summary>
+        /// <summary>Whether each replicated vehicle's horn is currently sounding, so it is started and stopped on the edge.</summary>
+        private readonly Dictionary<int, bool> _horning = new Dictionary<int, bool>();
+
         /// <summary>Which trailer each replicated vehicle is currently hitched to, so it is attached on change only.</summary>
         private readonly Dictionary<int, int> _towing = new Dictionary<int, int>();
 
@@ -121,10 +131,11 @@ namespace Gtamp.Client.Shv.Bridge
             {
                 _vehicles.Remove(handle);
 
-                // The damage history goes with it. Handles are reused, and a new
-                // vehicle inheriting the previous one's history would have its whole
-                // state judged as "unchanged" and never applied.
-                _damage.Forget(handle);
+                // The per-handle history goes with it. Handles are reused, and a new
+                // vehicle inheriting the previous one's would have its whole state
+                // judged as "unchanged" and never applied — a car that silently
+                // renders undamaged, untowed and mute forever.
+                ForgetVehicle(handle);
                 return;
             }
 
@@ -157,6 +168,7 @@ namespace Gtamp.Client.Shv.Bridge
 
             ApplyTrailer(vehicle, trailerHandle);
             ApplyLights(vehicle, frame.Flags);
+            ApplyHorn(vehicle, frame.Flags);
             VehicleDamageTracker.Change damage = _damage.Observe(handle, frame.Doors, frame.Windows, frame.Tires);
             if (damage.Doors)
             {
@@ -198,9 +210,65 @@ namespace Gtamp.Client.Shv.Bridge
                 Hash.SET_VEHICLE_INDICATOR_LIGHTS, vehicle.Handle, 1, (flags & VehicleFlags.LeftIndicator) != 0);
             Function.Call(
                 Hash.SET_VEHICLE_INDICATOR_LIGHTS, vehicle.Handle, 0, (flags & VehicleFlags.RightIndicator) != 0);
-            Function.Call(Hash.SET_VEHICLE_HANDBRAKE, vehicle.Handle, (flags & VehicleFlags.Handbrake) != 0);
             Function.Call(
                 Hash.SET_VEHICLE_DOORS_LOCKED, vehicle.Handle, (flags & VehicleFlags.Locked) != 0 ? 2 : 1);
+
+            vehicle.IsTaxiLightOn = (flags & VehicleFlags.TaxiLight) != 0;
+            vehicle.IsSearchLightOn = (flags & VehicleFlags.SearchLight) != 0;
+            Function.Call(Hash.SET_VEHICLE_UNDRIVEABLE, vehicle.Handle, (flags & VehicleFlags.Undriveable) != 0);
+
+            if (vehicle.HasRoof)
+            {
+                bool wantOpen = (flags & VehicleFlags.RoofOpen) != 0;
+                bool isOpen = vehicle.RoofState == VehicleRoofState.Opened;
+
+                // On change only: the roof natives start an animation, and re-issuing
+                // one every frame keeps a convertible permanently mid-fold.
+                if (wantOpen != isOpen)
+                {
+                    Function.Call(
+                        wantOpen ? Hash.LOWER_CONVERTIBLE_ROOF : Hash.RAISE_CONVERTIBLE_ROOF,
+                        vehicle.Handle,
+                        false);
+                }
+            }
+
+            // Handbrake is deliberately not applied. SET_VEHICLE_HANDBRAKE has no
+            // paired getter, so the flag could never be sampled — it was written as
+            // false on every frame, which released the handbrake of every replicated
+            // car sixty times a second. A write-only flag is worse than an unapplied
+            // one, and the position is being corrected every frame anyway.
+        }
+
+        /// <summary>Drops every per-handle record for a vehicle that is gone. Handles are reused.</summary>
+        private void ForgetVehicle(int handle)
+        {
+            _damage.Forget(handle);
+            _towing.Remove(handle);
+            _horning.Remove(handle);
+        }
+
+        /// <summary>
+        /// Sounds or silences a replicated horn.
+        /// <para>
+        /// Edge-triggered, not level-applied: <c>START_VEHICLE_HORN</c> begins a sound
+        /// with a duration, so calling it every frame restarts it and produces a
+        /// stutter rather than a note. The horn is held with a long duration and
+        /// stopped by re-sounding it for zero milliseconds.
+        /// </para>
+        /// </summary>
+        private void ApplyHorn(Vehicle vehicle, VehicleFlags flags)
+        {
+            bool sounding = (flags & VehicleFlags.HornActive) != 0;
+            _horning.TryGetValue(vehicle.Handle, out bool wasSounding);
+            if (sounding == wasSounding)
+            {
+                return;
+            }
+
+            _horning[vehicle.Handle] = sounding;
+            Function.Call(
+                Hash.START_VEHICLE_HORN, vehicle.Handle, sounding ? HornHoldMilliseconds : 0, 0, false);
         }
 
         private static void ApplyDoors(Vehicle vehicle, VehicleDoorStates doors)
@@ -592,6 +660,48 @@ namespace Gtamp.Client.Shv.Bridge
                 flags |= VehicleFlags.Locked;
             }
 
+            // Everything below was declared from the first version of VehicleFlags and
+            // never read. Four of them were nonetheless *applied*, which is worse than
+            // not applying: a flag that is written but never sampled is always false,
+            // so every replicated car had its indicators forced off sixty times a
+            // second whatever its driver was signalling.
+            if (vehicle.IsLeftIndicatorLightOn)
+            {
+                flags |= VehicleFlags.LeftIndicator;
+            }
+
+            if (vehicle.IsRightIndicatorLightOn)
+            {
+                flags |= VehicleFlags.RightIndicator;
+            }
+
+            if (vehicle.IsTaxiLightOn)
+            {
+                flags |= VehicleFlags.TaxiLight;
+            }
+
+            if (vehicle.IsSearchLightOn)
+            {
+                flags |= VehicleFlags.SearchLight;
+            }
+
+            if (vehicle.HasRoof && vehicle.RoofState == VehicleRoofState.Opened)
+            {
+                flags |= VehicleFlags.RoofOpen;
+            }
+
+            if (Function.Call<bool>(Hash.IS_HORN_ACTIVE, vehicle.Handle))
+            {
+                flags |= VehicleFlags.HornActive;
+            }
+
+            // Muted is the absence of siren audio while the siren itself is on, which
+            // is how a police car runs lights without the wail.
+            if (vehicle.IsSirenActive && !Function.Call<bool>(Hash.IS_VEHICLE_SIREN_AUDIO_ON, vehicle.Handle))
+            {
+                flags |= VehicleFlags.SirenMuted;
+            }
+
             return flags;
         }
 
@@ -670,7 +780,7 @@ namespace Gtamp.Client.Shv.Bridge
             }
 
             _vehicles.Remove(handle);
-            _damage.Forget(handle);
+            ForgetVehicle(handle);
             try
             {
                 if (vehicle.Exists())
@@ -788,6 +898,7 @@ namespace Gtamp.Client.Shv.Bridge
             if (!_objects.TryGetValue(handle, out Prop prop) || !prop.Exists())
             {
                 _objects.Remove(handle);
+                _attachedTo.Remove(handle);
                 return;
             }
 
@@ -867,6 +978,7 @@ namespace Gtamp.Client.Shv.Bridge
             }
 
             _objects.Remove(handle);
+            _attachedTo.Remove(handle);
             try
             {
                 if (prop.Exists())

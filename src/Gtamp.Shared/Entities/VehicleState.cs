@@ -17,6 +17,8 @@ namespace Gtamp.Shared.Entities
     public enum VehicleFlags : uint
     {
         None = 0,
+
+        // Read from the owner's vehicle and applied to every replicated copy.
         EngineRunning = 1 << 0,
         Lights = 1 << 1,
         HighBeams = 1 << 2,
@@ -25,17 +27,39 @@ namespace Gtamp.Shared.Entities
         HornActive = 1 << 5,
         Locked = 1 << 6,
         RoofOpen = 1 << 7,
-        HazardLights = 1 << 8,
         LeftIndicator = 1 << 9,
         RightIndicator = 1 << 10,
         InteriorLight = 1 << 11,
         TaxiLight = 1 << 12,
-        BrakeLights = 1 << 13,
-        Burnt = 1 << 14,
         Undriveable = 1 << 15,
-        Handbrake = 1 << 16,
-        NeonEnabled = 1 << 17,
         SearchLight = 1 << 18,
+
+        // --- carried, but derived from something else that is already replicated ---
+        //
+        // These are not gaps and are not applied. Each one is a restatement of state
+        // that arrives by another route, and applying it a second time would be a
+        // second chance to disagree with the first.
+
+        /// <summary>Both indicators at once. GTA V has no hazard state of its own — it is the two lights.</summary>
+        HazardLights = 1 << 8,
+
+        /// <summary>Follows from <see cref="VehicleEntity.Brake"/>, which is replicated and applied.</summary>
+        BrakeLights = 1 << 13,
+
+        /// <summary>Follows from engine and body health, which are replicated.</summary>
+        Burnt = 1 << 14,
+
+        /// <summary>Superseded by <see cref="VehicleEntity.NeonLayout"/>, which says which strips as well as whether.</summary>
+        NeonEnabled = 1 << 17,
+
+        /// <summary>
+        /// **Not replicated, and cannot be.** <c>SET_VEHICLE_HANDBRAKE</c> has no
+        /// paired getter, so this can be written and never read. It was applied for a
+        /// while from a value nothing sampled, which released the handbrake of every
+        /// replicated car on every frame — a write-only flag is worse than an absent
+        /// one. Kept as a bit so a mod that tracks it itself has somewhere to put it.
+        /// </summary>
+        Handbrake = 1 << 16,
     }
 
     /// <summary>
