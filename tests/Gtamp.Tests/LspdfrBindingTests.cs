@@ -34,20 +34,44 @@ namespace Gtamp.Tests
         {
         }
 
-        /// <summary>A build that has everything the observer looks for.</summary>
+        /// <summary>Mirrors LSPDFR's CalloutAcceptanceState.</summary>
+        public enum FakeAcceptanceState
+        {
+            None,
+            Pending,
+            Running,
+            Ended,
+        }
+
+        /// <summary>
+        /// A build that has everything the observer looks for. Every signature here
+        /// matches the public metadata of LSPD_First_Response.dll 0.4.9695.26411.
+        /// </summary>
         public static class CompleteFunctions
         {
+            public static bool OnDuty;
             public static bool CalloutRunning;
             public static bool PulloverActive;
+            public static FakeHandle? Callout;
+            public static string CalloutName = "Traffic Accident";
+            public static FakeAcceptanceState AcceptanceState = FakeAcceptanceState.Running;
             public static FakeHandle? Pursuit;
             public static bool PursuitCalledIn;
             public static bool PursuitRunning;
 
             public static string GetVersion() => "0.4.9";
 
+            public static bool IsPlayerAvailableForCalls() => OnDuty;
+
             public static bool IsCalloutRunning() => CalloutRunning;
 
             public static bool IsPlayerPerformingPullover() => PulloverActive;
+
+            public static FakeHandle? GetCurrentCallout() => Callout;
+
+            public static string GetCalloutFriendlyName(FakeHandle handle) => CalloutName;
+
+            public static FakeAcceptanceState GetCalloutAcceptanceState(FakeHandle handle) => AcceptanceState;
 
             public static FakeHandle? GetActivePursuit() => Pursuit;
 
@@ -80,8 +104,12 @@ namespace Gtamp.Tests
 
         private static void Reset()
         {
+            CompleteFunctions.OnDuty = false;
             CompleteFunctions.CalloutRunning = false;
             CompleteFunctions.PulloverActive = false;
+            CompleteFunctions.Callout = null;
+            CompleteFunctions.CalloutName = "Traffic Accident";
+            CompleteFunctions.AcceptanceState = FakeAcceptanceState.Running;
             CompleteFunctions.Pursuit = null;
             CompleteFunctions.PursuitCalledIn = false;
             CompleteFunctions.PursuitRunning = false;
@@ -96,7 +124,7 @@ namespace Gtamp.Tests
 
             Assert.True(observer.IsAvailable);
             Assert.Empty(observer.MissingProbes);
-            Assert.Equal(5, observer.BoundProbeCount);
+            Assert.Equal(8, observer.BoundProbeCount);
 
             // GetVersion() is preferred over the assembly version: the number a player
             // quotes from the LSPDFR menu is the one worth reporting.
@@ -157,6 +185,7 @@ namespace Gtamp.Tests
             // not offer, instead of wondering why a field is always empty.
             Assert.Contains(observer.MissingProbes, m => m.Contains("IsPlayerPerformingPullover"));
             Assert.Contains(observer.MissingProbes, m => m.Contains("IsPursuitCalledIn"));
+            Assert.Contains(observer.MissingProbes, m => m.Contains("GetCalloutFriendlyName"));
             Assert.Contains(observer.MissingProbes, m => m.Contains("GetVersion"));
 
             // And what did bind still works.
@@ -193,6 +222,69 @@ namespace Gtamp.Tests
         }
 
         [Fact]
+        public void TheCalloutNameCrossesTheWire()
+        {
+            // The capability this whole exercise was for. GetCurrentCallout() takes no
+            // arguments and yields the handle GetCalloutFriendlyName wants, so the name
+            // of the callout a player is on is readable by polling -- not just the fact
+            // that some callout is running.
+            Reset();
+            var observer = new LspdfrObserver();
+            observer.BindTo(typeof(CompleteFunctions), "v");
+
+            Assert.Contains("callout.name=none", observer.Describe());
+
+            CompleteFunctions.Callout = new FakeHandle();
+            CompleteFunctions.CalloutRunning = true;
+            CompleteFunctions.CalloutName = "Traffic Accident";
+            CompleteFunctions.AcceptanceState = FakeAcceptanceState.Running;
+
+            string described = observer.Describe();
+            Assert.Contains("callout.name=Traffic Accident", described);
+            Assert.Contains("callout.state=Running", described);
+        }
+
+        [Theory]
+        [InlineData("Shots Fired; Officer Down", "Shots Fired  Officer Down")]
+        [InlineData("code=3 response", "code 3 response")]
+        [InlineData("line\nbreak", "line break")]
+        public void ACalloutNameCannotBreakTheWireFormat(string raw, string expected)
+        {
+            // A callout's friendly name is free text from whichever third-party callout
+            // plugin the player installed, and the state string is key=value;key=value.
+            // One semicolon would split a field on the far side; one equals sign would
+            // move the key boundary. Every other probe returns a bool, an enum or a
+            // handle, so this is the first value that could do it.
+            Reset();
+            CompleteFunctions.Callout = new FakeHandle();
+            CompleteFunctions.CalloutName = raw.Replace("\\n", "\n");
+
+            var observer = new LspdfrObserver();
+            observer.BindTo(typeof(CompleteFunctions), "v");
+
+            string described = observer.Describe();
+            Assert.Contains("callout.name=" + expected, described);
+
+            // The field count must be exactly what the observer intended to send:
+            // available, version, and the eight probes. A separator that survived
+            // sanitisation would show up here as an extra field.
+            Assert.Equal(10, described.Split(';').Length);
+        }
+
+        [Fact]
+        public void AnAbsurdlyLongCalloutNameIsCapped()
+        {
+            Reset();
+            CompleteFunctions.Callout = new FakeHandle();
+            CompleteFunctions.CalloutName = new string('x', 500);
+
+            var observer = new LspdfrObserver();
+            observer.BindTo(typeof(CompleteFunctions), "v");
+
+            Assert.Contains("callout.name=" + new string('x', 64) + ";", observer.Describe());
+        }
+
+        [Fact]
         public void AnAbsentLspdfrIsNotAnError()
         {
             // The configuration the framework must never break in: no LSPDFR at all.
@@ -217,10 +309,11 @@ namespace Gtamp.Tests
             var observer = new LspdfrObserver();
             observer.BindTo(typeof(CompleteFunctions), "v");
 
-            var retired = new[]
-            {
-                "IsPlayerAvailable", "GetCurrentCallout", "GetCurrentPullover", "GetPlayerState",
-            };
+            // Only these two are genuinely absent from the assembly. GetCurrentCallout
+            // and GetCurrentPullover were removed in an earlier pass on the strength of
+            // the XML documentation alone and are back, because they exist -- they just
+            // carry no doc comment.
+            var retired = new[] { "IsPlayerAvailable", "GetPlayerState" };
 
             foreach (string name in retired)
             {

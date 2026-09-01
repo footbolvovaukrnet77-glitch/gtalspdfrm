@@ -72,14 +72,15 @@ including their own character, across a server restart.
   under RPH and talks to the client over an in-process channel — bytes under a
   topic name, bounded and non-blocking, so neither scheduler can block the other.
   It publishes RPH's live plugin list into the mod manifest.
-- **LSPDFR state shared between players.** Whether a callout is running, whether a
-  traffic stop is in progress, and an active pursuit with whether it has been
-  called in and is still running — read from LSPDFR's documented `API.Functions`
-  surface on the bridge and relayed to the other players by a server that has never
-  heard of LSPDFR. Every probe name is checked against the API documentation LSPDFR
-  ships; that check *removed* four probes that never existed. Callout *logic* is not
-  shared and cannot be, and the callout's name turns out not to be reachable by
-  polling either; see [docs/LSPDFR_INTEGRATION.md](docs/LSPDFR_INTEGRATION.md).
+- **LSPDFR state shared between players.** Availability for calls, the running
+  callout **with its name and acceptance state**, a traffic stop, and an active
+  pursuit with whether it has been called in and is still running — read from
+  LSPDFR's `API.Functions` surface on the bridge and relayed to the other players by
+  a server that has never heard of LSPDFR. Every probe name is checked against the
+  assembly's public metadata, not just the shipped XML documentation: the XML lists
+  only members with doc comments, and trusting it alone had already produced one
+  wrong answer. Callout *logic* is not shared and cannot be; see
+  [docs/LSPDFR_INTEGRATION.md](docs/LSPDFR_INTEGRATION.md).
 
 - **Mod content negotiation.** Models travel as hashes, so a player without your
   vehicle mod has nothing to create. That is reported — once per hash, in
@@ -95,7 +96,7 @@ including their own character, across a server restart.
   and requires it to be absent from the wire — with a control test that requires
   the same canary to be findable when encryption is off.
 
-371 automated tests, all passing, covering everything except the ScriptHookVDotNet
+376 automated tests, all passing, covering everything except the ScriptHookVDotNet
 host layer and the two plugin-host bridges, which need a running game.
 
 Every push and pull request runs the build, the suite and a documentation check

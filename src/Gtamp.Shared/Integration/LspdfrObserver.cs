@@ -15,19 +15,24 @@ namespace Gtamp.Shared.Integration
     /// quietly absent.
     /// </para>
     /// <para>
-    /// <b>The names are no longer guesses.</b> Every probe here was checked against
-    /// <c>LSPD_First_Response.XML</c>, the API documentation LSPDFR ships beside its
-    /// assembly. That check deleted four of the six original probes —
-    /// <c>IsPlayerAvailable</c>, <c>GetCurrentCallout</c>, <c>GetCurrentPullover</c>
-    /// and <c>GetPlayerState</c> do not exist in the documented API at all, so they
-    /// could only ever have landed in <see cref="MissingProbes"/>.
+    /// <b>The names are not guesses.</b> Every probe here was checked against the
+    /// public metadata of <c>LSPD_First_Response.dll</c> 0.4.9695.26411 — the same
+    /// surface reflection sees at runtime, which is how this class binds anyway.
     /// </para>
     /// <para>
-    /// <b>What the documentation does not settle.</b> It lists only members carrying
-    /// doc comments, so absence from it is not proof of absence from the assembly —
-    /// which is why an unverified name is still allowed to bind if this build happens
-    /// to have it, and why binding failure stays an ordinary, reported outcome rather
-    /// than an error.
+    /// <b>Checking the XML documentation first was not enough, and that is worth
+    /// recording.</b> An earlier pass used only <c>LSPD_First_Response.XML</c> and
+    /// concluded that four names did not exist. Two of those four —
+    /// <c>GetCurrentCallout</c> and <c>GetCurrentPullover</c> — do exist; they simply
+    /// carry no doc comment, and the XML lists only members that have one. The caveat
+    /// had been written down and it still produced a wrong answer, because absence of
+    /// evidence was read as evidence of absence. The other two,
+    /// <c>IsPlayerAvailable</c> and <c>GetPlayerState</c>, are genuinely absent.
+    /// </para>
+    /// <para>
+    /// <c>GetCurrentCallout()</c> is what makes the callout's name reachable: it takes
+    /// no arguments and returns the handle that <c>GetCalloutFriendlyName</c> wants,
+    /// and that method is LSPDFR's own name for what it calls LSPDFR Sync.
     /// </para>
     /// <para>
     /// This type lives in the shared assembly rather than in the RPH bridge because it
@@ -115,15 +120,27 @@ namespace Gtamp.Shared.Integration
                 _missing.Add(FunctionsTypeName + ".GetVersion()");
             }
 
-            // ---- Parameterless probes, all three verified against the shipped XML ----
+            // ---- Parameterless probes ----
+            // IsPlayerAvailableForCalls is the closest thing to an on-duty poll that
+            // exists. On-duty proper is published only as an event; this answers the
+            // question another player actually cares about — can this officer take a
+            // call — rather than approximating one with the other.
+            TryBind("onDuty", "IsPlayerAvailableForCalls");
             TryBind("callout.running", "IsCalloutRunning");
             TryBind("pullover.active", "IsPlayerPerformingPullover");
             TryBind("pursuit.active", "GetActivePursuit");
 
             // ---- Derived probes: one parameterless call yields an opaque LHandle,
             // which is then handed straight back to LSPDFR. The handle is never
-            // inspected — it cannot be, and it does not need to be. This is what turns
-            // "a pursuit is happening" into something another player can act on.
+            // inspected — it cannot be, and it does not need to be.
+            //
+            // callout.name is the one that makes this worth having. LSPDFR's own
+            // documentation calls GetCalloutFriendlyName "the friendly name
+            // representation of a callout that is used for LSPDFR Sync", so it is the
+            // method meant for exactly this, and GetCurrentCallout() is the
+            // parameterless source that makes it reachable without an event.
+            TryBindDerived("callout.name", "GetCurrentCallout", "GetCalloutFriendlyName");
+            TryBindDerived("callout.state", "GetCurrentCallout", "GetCalloutAcceptanceState");
             TryBindDerived("pursuit.calledIn", "GetActivePursuit", "IsPursuitCalledIn");
             TryBindDerived("pursuit.running", "GetActivePursuit", "IsPursuitStillRunning");
         }
@@ -229,7 +246,7 @@ namespace Gtamp.Shared.Integration
 
             if (value is string text)
             {
-                return text.Length == 0 ? "none" : text;
+                return text.Length == 0 ? "none" : Sanitise(text);
             }
 
             if (value.GetType().IsEnum)
@@ -240,6 +257,44 @@ namespace Gtamp.Shared.Integration
             // A handle. Its type name is stable and says "there is one"; its contents
             // are LSPDFR's business.
             return "handle";
+        }
+
+        /// <summary>
+        /// Makes a free-text value safe to put in the state string.
+        /// <para>
+        /// Until <c>callout.name</c> existed every probe returned a bool, an enum or a
+        /// handle, so the <c>key=value;key=value</c> format could not be broken by a
+        /// value. A callout's friendly name is different: it is free text, and it
+        /// comes from whichever third-party callout plugin the player installed. One
+        /// semicolon in it would split a field in two on the far side; one equals sign
+        /// would move the key boundary.
+        /// </para>
+        /// <para>
+        /// Separators become spaces rather than being escaped, because an escape
+        /// scheme needs the reader to agree with the writer and this format has
+        /// readers that predate it. Control characters go for the same reason. The
+        /// length cap is there because the name crosses the wire on every change and a
+        /// plugin author is free to be as verbose as they like.
+        /// </para>
+        /// </summary>
+        internal static string Sanitise(string text)
+        {
+            const int MaxLength = 64;
+
+            var builder = new StringBuilder(Math.Min(text.Length, MaxLength));
+
+            foreach (char c in text)
+            {
+                if (builder.Length == MaxLength)
+                {
+                    break;
+                }
+
+                builder.Append(c == ';' || c == '=' || char.IsControl(c) ? ' ' : c);
+            }
+
+            string cleaned = builder.ToString().Trim();
+            return cleaned.Length == 0 ? "none" : cleaned;
         }
 
         private void TryBind(string key, string methodName)

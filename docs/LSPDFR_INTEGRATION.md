@@ -65,22 +65,40 @@ surface, never internals:
 
 | Key | Bound to | Shape |
 | --- | --- | --- |
+| `onDuty` | `IsPlayerAvailableForCalls()` | parameterless |
 | `callout.running` | `IsCalloutRunning()` | parameterless |
 | `pullover.active` | `IsPlayerPerformingPullover()` | parameterless |
 | `pursuit.active` | `GetActivePursuit()` | parameterless, returns a handle |
+| `callout.name` | `GetCalloutFriendlyName(handle)` | derived from `GetCurrentCallout()` |
+| `callout.state` | `GetCalloutAcceptanceState(handle)` | derived from `GetCurrentCallout()` |
 | `pursuit.calledIn` | `IsPursuitCalledIn(handle)` | derived from `GetActivePursuit()` |
 | `pursuit.running` | `IsPursuitStillRunning(handle)` | derived from `GetActivePursuit()` |
 
-Every name here was checked against `LSPD_First_Response.XML`, the API
-documentation LSPDFR ships beside its assembly.
+Every name here is checked against the public metadata of
+`LSPD_First_Response.dll` 0.4.9695.26411 — the same surface reflection sees at
+runtime, which is how this class binds anyway.
 
-**That check deleted four of the original six probes.** `IsPlayerAvailable`,
-`GetCurrentCallout`, `GetCurrentPullover` and `GetPlayerState` do not exist in the
-documented API — they were plausible names, bound by name, and every one of them
-could only ever have landed in `MissingProbes`. Nothing lied: unbound probes were
-always counted and reported. But four of six slots were noise in the one list an
-operator reads to find out what is genuinely unavailable, and two thirds of the
-feature was never going to work. They are gone.
+**Checking the XML documentation alone was not enough, and getting that wrong is
+worth recording.** An earlier pass used only `LSPD_First_Response.XML` and
+concluded that four of the six original probe names did not exist. Two of those
+four were real:
+
+| Name | XML | Assembly |
+| --- | --- | --- |
+| `GetPlayerState` | absent | **absent** — removed correctly |
+| `IsPlayerAvailable` | absent | **absent** — removed correctly |
+| `GetCurrentCallout` | absent | **present**, returns `LHandle` — removed in error |
+| `GetCurrentPullover` | absent | **present**, returns `LHandle` — removed in error |
+
+The XML lists only members carrying a doc comment. That caveat had been written
+down at the time and the wrong conclusion was still drawn from it, because absence
+of evidence was treated as evidence of absence. The assembly settles it.
+
+**This is what makes the callout's name reachable.** `GetCurrentCallout()` takes no
+arguments and returns the handle `GetCalloutFriendlyName` wants — and LSPDFR's own
+documentation calls that method "the friendly name representation of a callout
+that is used for LSPDFR Sync". So the name of the callout a player is on now
+crosses the wire, not merely the fact that some callout is running.
 
 **Handles are passed back, never opened.** `GetActivePursuit()` returns an
 `LHandle`, which is opaque and stays that way — the observer reports only that
@@ -143,34 +161,31 @@ one LSPDFR build and breaks on the next, silently, in the middle of a callout.
 
 So what crosses the wire is the observable facts, not the simulation:
 
-- whether a callout is running;
+- whether the player is available for calls;
+- whether a callout is running, **its friendly name, and its acceptance state**;
 - whether the player is performing a traffic stop;
 - whether there is an active pursuit, whether it has been called in, and whether
   it is still running.
 
-**Three things this list used to claim and no longer does.** Checking the probe
-names against the documentation removed them rather than adding them, which is
-worth stating plainly:
+**One thing this list used to claim and no longer does.** `GetPlayerState` does
+not exist in the assembly, so "the reported player state" described a probe that
+could never have bound. `IsPlayerAvailable` does not exist either; the on-duty
+line above is `IsPlayerAvailableForCalls()`, which answers the question another
+officer actually cares about — can this one take a call — rather than
+approximating it.
 
-- **The callout's name.** `GetCalloutFriendlyName(LHandle)` exists, and its own
-  documentation says it is "the friendly name representation of a callout that is
-  used for LSPDFR Sync" — so it is exactly the right method. It needs a callout
-  `LHandle`, and the shipped documentation contains **no parameterless way to
-  obtain the handle of the callout currently running**. Handles reach a plugin
-  through callout lifecycle events, which is a delegate-synthesis problem, not a
-  lookup. So the name is readable in principle and not reachable by polling, and
-  the framework does not pretend otherwise.
-- **Who is on duty.** There is no polling method for it at all: on-duty is
-  published as the events `OnOnDutyStateChanged` and
-  `PlayerWentOnDutyFinishedSelection`. `IsPlayerAvailable`, which the observer
-  used to ask for, does not exist. On-duty state is therefore no longer reported.
-- **"The reported player state."** `GetPlayerState` does not exist. The phrase
-  described a probe that could never have bound.
+**What is still out of reach.** The decisions inside a callout: its objectives,
+its dialogue, its branch state. The API exposes a name and an acceptance state,
+which is a label on the simulation, not the simulation. Two officers see each
+other's callout *name*; they do not share the callout's script, and no supported
+API would let them.
 
-Absence from the documentation is not proof of absence from the assembly — it
-lists only members carrying doc comments — so an undocumented parameterless
-accessor may well exist. But an unverified name is a guess, and guessing is what
-put four dead probes in the list in the first place.
+**A note on the callout name, because it is free text.** It comes from whichever
+third-party callout plugin the player installed, and the state string is
+`key=value;key=value`. Separators and control characters in a name are replaced
+with spaces and the name is capped at 64 characters, because every other probe
+returns a bool, an enum or a handle and this is the first value that could break
+the format from the outside.
 
 **What players still see of each other's callouts.** The peds and vehicles a
 callout spawns replicate normally — as peds and vehicles, through the ordinary
