@@ -65,7 +65,8 @@ surface, never internals:
 
 | Key | Bound to | Shape |
 | --- | --- | --- |
-| `onDuty` | `IsPlayerAvailableForCalls()` | parameterless |
+| `onDuty` | `OnOnDutyStateChanged` event, or `IsPlayerAvailableForCalls()` | event when its delegate shape matches, poll otherwise |
+| `onDuty.source` | — | `event` or `poll`, so the reader knows which |
 | `callout.running` | `IsCalloutRunning()` | parameterless |
 | `pullover.active` | `IsPlayerPerformingPullover()` | parameterless |
 | `pursuit.active` | `GetActivePursuit()` | parameterless, returns a handle |
@@ -125,13 +126,30 @@ entirely, against stand-in types that mirror the documented signatures. What tha
 proves is this side of the boundary; it does not prove how the real LSPDFR
 behaves.
 
-**Why polling rather than event subscription.** LSPDFR's event hooks take
-delegates whose signatures use LSPDFR's own types. Those types cannot be named at
-compile time (see above), and a delegate synthesised by reflection to match them
-breaks silently the moment a signature changes — subscribing appears to succeed
-and no event ever fires. Polling a parameterless method either returns a value or
-visibly fails to bind. The cost is up to 50 ms of latency and no access to
-event-only information such as the reason a pursuit ended.
+**Polling for most of it, one event where the event is safe.** LSPDFR's event
+delegates almost all name LSPDFR's own types — `LHandle`, `Ped`, `Persona` — which
+cannot be named at compile time here. Binding to those would mean emitting a
+matching delegate at runtime, and that fails in the worst way available:
+subscribing appears to succeed and no event ever fires, mid-callout. Polling a
+parameterless method either returns a value or visibly fails to bind.
+
+**`OnOnDutyStateChanged` is the exception, and the only one.** Its delegate is
+`void(bool)` — verified from the assembly as
+`OnDutyStateChangedEventHandler.Invoke(Boolean)` — so it names no LSPDFR type and
+binds with an ordinary `Delegate.CreateDelegate`. On duty is therefore *exact*
+rather than sampled, and a change that happens and reverts inside one poll
+interval is still seen. The delegate's shape is checked before binding rather than
+assumed; a build whose shape differs falls back to the poll and says so, because
+`onDuty.source` reports `event` or `poll`.
+
+**The subscription is undone on shutdown.** `LspdfrObserver` is `IDisposable` and
+the bridge disposes it in its exit point. A handler left attached keeps the
+observer alive inside LSPDFR and goes on being called after the bridge has
+stopped — the shape of a crash on plugin reload, and RPH reloads plugins.
+
+The remaining cost is real: up to 50 ms of latency on everything except on duty,
+and no access to information LSPDFR exposes only through an event *argument*, such
+as the reason a pursuit ended.
 
 ## How the state travels
 

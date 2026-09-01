@@ -63,6 +63,15 @@ namespace Gtamp.Tests
 
             public static bool IsPlayerAvailableForCalls() => OnDuty;
 
+            /// <summary>Mirrors OnDutyStateChangedEventHandler: void(bool).</summary>
+            public delegate void DutyHandler(bool onDuty);
+
+            public static event DutyHandler? OnOnDutyStateChanged;
+
+            public static void RaiseDuty(bool onDuty) => OnOnDutyStateChanged?.Invoke(onDuty);
+
+            public static int SubscriberCount() => OnOnDutyStateChanged?.GetInvocationList().Length ?? 0;
+
             public static bool IsCalloutRunning() => CalloutRunning;
 
             public static bool IsPlayerPerformingPullover() => PulloverActive;
@@ -78,6 +87,23 @@ namespace Gtamp.Tests
             public static bool IsPursuitCalledIn(FakeHandle handle) => PursuitCalledIn;
 
             public static bool IsPursuitStillRunning(FakeHandle handle) => PursuitRunning;
+        }
+
+        /// <summary>
+        /// A build whose on-duty event carries a different delegate. Binding by name
+        /// alone would either throw or attach something that never fires.
+        /// </summary>
+        public static class WrongShapeEventFunctions
+        {
+            public delegate void OddHandler(string reason, int code);
+
+            public static event OddHandler? OnOnDutyStateChanged;
+
+            public static void Silence() => OnOnDutyStateChanged?.Invoke("x", 0);
+
+            public static bool IsPlayerAvailableForCalls() => true;
+
+            public static bool IsCalloutRunning() => false;
         }
 
         /// <summary>An older build missing most of the surface.</summary>
@@ -119,12 +145,13 @@ namespace Gtamp.Tests
         public void EveryProbeBindsAgainstABuildThatHasTheDocumentedApi()
         {
             Reset();
-            var observer = new LspdfrObserver();
+            using var observer = new LspdfrObserver();
             observer.BindTo(typeof(CompleteFunctions), "assembly-version");
 
             Assert.True(observer.IsAvailable);
             Assert.Empty(observer.MissingProbes);
-            Assert.Equal(8, observer.BoundProbeCount);
+            // onDuty is not in this count: it comes from the event, not a probe.
+            Assert.Equal(7, observer.BoundProbeCount);
 
             // GetVersion() is preferred over the assembly version: the number a player
             // quotes from the LSPDFR menu is the one worth reporting.
@@ -135,7 +162,7 @@ namespace Gtamp.Tests
         public void AHandleIsHandedStraightBackWithoutBeingInspected()
         {
             Reset();
-            var observer = new LspdfrObserver();
+            using var observer = new LspdfrObserver();
             observer.BindTo(typeof(CompleteFunctions), "v");
 
             // No pursuit: the derived probes must not call through a null handle.
@@ -161,7 +188,7 @@ namespace Gtamp.Tests
         public void OnlyChangedProbesAreReported()
         {
             Reset();
-            var observer = new LspdfrObserver();
+            using var observer = new LspdfrObserver();
             observer.BindTo(typeof(CompleteFunctions), "v");
 
             observer.Describe();
@@ -175,7 +202,7 @@ namespace Gtamp.Tests
         [Fact]
         public void AMissingProbeIsNamedRatherThanSilentlyAbsent()
         {
-            var observer = new LspdfrObserver();
+            using var observer = new LspdfrObserver();
             observer.BindTo(typeof(SparseFunctions), "v");
 
             Assert.True(observer.IsAvailable);
@@ -195,7 +222,7 @@ namespace Gtamp.Tests
         [Fact]
         public void AThrowingProbeIsReportedAndDoesNotTakeThePollLoopDown()
         {
-            var observer = new LspdfrObserver();
+            using var observer = new LspdfrObserver();
             observer.BindTo(typeof(ThrowingFunctions), "v");
 
             string described = observer.Describe();
@@ -210,7 +237,7 @@ namespace Gtamp.Tests
             // Binding by arity alone would pick one of two single-argument overloads at
             // random and hand LSPDFR the wrong argument type. Refusing to bind is the
             // answer that stays honest.
-            var observer = new LspdfrObserver();
+            using var observer = new LspdfrObserver();
             observer.BindTo(typeof(AmbiguousFunctions), "v");
 
             Assert.Contains(observer.MissingProbes, m => m.Contains("IsPursuitCalledIn"));
@@ -229,7 +256,7 @@ namespace Gtamp.Tests
             // of the callout a player is on is readable by polling -- not just the fact
             // that some callout is running.
             Reset();
-            var observer = new LspdfrObserver();
+            using var observer = new LspdfrObserver();
             observer.BindTo(typeof(CompleteFunctions), "v");
 
             Assert.Contains("callout.name=none", observer.Describe());
@@ -259,7 +286,7 @@ namespace Gtamp.Tests
             CompleteFunctions.Callout = new FakeHandle();
             CompleteFunctions.CalloutName = raw.Replace("\\n", "\n");
 
-            var observer = new LspdfrObserver();
+            using var observer = new LspdfrObserver();
             observer.BindTo(typeof(CompleteFunctions), "v");
 
             string described = observer.Describe();
@@ -278,17 +305,80 @@ namespace Gtamp.Tests
             CompleteFunctions.Callout = new FakeHandle();
             CompleteFunctions.CalloutName = new string('x', 500);
 
-            var observer = new LspdfrObserver();
+            using var observer = new LspdfrObserver();
             observer.BindTo(typeof(CompleteFunctions), "v");
 
             Assert.Contains("callout.name=" + new string('x', 64) + ";", observer.Describe());
         }
 
         [Fact]
+        public void OnDutyComesFromTheEventWhenItBinds()
+        {
+            // The one LSPDFR event whose delegate names no LSPDFR type -- void(bool) --
+            // so it can be bound with an ordinary delegate rather than one emitted at
+            // runtime. That makes the value exact instead of sampled.
+            Reset();
+            using var observer = new LspdfrObserver();
+            observer.BindTo(typeof(CompleteFunctions), "v");
+
+            Assert.Contains("onDuty.source=event", observer.Describe());
+            Assert.DoesNotContain(observer.MissingProbes, m => m.Contains("OnOnDutyStateChanged"));
+
+            CompleteFunctions.RaiseDuty(true);
+            Assert.Equal("onDuty=true", observer.PollChanges());
+
+            CompleteFunctions.RaiseDuty(false);
+            Assert.Equal("onDuty=false", observer.PollChanges());
+
+            // And it stays quiet when nothing changed.
+            Assert.Equal(string.Empty, observer.PollChanges());
+        }
+
+        [Fact]
+        public void AnEventOfTheWrongShapeFallsBackToThePoll()
+        {
+            // A delegate bound by name alone either throws or, far worse, attaches and
+            // never fires -- a subscription that looks successful and silently reports
+            // nothing. The shape is checked, and the poll takes over.
+            using var observer = new LspdfrObserver();
+            observer.BindTo(typeof(WrongShapeEventFunctions), "v");
+
+            string described = observer.Describe();
+            Assert.Contains("onDuty.source=poll", described);
+            Assert.Contains("onDuty=true", described);
+            Assert.Contains(observer.MissingProbes, m => m.Contains("unexpected delegate shape"));
+
+            // Raising it must not reach the observer at all.
+            WrongShapeEventFunctions.Silence();
+            Assert.Equal(string.Empty, observer.PollChanges());
+        }
+
+        [Fact]
+        public void DisposeDetachesFromLspdfr()
+        {
+            // RPH reloads plugins. A handler left attached keeps the observer alive
+            // inside LSPDFR and goes on being called after this assembly has stopped,
+            // which is the shape of a crash on reload rather than a leak.
+            Reset();
+            int before = CompleteFunctions.SubscriberCount();
+
+            var observer = new LspdfrObserver();
+            observer.BindTo(typeof(CompleteFunctions), "v");
+            Assert.Equal(before + 1, CompleteFunctions.SubscriberCount());
+
+            observer.Dispose();
+            Assert.Equal(before, CompleteFunctions.SubscriberCount());
+
+            // Disposing twice is not an error, and neither is raising afterwards.
+            observer.Dispose();
+            CompleteFunctions.RaiseDuty(true);
+        }
+
+        [Fact]
         public void AnAbsentLspdfrIsNotAnError()
         {
             // The configuration the framework must never break in: no LSPDFR at all.
-            var observer = new LspdfrObserver();
+            using var observer = new LspdfrObserver();
             observer.Bind();
 
             Assert.False(observer.IsAvailable);
@@ -306,7 +396,7 @@ namespace Gtamp.Tests
             // only ever have landed in MissingProbes. This asserts they are not asked
             // for any more -- a probe that can never bind is noise in the one list an
             // operator reads to find out what is genuinely unavailable.
-            var observer = new LspdfrObserver();
+            using var observer = new LspdfrObserver();
             observer.BindTo(typeof(CompleteFunctions), "v");
 
             // Only these two are genuinely absent from the assembly. GetCurrentCallout

@@ -41,7 +41,7 @@ namespace Gtamp.Shared.Integration
     /// no LSPDFR present.
     /// </para>
     /// </summary>
-    public sealed class LspdfrObserver
+    public sealed class LspdfrObserver : IDisposable
     {
         /// <summary>The simple assembly name LSPDFR loads under.</summary>
         public const string LspdfrAssemblyName = "LSPD First Response";
@@ -54,6 +54,15 @@ namespace Gtamp.Shared.Integration
         private readonly Dictionary<string, string> _lastValues = new Dictionary<string, string>(StringComparer.Ordinal);
 
         private Type? _functions;
+
+        /// <summary>Values pushed by an event rather than read by a poll.</summary>
+        private readonly Dictionary<string, string> _pushed = new Dictionary<string, string>(StringComparer.Ordinal);
+
+        /// <summary>Guards <see cref="_pushed"/>: the event and the poll are different callers.</summary>
+        private readonly object _pushedLock = new object();
+
+        private EventInfo? _dutyEvent;
+        private Delegate? _dutyHandler;
 
         public bool IsAvailable => _functions != null;
 
@@ -120,12 +129,26 @@ namespace Gtamp.Shared.Integration
                 _missing.Add(FunctionsTypeName + ".GetVersion()");
             }
 
-            // ---- Parameterless probes ----
-            // IsPlayerAvailableForCalls is the closest thing to an on-duty poll that
-            // exists. On-duty proper is published only as an event; this answers the
-            // question another player actually cares about — can this officer take a
-            // call — rather than approximating one with the other.
-            TryBind("onDuty", "IsPlayerAvailableForCalls");
+            // ---- On duty: the event when it binds, a poll when it does not ----
+            // On-duty is published as an event, and unlike every other event on this
+            // API its delegate is `void(bool)` — no LSPDFR type in the signature, so it
+            // can be bound with an ordinary delegate instead of one emitted at runtime.
+            // That makes the value exact rather than sampled, and catches a change that
+            // happens and reverts inside one poll interval.
+            //
+            // IsPlayerAvailableForCalls is the fallback, and it answers a slightly
+            // different question — can this officer take a call — so which one produced
+            // the value is worth knowing. `onDuty.source` says which.
+            if (TryBindDutyEvent())
+            {
+                Push("onDuty.source", "event");
+            }
+            else
+            {
+                Push("onDuty.source", "poll");
+                TryBind("onDuty", "IsPlayerAvailableForCalls");
+            }
+
             TryBind("callout.running", "IsCalloutRunning");
             TryBind("pullover.active", "IsPlayerPerformingPullover");
             TryBind("pursuit.active", "GetActivePursuit");
@@ -158,6 +181,17 @@ namespace Gtamp.Shared.Integration
 
             var changes = new List<string>();
 
+            foreach (KeyValuePair<string, string> entry in Snapshot())
+            {
+                if (_lastValues.TryGetValue(entry.Key, out string? was) && was == entry.Value)
+                {
+                    continue;
+                }
+
+                _lastValues[entry.Key] = entry.Value;
+                changes.Add(entry.Key + "=" + entry.Value);
+            }
+
             foreach (Probe probe in _probes)
             {
                 string value = Read(probe);
@@ -183,6 +217,12 @@ namespace Gtamp.Shared.Integration
 
             var builder = new StringBuilder();
             builder.Append("available=true;version=").Append(Version);
+
+            foreach (KeyValuePair<string, string> entry in Snapshot())
+            {
+                _lastValues[entry.Key] = entry.Value;
+                builder.Append(';').Append(entry.Key).Append('=').Append(entry.Value);
+            }
 
             foreach (Probe probe in _probes)
             {
@@ -295,6 +335,107 @@ namespace Gtamp.Shared.Integration
 
             string cleaned = builder.ToString().Trim();
             return cleaned.Length == 0 ? "none" : cleaned;
+        }
+
+        /// <summary>
+        /// Subscribes to <c>OnOnDutyStateChanged</c> when its delegate is the shape we
+        /// expect, and reports false otherwise.
+        /// <para>
+        /// The shape is checked rather than assumed: a delegate is bound by exact
+        /// signature, so attaching to something else either throws here or — worse —
+        /// attaches and never fires. Verified against the assembly's metadata
+        /// (<c>OnDutyStateChangedEventHandler.Invoke(Boolean)</c>) and against how a
+        /// real plugin subscribes.
+        /// </para>
+        /// </summary>
+        private bool TryBindDutyEvent()
+        {
+            const string EventName = "OnOnDutyStateChanged";
+
+            EventInfo? info = _functions!.GetEvent(EventName, BindingFlags.Public | BindingFlags.Static);
+            MethodInfo? invoke = info?.EventHandlerType?.GetMethod("Invoke");
+
+            if (info == null || invoke == null)
+            {
+                _missing.Add(FunctionsTypeName + "." + EventName);
+                return false;
+            }
+
+            ParameterInfo[] parameters = invoke.GetParameters();
+            if (invoke.ReturnType != typeof(void) || parameters.Length != 1 || parameters[0].ParameterType != typeof(bool))
+            {
+                // A different shape than this build was written against. Falling back to
+                // the poll is the honest answer; guessing at a signature is how a
+                // subscription succeeds and then never fires.
+                _missing.Add(FunctionsTypeName + "." + EventName + " (unexpected delegate shape)");
+                return false;
+            }
+
+            try
+            {
+                MethodInfo handler = typeof(LspdfrObserver).GetMethod(
+                    nameof(OnDutyStateChanged), BindingFlags.NonPublic | BindingFlags.Instance)!;
+
+                _dutyHandler = Delegate.CreateDelegate(info.EventHandlerType!, this, handler);
+                info.AddEventHandler(null, _dutyHandler);
+                _dutyEvent = info;
+                return true;
+            }
+            catch (Exception)
+            {
+                _dutyHandler = null;
+                _missing.Add(FunctionsTypeName + "." + EventName + " (subscription failed)");
+                return false;
+            }
+        }
+
+        private void OnDutyStateChanged(bool onDuty)
+        {
+            Push("onDuty", onDuty ? "true" : "false");
+        }
+
+        /// <summary>
+        /// A stable copy of the event-pushed values. Copied under the lock so a poll
+        /// cannot read a dictionary an event is writing to.
+        /// </summary>
+        private List<KeyValuePair<string, string>> Snapshot()
+        {
+            lock (_pushedLock)
+            {
+                return new List<KeyValuePair<string, string>>(_pushed);
+            }
+        }
+
+        private void Push(string key, string value)
+        {
+            lock (_pushedLock)
+            {
+                _pushed[key] = value;
+            }
+        }
+
+        /// <summary>
+        /// Detaches from LSPDFR. Not optional: an event handler left attached keeps
+        /// this object alive inside LSPDFR and goes on being called after the bridge
+        /// has stopped, which is exactly the shape of a crash on plugin reload — and
+        /// RPH reloads plugins.
+        /// </summary>
+        public void Dispose()
+        {
+            if (_dutyEvent != null && _dutyHandler != null)
+            {
+                try
+                {
+                    _dutyEvent.RemoveEventHandler(null, _dutyHandler);
+                }
+                catch (Exception)
+                {
+                    // Nothing useful to do if LSPDFR has already gone.
+                }
+            }
+
+            _dutyEvent = null;
+            _dutyHandler = null;
         }
 
         private void TryBind(string key, string methodName)

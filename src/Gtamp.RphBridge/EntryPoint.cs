@@ -95,6 +95,12 @@ namespace Gtamp.RphBridge
                 _channel = null;
             }
 
+            // Detach from LSPDFR before this assembly goes away. The observer
+            // subscribes to LSPDFR's on-duty event when it can, and RPH reloads
+            // plugins -- a handler left attached would keep calling into an assembly
+            // that has stopped.
+            Lspdfr.Dispose();
+
             Game.LogTrivial("[GTAMP] RPH bridge stopped.");
         }
 
