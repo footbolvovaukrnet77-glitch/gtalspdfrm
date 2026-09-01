@@ -101,6 +101,11 @@ namespace Gtamp.Client.Diagnostics
             builder.AppendLine($"ShowNetworkOverlay={config.ShowNetworkOverlay}");
             builder.AppendLine($"ShowPlayerBlips={config.ShowPlayerBlips}");
             builder.AppendLine($"ShowPlayerNames={config.ShowPlayerNames}");
+
+            foreach (string unknown in config.UnknownKeys)
+            {
+                builder.AppendLine($"UNRECOGNISED SETTING: {unknown}");
+            }
             builder.AppendLine($"VerboseLogging={config.VerboseLogging}");
             builder.Append($"AutoConnectOnStart={config.AutoConnectOnStart}");
             return builder.ToString();

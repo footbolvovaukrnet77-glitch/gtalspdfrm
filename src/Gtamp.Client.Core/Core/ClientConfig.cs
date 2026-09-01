@@ -106,7 +106,10 @@ namespace Gtamp.Client.Core
 
                     string key = line.Substring(0, separator).Trim();
                     string value = line.Substring(separator + 1).Trim();
-                    config.Apply(key, value);
+                    if (!config.Apply(key, value))
+                    {
+                        config.UnknownKeys.Add(key);
+                    }
                 }
             }
 
@@ -197,7 +200,28 @@ namespace Gtamp.Client.Core
             File.WriteAllLines(path, lines);
         }
 
-        private void Apply(string key, string value)
+        /// <summary>
+        /// Keys found in the file that this build does not recognise.
+        /// <para>
+        /// A misspelled setting used to be silently ignored, which is the same defect
+        /// this project has found sixteen times elsewhere wearing a different hat: an
+        /// operator writes <c>ShowPlayerBlibs=False</c>, the parser matches no case,
+        /// nothing happens, and the setting looks applied. They are collected here and
+        /// reported rather than dropped.
+        /// </para>
+        /// </summary>
+        public List<string> UnknownKeys { get; } = new List<string>();
+
+        /// <summary>
+        /// Applies one <c>key=value</c> line, and reports whether the key was one this
+        /// build knows.
+        /// <para>
+        /// The switch is the only list of known keys. A separate set beside it would
+        /// be a second copy of the same facts — the first draft of this had one, and
+        /// it was already missing two keys by the time the round-trip test ran.
+        /// </para>
+        /// </summary>
+        private bool Apply(string key, string value)
         {
             switch (key.ToLowerInvariant())
             {
@@ -266,7 +290,12 @@ namespace Gtamp.Client.Core
                 case "autoconnectonstart":
                     AutoConnectOnStart = ParseBool(value);
                     break;
+
+                default:
+                    return false;
             }
+
+            return true;
         }
 
         private static bool ParseBool(string value) =>

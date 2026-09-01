@@ -111,6 +111,14 @@ namespace Gtamp.Client.Core
             _identity = Config.LoadIdentity();
             Connection.Identity = _identity;
 
+            foreach (string unknown in Config.UnknownKeys)
+            {
+                Log.Warning(
+                    LogCategory.Client,
+                    $"client.ini setting '{unknown}' is not recognised by this build and has no effect. " +
+                    "Check the spelling against docs/INSTALL.md.");
+            }
+
             if (Config.IdentityRegenerated)
             {
                 Log.Warning(

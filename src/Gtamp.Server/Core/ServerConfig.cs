@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.IO;
+using System.Reflection;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 using Gtamp.Shared.Protocol;
@@ -20,8 +21,6 @@ namespace Gtamp.Server.Core
         public int MaxPlayers { get; set; } = 32;
 
         public string Password { get; set; } = string.Empty;
-
-        public bool Public { get; set; }
 
         public string BindAddress { get; set; } = "0.0.0.0";
 
@@ -181,6 +180,19 @@ namespace Gtamp.Server.Core
             AllowTrailingCommas = true,
         };
 
+        /// <summary>
+        /// Property names found in the file that this build does not recognise.
+        /// <para>
+        /// <c>System.Text.Json</c> ignores unmapped members, so a misspelled setting
+        /// used to be silently dropped: an operator writes <c>"maxPlayerz": 64</c>,
+        /// gets 32, and is told nothing. Refusing to start would be worse — it would
+        /// make an older build unable to read a newer file — so they are collected and
+        /// reported instead.
+        /// </para>
+        /// </summary>
+        [JsonIgnore]
+        public List<string> UnknownKeys { get; } = new List<string>();
+
         public static ServerConfig LoadOrCreate(string path)
         {
             if (File.Exists(path))
@@ -192,6 +204,7 @@ namespace Gtamp.Server.Core
                     throw new InvalidDataException($"'{path}' did not contain a server configuration object.");
                 }
 
+                config.UnknownKeys.AddRange(FindUnknownKeys(json));
                 config.Validate();
                 return config;
             }
@@ -210,6 +223,48 @@ namespace Gtamp.Server.Core
             }
 
             File.WriteAllText(path, JsonSerializer.Serialize(this, SerializerOptions));
+        }
+
+        /// <summary>
+        /// Top-level property names in the document that no property on this type
+        /// maps to. Only the top level: a nested object belongs to whichever setting
+        /// declares it, and walking into one would report a mod's own keys as ours.
+        /// </summary>
+        private static List<string> FindUnknownKeys(string json)
+        {
+            var unknown = new List<string>();
+
+            var known = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            foreach (PropertyInfo property in typeof(ServerConfig).GetProperties())
+            {
+                known.Add(property.Name);
+            }
+
+            try
+            {
+                using var document = JsonDocument.Parse(
+                    json, new JsonDocumentOptions { CommentHandling = JsonCommentHandling.Skip, AllowTrailingCommas = true });
+
+                if (document.RootElement.ValueKind != JsonValueKind.Object)
+                {
+                    return unknown;
+                }
+
+                foreach (JsonProperty property in document.RootElement.EnumerateObject())
+                {
+                    if (!known.Contains(property.Name))
+                    {
+                        unknown.Add(property.Name);
+                    }
+                }
+            }
+            catch (JsonException)
+            {
+                // Unparseable here means Deserialize already threw or will; reporting
+                // "unknown keys" on top of a syntax error only obscures it.
+            }
+
+            return unknown;
         }
 
         public void Validate()

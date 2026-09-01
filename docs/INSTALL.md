@@ -49,7 +49,7 @@ Expected output: `Build succeeded. 0 Warning(s) 0 Error(s)`.
 ./tools/test.sh          # or tools\test.bat
 ```
 
-Expected: `Passed! - Failed: 0, Passed: 522`.
+Expected: `Passed! - Failed: 0, Passed: 530`.
 
 ### Check the documentation
 
@@ -252,6 +252,16 @@ ShowPlayerNames=True
 VerboseLogging=False
 AutoConnectOnStart=False
 ```
+
+**A setting this build does not recognise is reported, not ignored.** Both
+`client.ini` and the server's JSON config are checked against the settings the build
+actually has, and anything left over is logged as a warning at startup and printed
+in the diagnostic bundle. Writing `ShowPlayerBlibs=False` used to get you the
+default with no explanation.
+
+The check is a warning rather than a refusal to start, deliberately: refusing would
+make an older build unable to read a file written by a newer one, which is a worse
+failure than the one being prevented.
 
 ### Connect
 

@@ -198,6 +198,17 @@ namespace Gtamp.Server.Core
             Log.Info(LogCategory.Server, $"Tick {Config.TickRate} Hz, snapshots {Config.SnapshotRate} Hz, max {Config.MaxPlayers} players");
             Log.Info(LogCategory.Persistence, "Persistence: " + _persistence.Describe());
             Log.Info(LogCategory.Server, $"Anti-cheat level: {Config.AntiCheat}");
+
+            // Loud, and at Warning, because a setting that was typed and does nothing
+            // is indistinguishable from one that was applied and ignored — and the
+            // operator is the only person who can tell the difference.
+            foreach (string unknown in Config.UnknownKeys)
+            {
+                Log.Warning(
+                    LogCategory.Server,
+                    $"server.ini setting '{unknown}' is not recognised by this build and has no effect. " +
+                    "Check the spelling against docs/INSTALL.md.");
+            }
         }
 
         /// <summary>Advances the simulation to <paramref name="now"/>. Safe to call more often than the tick rate.</summary>
