@@ -181,6 +181,14 @@ namespace Gtamp.Shared.Net
             WriteVarInt(Quantize.EncodeVelocityAxis(value.Z));
         }
 
+        /// <summary>A bone position relative to its entity's root. See <see cref="Quantize.BoneOffsetScale"/>.</summary>
+        public void WriteBoneOffset(NetVector3 value)
+        {
+            WriteVarInt(Quantize.EncodeBoneOffsetAxis(value.X));
+            WriteVarInt(Quantize.EncodeBoneOffsetAxis(value.Y));
+            WriteVarInt(Quantize.EncodeBoneOffsetAxis(value.Z));
+        }
+
         public void WriteAngleDegrees(float degrees) => WriteUInt16(Quantize.EncodeAngleDegrees(degrees));
 
         public void WriteUnit(float value) => WriteByte(Quantize.EncodeUnit(value));

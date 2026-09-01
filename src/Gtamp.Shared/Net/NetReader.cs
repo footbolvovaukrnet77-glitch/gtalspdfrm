@@ -220,6 +220,14 @@ namespace Gtamp.Shared.Net
             return new NetVector3(x, y, z);
         }
 
+        public NetVector3 ReadBoneOffset()
+        {
+            float x = Quantize.DecodeBoneOffsetAxis(ReadVarInt());
+            float y = Quantize.DecodeBoneOffsetAxis(ReadVarInt());
+            float z = Quantize.DecodeBoneOffsetAxis(ReadVarInt());
+            return new NetVector3(x, y, z);
+        }
+
         public float ReadAngleDegrees() => Quantize.DecodeAngleDegrees(ReadUInt16());
 
         public float ReadUnit() => Quantize.DecodeUnit(ReadByte());

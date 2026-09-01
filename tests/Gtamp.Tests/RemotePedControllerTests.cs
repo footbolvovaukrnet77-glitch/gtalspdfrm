@@ -106,16 +106,33 @@ namespace Gtamp.Tests
         public void ARagdollingPlayerIsHandedToPhysicsAndNotCorrected()
         {
             RemotePedFrame frame = Frame(
-                new NetVector3(40f, 10f, 30f), MovementState.Idle, PlayerFlags.Ragdoll);
+                new NetVector3(11f, 10f, 30f), MovementState.Idle, PlayerFlags.Ragdoll);
 
             RemotePedCommand command = RemotePedController.Decide(in frame, new NetVector3(10f, 10f, 30f));
 
             Assert.Equal(RemotePedAction.Ragdoll, command.Action);
 
-            // Correcting a ragdoll fights the physics solver, which is exactly the
-            // twitching the ragdoll flag exists to avoid.
+            // Placing a ragdoll fights the physics solver, which is exactly the
+            // twitching the ragdoll flag exists to avoid. A metre of drift is what
+            // RagdollDriver's impulses are for.
             Assert.False(command.HardCorrect);
             Assert.Equal(0f, command.MoveBlendRatio);
+        }
+
+        [Fact]
+        public void ARagdollThatHasDivergedEntirelyIsStillPlaced()
+        {
+            // Thirty metres apart, the two machines are no longer describing the same
+            // fall. This case used to be left to physics on the grounds that ragdolls
+            // are never corrected, which meant a body could stay in the wrong street
+            // until it stood up again.
+            RemotePedFrame frame = Frame(
+                new NetVector3(40f, 10f, 30f), MovementState.Idle, PlayerFlags.Ragdoll);
+
+            RemotePedCommand command = RemotePedController.Decide(in frame, new NetVector3(10f, 10f, 30f));
+
+            Assert.Equal(RemotePedAction.Ragdoll, command.Action);
+            Assert.True(command.HardCorrect);
         }
 
         [Fact]

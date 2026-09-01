@@ -400,6 +400,7 @@ Regression test:
 | Velocity axis | zig-zag varint of `round(value × 128)` | ±256 m/s | 3.9 mm/s |
 | Angle | `u16` of `degrees × 65536/360` | 0–360° | 0.0027° |
 | Unit scalar | `u8` | 0–1 | 0.2% |
+| Bone offset axis | zig-zag varint of `round(value × 128)` | ±8 m | 3.9 mm |
 
 Out-of-range values are **clamped, not wrapped** — a corrupt coordinate produces a
 position at the world edge, which is caught by the validator, rather than one that

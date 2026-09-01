@@ -10,6 +10,7 @@ using Gtamp.Shared.World;
 using GTA;
 using GTA.Math;
 using GTA.Native;
+using GTA.NaturalMotion;
 using GtaWorld = GTA.World;
 
 namespace Gtamp.Client.Shv.Bridge
@@ -143,7 +144,42 @@ namespace Gtamp.Client.Shv.Bridge
                 sample.Ammo = weapon.Ammo;
             }
 
+            sample.Ragdoll = SampleRagdollPose(ped, sample.Flags, sample.Position);
             return sample;
+        }
+
+        /// <summary>
+        /// Head and both feet, as offsets from the ped's root, while it is
+        /// ragdolling.
+        /// <para>
+        /// Offsets rather than world positions for two reasons. On the wire they
+        /// quantise into a metre-scale range instead of a world-scale one, which is
+        /// four bytes a bone cheaper. On the receiving side they stay correct when
+        /// the remote copy's root has been interpolated or corrected — a world
+        /// position paired with a root that has moved describes a body pulled apart.
+        /// </para>
+        /// </summary>
+        private static RagdollPose SampleRagdollPose(Ped ped, PlayerFlags flags, NetVector3 root)
+        {
+            if ((flags & PlayerFlags.Ragdoll) == 0)
+            {
+                return RagdollPose.None;
+            }
+
+            try
+            {
+                return new RagdollPose(
+                    ToNet(ped.Bones[Bone.SkelHead].Position) - root,
+                    ToNet(ped.Bones[Bone.SkelRightFoot].Position) - root,
+                    ToNet(ped.Bones[Bone.SkelLeftFoot].Position) - root);
+            }
+            catch (Exception)
+            {
+                // A model whose skeleton lacks one of these bones. Reporting no pose
+                // leaves the remote copy on its own physics, which is what it had
+                // before any of this existed.
+                return RagdollPose.None;
+            }
         }
 
         /// <summary>
@@ -319,7 +355,7 @@ namespace Gtamp.Client.Shv.Bridge
                     return;
 
                 case RemotePedAction.Ragdoll:
-                    DriveRagdoll(ped, state);
+                    DriveRagdoll(ped, in command, state);
                     return;
 
                 case RemotePedAction.InVehicle:
@@ -429,17 +465,92 @@ namespace Gtamp.Client.Shv.Bridge
             }
         }
 
-        private void DriveRagdoll(Ped ped, PedDriveState state)
+        /// <summary>
+        /// Starts the ragdoll on the first frame, then keeps the local body in step
+        /// with the owner's by pulling on three limbs.
+        /// <para>
+        /// Before this, the ragdoll was started and then left alone: each machine ran
+        /// its own solver from that moment on, and where a fallen player ended up had
+        /// nothing to do with where they had fallen on their own screen. The position
+        /// kept arriving and was deliberately not applied, because writing
+        /// coordinates into a running solver is what makes replicated ragdolls
+        /// twitch — so the state was correct, replicated, and visible to nobody.
+        /// </para>
+        /// </summary>
+        private void DriveRagdoll(Ped ped, in RemotePedCommand command, PedDriveState state)
         {
-            if (state.Ragdolling)
+            if (!state.Ragdolling)
+            {
+                state.Ragdolling = true;
+                state.RagdollFrames = 0;
+                state.Reset();
+                Function.Call(Hash.SET_PED_CAN_RAGDOLL, ped.Handle, true);
+                Function.Call(Hash.SET_PED_TO_RAGDOLL, ped.Handle, 2000, 3000, 0, true, true, false);
+                return;
+            }
+
+            state.RagdollFrames++;
+
+            if (command.HardCorrect)
+            {
+                // Two different falls. Impulses cannot close that gap; the body is put
+                // where it belongs and the solver carries on from there.
+                Place(ped, command.TargetPosition, command.Heading);
+                state.RagdollFrames = 0;
+                return;
+            }
+
+            if (!RagdollDriver.ShouldCorrect(state.RagdollFrames))
             {
                 return;
             }
 
-            state.Ragdolling = true;
-            state.Reset();
-            Function.Call(Hash.SET_PED_CAN_RAGDOLL, ped.Handle, true);
-            Function.Call(Hash.SET_PED_TO_RAGDOLL, ped.Handle, 2000, 3000, 0, true, true, false);
+            RagdollCorrection correction;
+            try
+            {
+                correction = RagdollDriver.Compute(
+                    command.Ragdoll,
+                    command.TargetPosition,
+                    ToNet(ped.Bones[Bone.SkelHead].Position),
+                    ToNet(ped.Bones[Bone.SkelRightFoot].Position),
+                    ToNet(ped.Bones[Bone.SkelLeftFoot].Position));
+            }
+            catch (Exception)
+            {
+                return;
+            }
+
+            if (correction.IsEmpty)
+            {
+                return;
+            }
+
+            var helper = new ApplyImpulseHelper(ped);
+            ApplyImpulse(helper, correction, RagdollBones.Head, RagdollDriver.HeadPart);
+            ApplyImpulse(helper, correction, RagdollBones.RightFoot, RagdollDriver.RightFootPart);
+            ApplyImpulse(helper, correction, RagdollBones.LeftFoot, RagdollDriver.LeftFootPart);
+        }
+
+        private static void ApplyImpulse(
+            ApplyImpulseHelper helper, in RagdollCorrection correction, RagdollBones bone, int partIndex)
+        {
+            if (!correction.Has(bone))
+            {
+                return;
+            }
+
+            NetVector3 impulse = bone switch
+            {
+                RagdollBones.Head => correction.Head,
+                RagdollBones.RightFoot => correction.RightFoot,
+                _ => correction.LeftFoot,
+            };
+
+            helper.EqualizeAmount = 1f;
+            helper.PartIndex = partIndex;
+            helper.Impulse = ToGame(impulse);
+            helper.Start();
+            helper.Stop();
         }
 
         private void DriveIdle(Ped ped, in RemotePedCommand command, PedDriveState state)
@@ -851,6 +962,12 @@ namespace Gtamp.Client.Shv.Bridge
             public NetVector3 TaskTarget;
             public float TaskBlend;
             public bool Ragdolling;
+
+            /// <summary>
+            /// Frames since this ped started ragdolling. The first few are left to the
+            /// local solver — see <see cref="RagdollDriver.SettleFrames"/>.
+            /// </summary>
+            public int RagdollFrames;
             public bool WasDead;
 
             /// <summary>

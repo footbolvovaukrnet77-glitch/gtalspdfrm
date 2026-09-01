@@ -40,7 +40,8 @@ including their own character, across a server restart.
 - **Reconnect and resync.** A returning player gets a full snapshot of the current
   world plus their persisted character.
 - **Animated remote players.** Peds are driven through GTA V's task system at the
-  right gait, with ragdoll handed to physics and corpses left where they fell.
+  right gait, with ragdolling limbs pulled toward where they are on their owner's
+  machine and corpses left where they fell.
 - **Clothing and props** replicated in three bytes when default.
 - **Vehicles, NPCs and objects** with server-assigned identities, client-driven
   simulation and ownership that migrates when the owner leaves or drives away.
@@ -96,7 +97,7 @@ including their own character, across a server restart.
   and requires it to be absent from the wire — with a control test that requires
   the same canary to be findable when encryption is off.
 
-405 automated tests, all passing, covering everything except the ScriptHookVDotNet
+425 automated tests, all passing, covering everything except the ScriptHookVDotNet
 host layer and the two plugin-host bridges, which need a running game.
 
 Every push and pull request runs the build, the suite and a documentation check

@@ -760,6 +760,7 @@ namespace Gtamp.Client.Core
                 AimPosition = sample.AimPosition,
                 InteriorId = sample.InteriorId,
                 AnimationHash = sample.AnimationHash,
+                Ragdoll = sample.Ragdoll,
             };
 
             if (sample.Appearance != null)

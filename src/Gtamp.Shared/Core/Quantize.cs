@@ -31,6 +31,24 @@ namespace Gtamp.Shared.Core
 
         public static float DecodePositionAxis(int encoded) => encoded / PositionScale;
 
+        /// <summary>
+        /// Bone offsets are relative to their character's root, so they need a metre
+        /// of range and none of the world's. Resolution 1/128 m ~= 7.8 mm over a
+        /// +/- 8 m range, which fits any limb of any ped and keeps each axis inside
+        /// two varint bytes. Worst-case error 3.9 mm — far below the deadzone the
+        /// ragdoll driver uses before it corrects at all.
+        /// </summary>
+        public const float BoneOffsetScale = 128f;
+        public const float BoneOffsetExtent = 8f;
+
+        public static int EncodeBoneOffsetAxis(float value)
+        {
+            float clamped = Clamp(value, -BoneOffsetExtent, BoneOffsetExtent);
+            return (int)Math.Round(clamped * BoneOffsetScale);
+        }
+
+        public static float DecodeBoneOffsetAxis(int encoded) => encoded / BoneOffsetScale;
+
         public static int EncodeVelocityAxis(float value)
         {
             float clamped = Clamp(value, -VelocityExtent, VelocityExtent);

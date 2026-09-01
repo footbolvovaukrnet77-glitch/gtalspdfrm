@@ -178,6 +178,16 @@ namespace Gtamp.Client.Diagnostics
             comparison.Fields.Add(Text("flags", server.Flags.ToString(), local.Flags.ToString()));
             comparison.Fields.Add(Integer("interior", server.InteriorId, local.InteriorId));
 
+            // Presence, not values. The two poses are sampled a round-trip apart and a
+            // ragdolling body moves every frame, so comparing coordinates would report
+            // a difference on every fall and mean nothing. What is worth catching is
+            // the pose failing to travel at all — a ped model without the bones, or a
+            // flag set with nothing behind it.
+            comparison.Fields.Add(Text(
+                "ragdollPose",
+                server.Ragdoll.IsNone ? "none" : "reported",
+                local.Ragdoll.IsNone ? "none" : "reported"));
+
             return comparison;
         }
 

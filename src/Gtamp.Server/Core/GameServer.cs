@@ -921,6 +921,10 @@ namespace Gtamp.Server.Core
             entity.AimPosition = update.AimPosition;
             entity.InteriorId = update.InteriorId;
             entity.AnimationHash = update.AnimationHash;
+
+            // The pose is only meaningful while the flag is set, and a stale one is
+            // worse than none: it would be replayed onto the next fall.
+            entity.Ragdoll = (update.Flags & PlayerFlags.Ragdoll) != 0 ? update.Ragdoll : RagdollPose.None;
             entity.Appearance.CopyFrom(update.Appearance);
 
             ApplyHealth(session, entity, update);
@@ -1087,6 +1091,7 @@ namespace Gtamp.Server.Core
             entity.Armor = 0;
             entity.SetFlag(PlayerFlags.Dead, false);
             entity.SetFlag(PlayerFlags.Ragdoll, false);
+            entity.Ragdoll = RagdollPose.None;
             entity.InteriorId = 0;
             World.Touch(entity);
 

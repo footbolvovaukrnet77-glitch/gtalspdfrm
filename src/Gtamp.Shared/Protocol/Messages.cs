@@ -211,6 +211,14 @@ namespace Gtamp.Shared.Protocol
 
         public uint AnimationHash { get; set; }
 
+        /// <summary>
+        /// Limb positions while ragdolling. Written only when
+        /// <see cref="PlayerFlags.Ragdoll"/> is set, because this message is sent in
+        /// full twenty times a second rather than as a delta: an unconditional pose
+        /// would cost every client 360 bytes a second to say "not falling".
+        /// </summary>
+        public RagdollPose Ragdoll { get; set; }
+
         /// <summary>Clothing and props, as the client currently has them.</summary>
         public PedAppearance Appearance { get; } = new PedAppearance();
 
@@ -241,6 +249,13 @@ namespace Gtamp.Shared.Protocol
             writer.WriteQuantizedPosition(AimPosition);
             writer.WriteVarInt(InteriorId);
             writer.WriteUInt32(AnimationHash);
+
+            // Gated on the flag, which the reader has already decoded by this point.
+            if ((Flags & PlayerFlags.Ragdoll) != 0)
+            {
+                Ragdoll.Write(writer);
+            }
+
             Appearance.Write(writer);
             return writer.ToArray();
         }
@@ -268,6 +283,11 @@ namespace Gtamp.Shared.Protocol
                 InteriorId = reader.ReadVarInt(),
                 AnimationHash = reader.ReadUInt32(),
             };
+
+            if ((message.Flags & PlayerFlags.Ragdoll) != 0)
+            {
+                message.Ragdoll = RagdollPose.Read(reader);
+            }
 
             message.Appearance.Read(reader);
             return message;

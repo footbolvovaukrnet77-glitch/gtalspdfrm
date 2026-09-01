@@ -36,7 +36,7 @@ disconnects → B keeps playing → A reconnects → A receives the *current* wo
 | Item | State |
 | --- | --- |
 | Task-driven remote locomotion | ✅ `RemotePedController` decides gait and when to correct; the bridge tasks the ped. **Not visually verified** — see the caveat below |
-| Ragdoll replication | ✅ handed to physics, not corrected while ragdolling |
+| Ragdoll replication | ✅ head and both feet replicated as offsets from the root; the local solver is pulled toward them with Euphoria impulses. Not exact — see `RagdollPose` |
 | Clothing components and props | ✅ 12 components, 8 prop slots, mask-encoded (3 bytes when default) |
 | Aim pose | ✅ real aim target from the gameplay camera, applied with `TASK_AIM_GUN_AT_COORD` |
 | Death and respawn | ✅ server-arbitrated; nearest-hospital respawn; a dead client cannot heal itself |
@@ -44,8 +44,9 @@ disconnects → B keeps playing → A reconnects → A receives the *current* wo
 | Server-initiated moves | ✅ authority hold, so a teleport or respawn is not dragged back by in-flight client updates |
 | Scenario and animation tasks | ⏸ `AnimationHash` is replicated and still unused by the bridge — moved to Phase 9 with the wider animation work |
 
-**Caveat that matters.** The locomotion *decision* is unit-tested — 13 tests over
-gait selection, correction thresholds, stale flags, ragdoll and death precedence.
+**Caveat that matters.** The locomotion *decision* is unit-tested — 15 tests over
+gait selection, correction thresholds, stale flags, ragdoll and death precedence,
+and 19 more over the ragdoll pose, its wire cost and the impulses that chase it.
 Whether the resulting ped *looks* right in Los Santos cannot be tested here, and
 has not been. Expect the correction distance and re-task threshold to need tuning
 against the real game.
@@ -236,7 +237,7 @@ machine and real clients, and is not claimed here.
 | Step | What it guards |
 | --- | --- |
 | `dotnet build -c Release -warnaserror` | The zero-warning claim. Without `-warnaserror` it decays the first time a warning lands that nobody scrolls up far enough to see |
-| `dotnet test -c Release` | All 405 tests, with the `.trx` uploaded as an artifact so a failure is readable without re-running anything |
+| `dotnet test -c Release` | All 425 tests, with the `.trx` uploaded as an artifact so a failure is readable without re-running anything |
 | `python3 tools/check-docs.py` | Dead relative links, `#anchors` naming headings that no longer exist, and any document that lost its counterpart in the other language |
 
 The whole solution compiles on `ubuntu-latest`, the `net48` client included,

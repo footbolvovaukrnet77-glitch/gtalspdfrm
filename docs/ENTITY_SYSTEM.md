@@ -123,6 +123,50 @@ behind presence masks so a default character costs three bytes rather than the 4
 a fixed layout would need. It is one replicated field written whole, because
 appearance changes at spawn and when a player changes clothes — not per frame.
 
+### The ragdoll pose
+
+A ragdoll flag says a body is falling. It does not say where the body ends up, and
+that turns out to be a different question: physics solvers are not deterministic
+across machines, so two copies handed the same starting state diverge within a few
+frames. A player who lands face-down against a wall on their own screen lands on
+their back in the road on everyone else's. Replicating the root position hides
+this rather than fixing it — the root keeps up while everything attached to it is
+somewhere else.
+
+`RagdollPose` carries three bone positions — head, right foot, left foot — as
+offsets from the character's root, and only while the ragdoll flag is set.
+`RagdollDriver` turns them into Euphoria impulses proportional to the error
+between the reported position and the local one.
+
+Four decisions worth stating, because each one costs something:
+
+- **Three bones, not the skeleton.** A ped has over eighty bones; all of them would
+  cost more per falling player than the rest of this protocol combined. Head and
+  feet pin both ends of the body, which is what a root position cannot express. The
+  price is that arms, spine and head rotation are not replicated at all — they are
+  whatever the local solver produced.
+- **Impulses, not placement.** Writing bone positions into a running solver is what
+  makes replicated ragdolls twitch: the solver re-derives them from its own
+  constraints on the next step. An impulse leaves it in charge. The price is that
+  the pose is an approach, not a state — a limb pinned under geometry cannot be
+  pulled through it, and a client with a long RTT sees a body that lags and settles
+  rather than one that matches frame for frame.
+- **Offsets, not world positions.** Cheaper on the wire (±8 m at 7.8 mm instead of
+  ±16 km at 2 mm), and correct when the receiving side's root has been interpolated
+  or corrected. A world bone position paired with a root that has moved describes a
+  body pulled apart.
+- **A settle delay and a give-up distance.** The first ten frames of a fall are left
+  to the local solver, because the pose in hand describes a body a round trip old
+  and pulling on limbs mid-impact matches neither machine. Past eight metres of root
+  error the two copies are no longer describing the same fall, and the ped is placed
+  outright — one visible teleport, against a body that would otherwise stay in the
+  wrong street until it stood up.
+
+The technique is the one [RAGECOOP-V](https://github.com/RAGECOOP/RAGECOOP-V) (MIT)
+arrived at. The implementation, the constants and the two safeguards above are
+ours; no code was copied. Like everything else in this layer it is unit-tested for
+the decision and **not visually verified in the game**.
+
 The remaining items from master prompt section 9 — full inventory, scenario
 tasks — are **not present**. They are scheduled in
 [ROADMAP.md](ROADMAP.md) rather than stubbed to empty values, because a field that
@@ -130,7 +174,7 @@ replicates nothing is worse than an absent one: it looks supported.
 
 **`CharacterEntity`** carries everything a player and a networked NPC have in
 common — body, weapon, vehicle seat, appearance — declared once in
-`CharacterFields`. Two hand-maintained copies of thirteen field declarations would
+`CharacterFields`. Two hand-maintained copies of fourteen field declarations would
 drift, and a drift between them is a silent decode corruption rather than a
 compile error.
 

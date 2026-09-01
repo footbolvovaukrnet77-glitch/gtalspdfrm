@@ -38,7 +38,8 @@ namespace Gtamp.Client.Players
             NetVector3 aimPosition,
             int health,
             int armor,
-            uint weaponHash)
+            uint weaponHash,
+            RagdollPose ragdoll = default)
         {
             Action = action;
             TargetPosition = targetPosition;
@@ -50,6 +51,7 @@ namespace Gtamp.Client.Players
             Health = health;
             Armor = armor;
             WeaponHash = weaponHash;
+            Ragdoll = ragdoll;
         }
 
         public RemotePedAction Action { get; }
@@ -66,6 +68,13 @@ namespace Gtamp.Client.Players
         /// </para>
         /// </summary>
         public uint WeaponHash { get; }
+
+        /// <summary>
+        /// Where this player's limbs are on their own machine, while they are
+        /// ragdolling. <see cref="RagdollPose.None"/> at every other time — the pose
+        /// is only read by <see cref="RemotePedAction.Ragdoll"/>.
+        /// </summary>
+        public RagdollPose Ragdoll { get; }
 
         public NetVector3 TargetPosition { get; }
 
@@ -133,19 +142,28 @@ namespace Gtamp.Client.Players
 
             if ((frame.Flags & PlayerFlags.Ragdoll) != 0)
             {
-                // Physics owns the ped while it is ragdolling. Correcting its position
-                // would fight the solver and produce the twitching it is meant to avoid.
+                // Physics owns the ped while it is ragdolling, so it is corrected with
+                // impulses rather than coordinates — writing positions into a running
+                // solver produces the twitching this is meant to avoid.
+                //
+                // Except when the two copies are no longer describing the same fall.
+                // Past RagdollDriver.PlaceDistance a clamped impulse will not close the
+                // gap before the ragdoll ends, and a body several seconds of travel
+                // away from where it should be is worse than one visible teleport.
+                bool lost = NetVector3.Distance(pedPosition, frame.Position) > RagdollDriver.PlaceDistance;
+
                 return new RemotePedCommand(
                     RemotePedAction.Ragdoll,
                     frame.Position,
                     frame.Heading,
                     0f,
-                    hardCorrect: false,
+                    hardCorrect: lost,
                     aiming: false,
                     frame.AimPosition,
                     frame.Health,
                     frame.Armor,
-                    frame.CurrentWeaponHash);
+                    frame.CurrentWeaponHash,
+                    frame.Ragdoll);
             }
 
             if ((frame.Flags & PlayerFlags.InVehicle) != 0)

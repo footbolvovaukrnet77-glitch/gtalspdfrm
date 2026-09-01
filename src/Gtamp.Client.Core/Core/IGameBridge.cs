@@ -149,6 +149,13 @@ namespace Gtamp.Client.Core
         public int InteriorId;
         public uint AnimationHash;
 
+        /// <summary>
+        /// Limb positions, read only while the local player is ragdolling and
+        /// <see cref="RagdollPose.None"/> otherwise. Reading three bones costs three
+        /// natives, so it is not paid for on the frames where nobody is falling.
+        /// </summary>
+        public RagdollPose Ragdoll;
+
         /// <summary>Clothing and props. Null when the bridge could not read them this frame.</summary>
         public PedAppearance? Appearance;
     }
@@ -166,5 +173,8 @@ namespace Gtamp.Client.Core
         public uint CurrentWeaponHash;
         public NetVector3 AimPosition;
         public uint AnimationHash;
+
+        /// <summary>Replicated limb positions; <see cref="RagdollPose.None"/> when not ragdolling.</summary>
+        public RagdollPose Ragdoll;
     }
 }

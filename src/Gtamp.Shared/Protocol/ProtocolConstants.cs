@@ -10,7 +10,7 @@ namespace Gtamp.Shared.Protocol
         /// field layouts change in a way that is not backwards compatible.
         /// A mismatch is rejected during the handshake with a readable message.
         /// </summary>
-        public const ushort ProtocolVersion = 5;
+        public const ushort ProtocolVersion = 6;
 
         /// <summary>
         /// Conservative payload budget. 1200 bytes keeps a datagram below the

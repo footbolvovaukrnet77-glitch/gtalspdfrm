@@ -9,7 +9,7 @@ namespace Gtamp.Shared.Entities
     /// through the same ped controller.
     /// <para>
     /// Declaring those fields once, in <see cref="CharacterFields"/>, keeps the two
-    /// wire layouts in step. Two hand-maintained copies of thirteen field
+    /// wire layouts in step. Two hand-maintained copies of fourteen field
     /// declarations would drift, and a drift between them is a silent decode
     /// corruption rather than a compile error.
     /// </para>
@@ -47,6 +47,18 @@ namespace Gtamp.Shared.Entities
         /// <summary>Hash of the currently played animation or scenario, 0 when none.</summary>
         public uint AnimationHash { get; set; }
 
+        /// <summary>
+        /// Limb positions while this character is ragdolling, and
+        /// <see cref="RagdollPose.None"/> otherwise.
+        /// <para>
+        /// Clearing it the moment the ragdoll ends is not tidiness — it is what keeps
+        /// the field out of the delta. A pose left behind would carry its last value
+        /// forever and cost nothing, right up until the character ragdolls again and
+        /// the driver reads a pose from a fall that happened ten minutes ago.
+        /// </para>
+        /// </summary>
+        public RagdollPose Ragdoll { get; set; }
+
         public PedAppearance Appearance { get; } = new PedAppearance();
 
         public bool IsAlive => Health > 0 && (Flags & PlayerFlags.Dead) == 0;
@@ -81,6 +93,7 @@ namespace Gtamp.Shared.Entities
             target.VehicleId = VehicleId;
             target.VehicleSeat = VehicleSeat;
             target.AnimationHash = AnimationHash;
+            target.Ragdoll = Ragdoll;
             target.Appearance.CopyFrom(Appearance);
             CopyBaseTo(target);
         }
@@ -153,6 +166,11 @@ namespace Gtamp.Shared.Entities
                     (a, b) => a.AnimationHash != b.AnimationHash,
                     (w, e) => w.WriteUInt32(e.AnimationHash),
                     (r, e) => e.AnimationHash = r.ReadUInt32())
+                .Add(
+                    "RagdollPose",
+                    (a, b) => a.Ragdoll != b.Ragdoll,
+                    (w, e) => e.Ragdoll.Write(w),
+                    (r, e) => e.Ragdoll = RagdollPose.Read(r))
                 .Add(
                     "Appearance",
                     (a, b) => !a.Appearance.ValueEquals(b.Appearance),

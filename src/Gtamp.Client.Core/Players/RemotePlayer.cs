@@ -152,6 +152,7 @@ namespace Gtamp.Client.Players
             CurrentWeaponHash = to.CurrentWeaponHash,
             AimPosition = NetVector3.Lerp(from.AimPosition, to.AimPosition, t),
             AnimationHash = to.AnimationHash,
+            Ragdoll = RagdollPose.Lerp(from.Ragdoll, to.Ragdoll, t),
         };
 
         /// <summary>Interpolates headings the short way round, so 359° -&gt; 1° does not spin the ped.</summary>
