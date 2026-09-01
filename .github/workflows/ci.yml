@@ -55,7 +55,7 @@ jobs:
           --logger "trx;LogFileName=results.trx"
           --results-directory artifacts/test-results
 
-      - name: Check documentation links and translation pairs
+      - name: Check documentation links, translations, protocol version and test count
         run: python3 tools/check-docs.py
 
       - name: Upload test results

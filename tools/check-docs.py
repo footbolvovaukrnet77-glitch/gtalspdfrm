@@ -17,6 +17,11 @@ a dead link:
    been at **8** for some time: a reader implementing against the document would
    have been rejected at the handshake and told the version they had just read
    was wrong.
+5. A test count printed in the documentation that is not the number the suite
+   actually has. Six documents state it, in five different phrasings and two
+   languages, and every one of them was maintained by hand — which is to say by
+   remembering. The count is derivable: xUnit runs one case per `[Fact]` and one
+   per `[InlineData]`, so it can be counted from the sources and compared.
 
 Exit code 0 when clean, 1 with a list of problems otherwise. No dependencies
 beyond the standard library, so CI needs nothing installed.
@@ -157,6 +162,57 @@ def check_protocol_version(root, problems):
             "neither protocol document states a version any more — the check above cannot work")
 
 
+TEST_COUNT_IN_DOC = (
+    re.compile(r"Passed:\s*(\d+)"),
+    re.compile(r"All (\d+) tests"),
+    re.compile(r"Все (\d+) тест\w*"),
+    re.compile(r"(\d+) automated tests"),
+    re.compile(r"(\d+) автоматических тест\w*"),
+)
+
+
+def count_test_cases(root):
+    """One case per [Fact], one per [InlineData] — which is what xUnit reports."""
+    tests = os.path.join(root, "tests", "Gtamp.Tests")
+    if not os.path.isdir(tests):
+        return None
+
+    total = 0
+    for name in sorted(os.listdir(tests)):
+        if not name.endswith(".cs"):
+            continue
+        with io.open(os.path.join(tests, name), encoding="utf-8") as handle:
+            text = handle.read()
+        total += text.count("[Fact]") + text.count("[InlineData")
+
+    return total
+
+
+def check_test_counts(root, files, problems):
+    """A test count in the documentation must be the one the suite actually has."""
+    expected = count_test_cases(root)
+    if expected is None:
+        problems.append("tests/Gtamp.Tests is missing — the test count check cannot work")
+        return
+
+    found_anywhere = False
+    for path in files:
+        with io.open(path, encoding="utf-8") as handle:
+            text = handle.read()
+
+        for pattern in TEST_COUNT_IN_DOC:
+            for stated in pattern.findall(text):
+                found_anywhere = True
+                if int(stated) != expected:
+                    problems.append(
+                        "%s says %s tests; the suite has %d"
+                        % (os.path.relpath(path, root).replace(os.sep, "/"), stated, expected))
+
+    if not found_anywhere:
+        problems.append(
+            "no document states a test count any more — the check above cannot work")
+
+
 def main():
     root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
     files = list(markdown_files(root))
@@ -165,6 +221,7 @@ def main():
     check_links(root, files, problems)
     check_translation_pairs(root, problems)
     check_protocol_version(root, problems)
+    check_test_counts(root, files, problems)
 
     print("checked %d markdown files" % len(files))
     for problem in problems:
@@ -173,7 +230,9 @@ def main():
     if problems:
         print("%d problem(s)" % len(problems))
         return 1
-    print("no broken links, no missing translations, protocol version agrees with the code")
+    print(
+        "no broken links, no missing translations, "
+        "protocol version and test count agree with the code")
     return 0
 
 

@@ -249,7 +249,7 @@ machine and real clients, and is not claimed here.
 | --- | --- |
 | `dotnet build -c Release -warnaserror` | The zero-warning claim. Without `-warnaserror` it decays the first time a warning lands that nobody scrolls up far enough to see |
 | `dotnet test -c Release` | All 553 tests, with the `.trx` uploaded as an artifact so a failure is readable without re-running anything |
-| `python3 tools/check-docs.py` | Dead relative links, `#anchors` naming headings that no longer exist, and any document that lost its counterpart in the other language |
+| `python3 tools/check-docs.py` | Dead relative links, `#anchors` naming headings that no longer exist, any document that lost its counterpart in the other language, and the two numbers the documentation asserts about the code: the protocol version and the test count. Both had drifted before the check existed |
 
 The whole solution compiles on `ubuntu-latest`, the `net48` client included,
 because `Microsoft.NETFramework.ReferenceAssemblies` supplies the .NET Framework
