@@ -2,6 +2,8 @@ using System;
 using System.Collections.Generic;
 using Gtamp.Client.Core;
 using Gtamp.Client.Mods;
+using Gtamp.Client.Players;
+using Gtamp.Shared.Core;
 using Gtamp.Shared.Diagnostics;
 using Gtamp.Shared.Entities;
 using Gtamp.Shared.World;
@@ -9,7 +11,8 @@ using Gtamp.Shared.World;
 namespace Gtamp.Client.Entities
 {
     /// <summary>
-    /// Keeps the local game's vehicles and objects in step with the replicated world.
+    /// Keeps the local game's vehicles, networked NPCs and objects in step with the
+    /// replicated world.
     /// <para>
     /// Entities this client owns are excluded: it simulates those itself and reports
     /// them upward. Applying the server's echo of our own state back onto the vehicle
@@ -22,7 +25,9 @@ namespace Gtamp.Client.Entities
         private readonly LogBus _log;
 
         private readonly Dictionary<EntityId, RemoteVehicle> _vehicles = new Dictionary<EntityId, RemoteVehicle>();
+        private readonly Dictionary<EntityId, RemoteNpc> _npcs = new Dictionary<EntityId, RemoteNpc>();
         private readonly Dictionary<EntityId, int> _objects = new Dictionary<EntityId, int>();
+        private readonly Dictionary<EntityId, int> _appliedNpcAppearance = new Dictionary<EntityId, int>();
         private readonly Dictionary<EntityId, int> _appliedVehicleAppearance = new Dictionary<EntityId, int>();
         private readonly List<EntityId> _removalBuffer = new List<EntityId>();
 
@@ -40,11 +45,17 @@ namespace Gtamp.Client.Entities
 
         public int VehicleCount => _vehicles.Count;
 
+        public int NpcCount => _npcs.Count;
+
         public int ObjectCount => _objects.Count;
 
         public IEnumerable<RemoteVehicle> Vehicles => _vehicles.Values;
 
         public bool TryGetVehicle(EntityId id, out RemoteVehicle vehicle) => _vehicles.TryGetValue(id, out vehicle!);
+
+        public IEnumerable<RemoteNpc> Npcs => _npcs.Values;
+
+        public bool TryGetNpc(EntityId id, out RemoteNpc npc) => _npcs.TryGetValue(id, out npc!);
 
         /// <summary>The game handle of a replicated object, for the entity inspector.</summary>
         public bool TryGetObjectHandle(EntityId id, out int handle) => _objects.TryGetValue(id, out handle);
@@ -58,6 +69,10 @@ namespace Gtamp.Client.Entities
                 {
                     case VehicleEntity vehicle when vehicle.OwnerId != LocalPlayerId:
                         SyncVehicle(view.ServerTime, vehicle);
+                        break;
+
+                    case PedEntity npc when npc.OwnerId != LocalPlayerId:
+                        SyncNpc(view.ServerTime, npc);
                         break;
 
                     case ObjectEntity prop when prop.OwnerId != LocalPlayerId:
@@ -79,6 +94,18 @@ namespace Gtamp.Client.Entities
             }
 
             vehicle.Push(serverTime, state);
+        }
+
+        private void SyncNpc(double serverTime, PedEntity state)
+        {
+            if (!_npcs.TryGetValue(state.Id, out RemoteNpc? npc))
+            {
+                npc = new RemoteNpc(state.Id);
+                _npcs[state.Id] = npc;
+                _log.Debug(LogCategory.Entity, $"Networked NPC {state.Id} appeared.", $"entity:{state.Id.Value}");
+            }
+
+            npc.Push(serverTime, state);
         }
 
         private void SyncObject(ObjectEntity state)
@@ -121,6 +148,20 @@ namespace Gtamp.Client.Entities
             foreach (EntityId id in _removalBuffer)
             {
                 RemoveVehicle(id);
+            }
+
+            _removalBuffer.Clear();
+            foreach (EntityId id in _npcs.Keys)
+            {
+                if (!view.Contains(id) || IsOwnedLocally(view, id))
+                {
+                    _removalBuffer.Add(id);
+                }
+            }
+
+            foreach (EntityId id in _removalBuffer)
+            {
+                RemoveNpc(id);
             }
 
             _removalBuffer.Clear();
@@ -175,6 +216,85 @@ namespace Gtamp.Client.Entities
                 ApplyAppearanceIfChanged(vehicle);
                 _bridge.ApplyRemoteVehicle(vehicle.VehicleHandle, in frame);
             }
+
+            RenderNpcs(renderTime);
+        }
+
+        /// <summary>
+        /// Drives every networked NPC, through the same controller a player's ped
+        /// uses. The only differences from the player path are what a model failure
+        /// means: an NPC whose model is missing is *substituted*, because an NPC is a
+        /// piece of scenery with a role, and a crowd with a hole in it is worse than a
+        /// crowd wearing the wrong jacket. A player is never substituted — you have to
+        /// be able to recognise who you are looking at.
+        /// </summary>
+        private void RenderNpcs(double renderTime)
+        {
+            foreach (RemoteNpc npc in _npcs.Values)
+            {
+                if (!npc.TrySample(renderTime, out RemotePedFrame frame))
+                {
+                    continue;
+                }
+
+                if (npc.PedHandle == 0 || !_bridge.IsRemotePedValid(npc.PedHandle))
+                {
+                    bool substituted = _bridge.GetModelAvailability(npc.ModelHash) == ModelAvailability.Unavailable;
+                    if (substituted)
+                    {
+                        _missingContent.Report(npc.ModelHash, EntityType.Ped, npc.EntityId, substituted: true);
+                    }
+
+                    npc.PedHandle = _bridge.CreateRemotePed(npc.ModelHash, frame.Position, frame.Heading);
+                    if (npc.PedHandle == 0)
+                    {
+                        continue;
+                    }
+
+                    _appliedNpcAppearance.Remove(npc.EntityId);
+                }
+
+                NetVector3 pedPosition = _bridge.TryGetRemotePedPosition(npc.PedHandle, out NetVector3 position)
+                    ? position
+                    : frame.Position;
+
+                RemotePedCommand command = RemotePedController.Decide(in frame, pedPosition);
+                _bridge.ApplyRemotePedCommand(npc.PedHandle, in command);
+                ApplyNpcAppearanceIfChanged(npc);
+            }
+        }
+
+        private void ApplyNpcAppearanceIfChanged(RemoteNpc npc)
+        {
+            if (_appliedNpcAppearance.TryGetValue(npc.EntityId, out int applied) && applied == npc.AppearanceVersion)
+            {
+                return;
+            }
+
+            PedEntity? latest = npc.Latest;
+            if (latest == null)
+            {
+                return;
+            }
+
+            _appliedNpcAppearance[npc.EntityId] = npc.AppearanceVersion;
+            _bridge.ApplyRemotePedAppearance(npc.PedHandle, latest.Appearance);
+        }
+
+        public void RemoveNpc(EntityId id)
+        {
+            if (!_npcs.TryGetValue(id, out RemoteNpc? npc))
+            {
+                return;
+            }
+
+            if (npc.PedHandle != 0)
+            {
+                _bridge.DestroyRemotePed(npc.PedHandle);
+            }
+
+            _npcs.Remove(id);
+            _appliedNpcAppearance.Remove(id);
         }
 
         private void ApplyAppearanceIfChanged(RemoteVehicle vehicle)
@@ -230,14 +350,24 @@ namespace Gtamp.Client.Entities
                 }
             }
 
+            foreach (RemoteNpc npc in _npcs.Values)
+            {
+                if (npc.PedHandle != 0)
+                {
+                    _bridge.DestroyRemotePed(npc.PedHandle);
+                }
+            }
+
             foreach (int handle in _objects.Values)
             {
                 _bridge.DestroyRemoteObject(handle);
             }
 
             _vehicles.Clear();
+            _npcs.Clear();
             _objects.Clear();
             _appliedVehicleAppearance.Clear();
+            _appliedNpcAppearance.Clear();
         }
     }
 }

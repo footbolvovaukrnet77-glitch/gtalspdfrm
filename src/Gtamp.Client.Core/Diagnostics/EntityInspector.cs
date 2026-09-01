@@ -153,6 +153,7 @@ namespace Gtamp.Client.Diagnostics
             return server switch
             {
                 PlayerEntity player => CompareRemotePlayer(client, player),
+                PedEntity npc => CompareNpc(client, npc),
                 VehicleEntity vehicle => CompareVehicle(client, vehicle),
                 ObjectEntity worldObject => CompareObject(client, worldObject),
                 _ => Undecidable(server),
@@ -281,6 +282,48 @@ namespace Gtamp.Client.Diagnostics
                 "position", server.Position.ToString(),
                 "objects are placed, not read back; the bridge exposes no object transform query"));
 
+            return comparison;
+        }
+
+        private static EntityComparison CompareNpc(MultiplayerClient client, PedEntity server)
+        {
+            var comparison = new EntityComparison(server.Id, server.Type, "the networked NPC's ped");
+
+            if (!client.RemoteEntities.TryGetNpc(server.Id, out RemoteNpc npc) || npc.PedHandle == 0)
+            {
+                comparison.Fields.Add(new FieldComparison(
+                    "ped", "present", "absent", ComparisonOutcome.Differs,
+                    "no ped has been created for this NPC yet — check /mods for a missing model"));
+                return comparison;
+            }
+
+            comparison.Fields.Add(Text("pedHandle", "—", npc.PedHandle.ToString(CultureInfo.InvariantCulture)));
+
+            if (client.Bridge.TryGetRemotePedPosition(npc.PedHandle, out NetVector3 position))
+            {
+                // Against the interpolated target, not the raw snapshot: an NPC is
+                // rendered behind the server clock on purpose, so comparing it with the
+                // newest sample reports the design as a fault.
+                NetVector3 target = npc.TrySample(client.EstimatedServerTime - client.Config.InterpolationDelay,
+                    out RemotePedFrame frame)
+                    ? frame.Position
+                    : server.Position;
+
+                comparison.Fields.Add(Position("position", target, position, "interpolation target, not the raw snapshot"));
+            }
+
+            comparison.Fields.Add(Hash("model", server.ModelHash, npc.ModelHash));
+
+            // Health and posture are written to the ped and never read back — the
+            // bridge has no ped-state query, only a position one. Comparing the
+            // server's value against itself would render as a match and prove
+            // nothing, which is worse than saying it cannot be checked.
+            comparison.Fields.Add(Unreadable(
+                "health", server.Health.ToString(CultureInfo.InvariantCulture),
+                "the bridge writes ped health and does not read it back"));
+            comparison.Fields.Add(Unreadable(
+                "flags", server.Flags.ToString(),
+                "posture is applied to the ped and not queryable from it"));
             return comparison;
         }
 

@@ -95,7 +95,8 @@ namespace Gtamp.Client.Diagnostics
 
             lines.Add(new OverlayLine(
                 $"entities {client.ReplicatedWorld.EntityCount}   " +
-                $"vehicles {client.RemoteEntities.VehicleCount}   objects {client.RemoteEntities.ObjectCount}",
+                $"vehicles {client.RemoteEntities.VehicleCount}   npcs {client.RemoteEntities.NpcCount}   " +
+                $"objects {client.RemoteEntities.ObjectCount}",
                 OverlaySeverity.Normal));
 
             // Whether the session is encrypted is a fact about the session, not a live

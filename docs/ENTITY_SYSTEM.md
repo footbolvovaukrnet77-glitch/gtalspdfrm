@@ -223,5 +223,19 @@ burst, bits 8-15 broken or punctured.
 combat target, a relationship group and a free-form group id, so a mod can keep a
 set of peds together without inventing its own registry.
 
+`RemoteEntityManager` creates and drives a ped for each one, through the same
+`RemotePedController` a player's ped uses — the gait selection, the correction
+thresholds, the ragdoll pose and the death handling are the same problem, and a
+second copy of that logic would be a second set of bugs. One difference, and it is
+deliberate: an NPC whose model is missing is **substituted**, because an NPC is
+scenery with a role and a crowd with a hole in it is worse than a crowd wearing
+the wrong jacket. A player is never substituted — you have to be able to
+recognise who you are looking at.
+
+Until this existed the type was registered, serialised, delta encoded, persisted,
+replicated and accepted by the damage arbiter, and no client created anything for
+it. A spawned NPC appeared in the world state and in every diagnostic and was
+invisible in the game.
+
 **`ObjectEntity`** adds model, rotation, health, flags and attachment to another
 entity.
