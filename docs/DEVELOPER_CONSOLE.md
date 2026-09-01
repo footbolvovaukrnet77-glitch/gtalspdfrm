@@ -200,6 +200,30 @@ working and is annotated as such.
 
 ## The network overlay
 
+### `selftest`
+
+Asks the running game which replicated capabilities actually arrived, and prints
+one line each. It is the only place where this project's test suite and the engine
+meet: the suite proves the decisions and can prove nothing about GTA V, so until
+this existed, finding out whether a ped ends up in seat -1 meant a person watching
+for it and remembering what they saw.
+
+Four outcomes, kept distinct on purpose — "no", "not tried" and "go and look" are
+three different answers, and collapsing them is how a self-test becomes a green
+light that means nothing:
+
+| Mark | Meaning |
+| --- | --- |
+| `ok` | The game answered and the answer was right |
+| `FAIL` | The game answered and the answer was wrong. This is a defect |
+| `--` | Nothing to check against yet — nobody else is connected, nobody has fired |
+| `look` | Cannot be judged from inside the game. A blip is on the screen or it is not, and no state says which |
+
+Run it alone and almost everything reads `--`; that is correct, not a failure. Get
+another player near you, drive, fire a weapon and run it again. The same report is
+written into every `bundle`, which makes a bug report from a real session far more
+useful than one without it.
+
 `ShowPlayerBlips` and `ShowPlayerNames` in `client.ini` control the map blip and
 the floating name drawn for each other player. Both default to **on**: a session in
 which you cannot find or identify anybody is not a session. The blip is coloured by

@@ -105,6 +105,12 @@ namespace Gtamp.Client.Ui
                 _ => Mods(client)));
 
             console.RegisterCommand(new ConsoleCommand(
+                "selftest",
+                "selftest",
+                "ask the running game which replicated features actually arrived",
+                _ => BridgeSelfTest.Format(BridgeSelfTest.Run(client))));
+
+            console.RegisterCommand(new ConsoleCommand(
                 "diagnostics",
                 "diagnostics",
                 "check the installation and the current session",

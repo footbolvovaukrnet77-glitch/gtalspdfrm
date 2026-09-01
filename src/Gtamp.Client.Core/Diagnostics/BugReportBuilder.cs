@@ -87,6 +87,7 @@ namespace Gtamp.Client.Diagnostics
             AppendPlayer(builder, client);
             AppendEntities(builder, client);
             AppendNetwork(builder, client);
+            AppendSelfTest(builder, client);
             AppendStackTrace(builder, client);
             AppendRecentEvents(builder, client);
             AppendLogs(builder, client);
@@ -153,6 +154,21 @@ namespace Gtamp.Client.Diagnostics
             builder.AppendLine($"  resyncs         {client.ResyncsRequested}");
             builder.AppendLine($"  shots           {client.ShotsFired} fired / {client.ShotsSeen} seen");
             builder.AppendLine($"  hits            {client.HitsReported} reported");
+            builder.AppendLine();
+        }
+
+        /// <summary>
+        /// What the running game answered about each replicated capability.
+        /// <para>
+        /// The most valuable thing a bug report from a real session can carry: the
+        /// test suite proves the decisions and can prove nothing about the engine, so
+        /// this is the only place the two meet.
+        /// </para>
+        /// </summary>
+        private static void AppendSelfTest(StringBuilder builder, MultiplayerClient client)
+        {
+            builder.AppendLine("SELF TEST");
+            builder.AppendLine(BridgeSelfTest.Format(BridgeSelfTest.Run(client)));
             builder.AppendLine();
         }
 

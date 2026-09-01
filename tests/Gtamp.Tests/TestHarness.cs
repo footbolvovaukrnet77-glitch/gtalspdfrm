@@ -33,6 +33,12 @@ namespace Gtamp.Tests
             Health = 200,
             MaxHealth = 200,
             ModelHash = 0x9B22DBAF,
+
+            // The real bridge never returns null here — the throttled path hands back
+            // the cached appearance — so a fake that did would make "could not read
+            // your clothing" look normal.
+            Appearance = new PedAppearance(),
+            AimPosition = new NetVector3(225f, -810f, 30.7f),
         };
 
         public Dictionary<int, RemotePedCommand> Peds { get; } = new Dictionary<int, RemotePedCommand>();
