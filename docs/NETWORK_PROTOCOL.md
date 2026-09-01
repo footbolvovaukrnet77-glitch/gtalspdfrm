@@ -294,11 +294,19 @@ practice.
 | `0x31` | ServerEvent | reliable | S → C |
 | `0x32` | ChatMessage | reliable | both |
 | `0x33` | WeaponShot | unreliable | both |
-| `0x40` | ModManifest | reliable | both |
-| `0x41` | ModCompatibilityReport | reliable | S → C |
+| `0x40` | ModManifest | **reserved, never sent** | — |
+| `0x41` | ModCompatibilityReport | **reserved, never sent** | — |
 | `0x50` | AdminCommand | reliable | C → S |
 | `0x51` | SecurityNotice | reliable | S → C |
 | `0xF0`–`0xFF` | reserved for the Mod SDK | either | both |
+
+**Two ids in that table are reserved and neither is ever sent.** Mod negotiation
+happens inside the handshake, because it has to be settled before a client is
+admitted rather than after: the manifest rides in `ConnectRequest` and the
+compatibility report rides in `ConnectAccept`. The ids are kept because a wire
+format reserves ahead of use and renumbering later to close a gap breaks every
+client already speaking it — and `NetMessageTypeTests` enforces the classification,
+so an id that starts being sent fails the build until the table is corrected.
 
 ### ModEvent (`0x2A`)
 

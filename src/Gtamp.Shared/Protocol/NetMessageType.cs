@@ -77,8 +77,20 @@ namespace Gtamp.Shared.Protocol
         /// </summary>
         WeaponShot = 0x33,
 
-        // 0x40-0x4F — mod negotiation.
+        // 0x40-0x4F — mod negotiation. Both ids are RESERVED and neither is ever
+        // sent: mod negotiation happens inside the handshake, because it has to be
+        // settled before a client is admitted rather than after. The manifest rides
+        // in ConnectRequest and the compatibility report rides in ConnectAccept.
+        //
+        // They are kept rather than deleted because a wire format reserves ids ahead
+        // of use, and renumbering later to close a gap breaks every client already
+        // speaking it. NetMessageTypeTests enforces this comment against reality: if
+        // either ever starts being sent, that test fails and says to move it.
+
+        /// <summary>Reserved. The manifest travels inside <c>ConnectRequestMessage</c>.</summary>
         ModManifest = 0x40,
+
+        /// <summary>Reserved. The report travels inside <c>ConnectAcceptMessage</c>.</summary>
         ModCompatibilityReport = 0x41,
 
         // 0x50-0x5F — administration and security.
