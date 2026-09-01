@@ -22,6 +22,10 @@ a dead link:
    languages, and every one of them was maintained by hand — which is to say by
    remembering. The count is derivable: xUnit runs one case per `[Fact]` and one
    per `[InlineData]`, so it can be counted from the sources and compared.
+6. A `client.ini` example that is not the file the client writes. Both install
+   guides print the whole file, so a setting missing from the example is a
+   setting a reader cannot know exists — `HealthCorrectionThreshold` was in
+   every generated file and in neither document.
 
 Exit code 0 when clean, 1 with a list of problems otherwise. No dependencies
 beyond the standard library, so CI needs nothing installed.
@@ -213,6 +217,62 @@ def check_test_counts(root, files, problems):
             "no document states a test count any more — the check above cannot work")
 
 
+CLIENT_INI_BLOCK = re.compile(r"\[client\]\n(.*?)```", re.S)
+CLIENT_INI_KEY = re.compile(r"^([A-Za-z]\w*)=", re.M)
+
+
+def saved_client_keys(root):
+    """The keys ClientConfig.Save actually writes, in the order it writes them."""
+    source = os.path.join(root, "src", "Gtamp.Client.Core", "Core", "ClientConfig.cs")
+    if not os.path.exists(source):
+        return None
+
+    with io.open(source, encoding="utf-8") as handle:
+        text = handle.read()
+
+    start = text.find("public void Save(")
+    if start < 0:
+        return None
+
+    body = text[start:text.find("File.WriteAllLines", start)]
+    return [m for m in re.findall(r'\$"([A-Za-z]\w*)=', body)]
+
+
+def check_client_ini_example(root, problems):
+    """The documented client.ini must list exactly what the client writes."""
+    expected = saved_client_keys(root)
+    if not expected:
+        problems.append(
+            "ClientConfig.Save could not be read — the client.ini example check cannot work")
+        return
+
+    for name in ("INSTALL.md", os.path.join("ru", "INSTALL.md")):
+        path = os.path.join(root, "docs", name)
+        if not os.path.exists(path):
+            continue
+
+        with io.open(path, encoding="utf-8") as handle:
+            text = handle.read()
+
+        block = CLIENT_INI_BLOCK.search(text)
+        shown = name.replace(os.sep, "/")
+        if block is None:
+            problems.append("docs/%s no longer shows a [client] block" % shown)
+            continue
+
+        listed = CLIENT_INI_KEY.findall(block.group(1))
+        for key in expected:
+            if key not in listed:
+                problems.append(
+                    "docs/%s does not document the %s setting, which the client writes"
+                    % (shown, key))
+
+        for key in listed:
+            if key not in expected:
+                problems.append(
+                    "docs/%s documents a %s setting the client does not write" % (shown, key))
+
+
 def main():
     root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
     files = list(markdown_files(root))
@@ -222,6 +282,7 @@ def main():
     check_translation_pairs(root, problems)
     check_protocol_version(root, problems)
     check_test_counts(root, files, problems)
+    check_client_ini_example(root, problems)
 
     print("checked %d markdown files" % len(files))
     for problem in problems:
@@ -230,9 +291,9 @@ def main():
     if problems:
         print("%d problem(s)" % len(problems))
         return 1
-    print(
-        "no broken links, no missing translations, "
-        "protocol version and test count agree with the code")
+    # Deliberately not a list of the checks: adding one should not require editing
+    # the two documents that quote this line.
+    print("no broken links, no missing translations, docs agree with the code")
     return 0
 
 

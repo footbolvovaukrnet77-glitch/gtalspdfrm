@@ -57,18 +57,18 @@ Expected: `Passed! - Failed: 0, Passed: 553`.
 python3 tools/check-docs.py    # or python tools\check-docs.py on Windows
 ```
 
-Expected: `no broken links, no missing translations, protocol version and test count
-agree with the code`. It fails on a relative link to a file that does not exist, on a
-`#anchor` naming a heading that is not there, on an English document with no Russian
-counterpart or the reverse, on a protocol version printed in the documentation that is
-not the one `ProtocolConstants` actually sends, and on a test count printed in the
-documentation that is not the number the suite has. Needs nothing but Python 3 — no
-packages to install.
+Expected: `no broken links, no missing translations, docs agree with the code`. It
+fails on a relative link to a file that does not exist, on a `#anchor` naming a heading
+that is not there, on an English document with no Russian counterpart or the reverse,
+on a protocol version that is not the one `ProtocolConstants` sends, on a test count
+that is not the number the suite has, and on a `client.ini` example that is not the
+file the client writes. Needs nothing but Python 3 — no packages to install.
 
-The last two exist because the documentation used to assert numbers that nothing
-checked, and both had drifted: the protocol documents described version 5 of a
-protocol on version 8. A number in a document that no build step can contradict is a
-number that will eventually be wrong.
+Those last three exist because the documentation asserted things nothing checked, and
+all three had drifted: the protocol documents described version 5 of a protocol on
+version 8, and this page printed a `client.ini` missing a setting every generated file
+contains. A claim in a document that no build step can contradict is a claim that will
+eventually be wrong.
 
 ### The same three commands run in CI
 
@@ -254,6 +254,7 @@ IdentitySecret=<your private key; never share it, never lose it>
 ConsoleKey=119
 InterpolationDelay=0.12
 CorrectionThreshold=3
+HealthCorrectionThreshold=20
 ShowNetworkOverlay=False
 ShowPlayerBlips=True
 ShowPlayerNames=True
