@@ -310,6 +310,7 @@ namespace Gtamp.Client.Shv.Bridge
             }
 
             ApplyVitals(ped, in command, state);
+            ApplyWeapon(ped, command.WeaponHash, state);
 
             switch (command.Action)
             {
@@ -335,6 +336,51 @@ namespace Gtamp.Client.Shv.Bridge
                 default:
                     DriveLocomotion(ped, in command, state);
                     return;
+            }
+        }
+
+        /// <summary>
+        /// Puts the reported weapon in a remote player's hands.
+        /// <para>
+        /// Nothing did this before. The weapon was read from the local player, sent,
+        /// stored, replicated and printed by <c>players</c> and <c>diff</c> — and never
+        /// applied, so every remote player stood empty-handed whatever they were
+        /// carrying, while the damage arbiter on the server scored their rifle hits.
+        /// </para>
+        /// <para>
+        /// Only on a change, because <c>GiveWeaponToPed</c> every frame re-equips and
+        /// visibly interrupts the draw animation. And unarmed is applied explicitly
+        /// rather than skipped: holstering is a change like any other, and the version
+        /// of this bug that only forgets the unarmed case leaves a player permanently
+        /// holding the last thing they drew.
+        /// </para>
+        /// </summary>
+        private static void ApplyWeapon(Ped ped, uint weaponHash, PedDriveState state)
+        {
+            if (state.AppliedWeapon == weaponHash)
+            {
+                return;
+            }
+
+            try
+            {
+                if (weaponHash == 0)
+                {
+                    Function.Call(Hash.SET_CURRENT_PED_WEAPON, ped.Handle, (uint)WeaponHash.Unarmed, true);
+                }
+                else
+                {
+                    Function.Call(Hash.GIVE_WEAPON_TO_PED, ped.Handle, weaponHash, 250, false, true);
+                    Function.Call(Hash.SET_CURRENT_PED_WEAPON, ped.Handle, weaponHash, true);
+                }
+
+                state.AppliedWeapon = weaponHash;
+            }
+            catch (Exception)
+            {
+                // A weapon hash from a mod this client does not have. Left unapplied and
+                // retried on the next change rather than taking the frame down; the
+                // missing-content tracker is what reports an unresolvable hash.
             }
         }
 
@@ -806,6 +852,14 @@ namespace Gtamp.Client.Shv.Bridge
             public float TaskBlend;
             public bool Ragdolling;
             public bool WasDead;
+
+            /// <summary>
+            /// The weapon last actually given to this ped, so the natives are called on
+            /// a change and not on every frame. Unset until the first apply, which is
+            /// why it is nullable rather than 0: 0 is unarmed, a real value that must be
+            /// applied once like any other.
+            /// </summary>
+            public uint? AppliedWeapon;
 
             public void Reset()
             {

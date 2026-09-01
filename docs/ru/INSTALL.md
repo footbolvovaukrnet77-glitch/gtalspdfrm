@@ -50,7 +50,7 @@ tools\build.bat Release
 ./tools/test.sh          # или tools\test.bat
 ```
 
-Ожидается: `Passed! - Failed: 0, Passed: 379`.
+Ожидается: `Passed! - Failed: 0, Passed: 387`.
 
 ### Проверка документации
 

@@ -84,7 +84,7 @@ namespace Gtamp.Tests
         {
             int handle = _nextHandle++;
             Peds[handle] = new RemotePedCommand(
-                RemotePedAction.Idle, position, heading, 0f, true, false, position, 200, 0);
+                RemotePedAction.Idle, position, heading, 0f, true, false, position, 200, 0, 0);
             return handle;
         }
 

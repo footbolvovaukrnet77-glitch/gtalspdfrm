@@ -236,7 +236,7 @@ machine and real clients, and is not claimed here.
 | Step | What it guards |
 | --- | --- |
 | `dotnet build -c Release -warnaserror` | The zero-warning claim. Without `-warnaserror` it decays the first time a warning lands that nobody scrolls up far enough to see |
-| `dotnet test -c Release` | All 379 tests, with the `.trx` uploaded as an artifact so a failure is readable without re-running anything |
+| `dotnet test -c Release` | All 387 tests, with the `.trx` uploaded as an artifact so a failure is readable without re-running anything |
 | `python3 tools/check-docs.py` | Dead relative links, `#anchors` naming headings that no longer exist, and any document that lost its counterpart in the other language |
 
 The whole solution compiles on `ubuntu-latest`, the `net48` client included,
@@ -276,6 +276,21 @@ verified against both SDKs — build and 360 tests clean on 8.0.424, build clean
 This is the sixth defect the project has found in itself, and the only one no
 amount of local testing would have surfaced: the bug was in the assumption that
 *my* SDK is *the* SDK.
+
+**An eighth defect, found by reading a mod that has actually been played.**
+`CurrentWeaponHash` was read from the local player, serialised, sent, stored on the
+server, replicated to every other client and printed by both `players` and `diff` —
+and the only weapon-related call anywhere in the ScriptHookVDotNet layer was the
+read. Nothing ever armed a remote ped, so every other player stood empty-handed
+whatever they were carrying, while the server's damage arbiter scored their rifle
+hits. `RemotePedCommand` now carries the hash, and the bridge applies it on a change
+— explicitly including unarmed, because holstering is a change like any other.
+
+The clue came from RAGECOOP-V (MIT), whose own commit reads "Fix network players
+never switching back to unarmed": they applied weapons and forgot the holster, which
+is the narrow version of the same bug. Nothing was copied. Reading a project that has
+been played for years is how you find the defects that only running the thing
+reveals — and this project has never been run.
 
 **A seventh defect, found by reading the security code rather than by running it.**
 `SessionCrypto` had counted encrypted and rejected packets "for the network

@@ -37,7 +37,8 @@ namespace Gtamp.Client.Players
             bool aiming,
             NetVector3 aimPosition,
             int health,
-            int armor)
+            int armor,
+            uint weaponHash)
         {
             Action = action;
             TargetPosition = targetPosition;
@@ -48,9 +49,23 @@ namespace Gtamp.Client.Players
             AimPosition = aimPosition;
             Health = health;
             Armor = armor;
+            WeaponHash = weaponHash;
         }
 
         public RemotePedAction Action { get; }
+
+        /// <summary>
+        /// The weapon this player is holding, or 0 for unarmed.
+        /// <para>
+        /// It reached the wire, the server and the console long before it reached
+        /// anyone's hands: nothing in the ScriptHookVDotNet layer ever armed a remote
+        /// ped, so every other player appeared empty-handed whatever they were
+        /// carrying. Zero has to travel as deliberately as any other value — a player
+        /// who holsters is a state change, and treating 0 as "nothing to do" is how
+        /// a remote player ends up permanently holding the last weapon they drew.
+        /// </para>
+        /// </summary>
+        public uint WeaponHash { get; }
 
         public NetVector3 TargetPosition { get; }
 
@@ -112,7 +127,8 @@ namespace Gtamp.Client.Players
                 // A dead ped is placed, not tasked: the game's own death animation
                 // owns it from there, and walking a corpse looks like a bug.
                 return new RemotePedCommand(
-                    RemotePedAction.Dead, frame.Position, frame.Heading, 0f, true, false, frame.AimPosition, 0, 0);
+                    RemotePedAction.Dead, frame.Position, frame.Heading, 0f, true, false, frame.AimPosition, 0, 0,
+                    frame.CurrentWeaponHash);
             }
 
             if ((frame.Flags & PlayerFlags.Ragdoll) != 0)
@@ -128,7 +144,8 @@ namespace Gtamp.Client.Players
                     aiming: false,
                     frame.AimPosition,
                     frame.Health,
-                    frame.Armor);
+                    frame.Armor,
+                    frame.CurrentWeaponHash);
             }
 
             if ((frame.Flags & PlayerFlags.InVehicle) != 0)
@@ -144,7 +161,8 @@ namespace Gtamp.Client.Players
                     aiming: false,
                     frame.AimPosition,
                     frame.Health,
-                    frame.Armor);
+                    frame.Armor,
+                    frame.CurrentWeaponHash);
             }
 
             float distance = NetVector3.Distance(pedPosition, frame.Position);
@@ -170,7 +188,8 @@ namespace Gtamp.Client.Players
                 aiming,
                 frame.AimPosition,
                 frame.Health,
-                frame.Armor);
+                frame.Armor,
+                frame.CurrentWeaponHash);
         }
 
         private static RemotePedAction ChooseGait(in RemotePedFrame frame, float distance)
