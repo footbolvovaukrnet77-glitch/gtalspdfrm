@@ -441,9 +441,10 @@ namespace Gtamp.Client.Ui
 
             // A model the server set and this client could not apply is the one line
             // here a player actually has to act on, so it is never folded away.
-            builder.Append(
+            builder.AppendLine(
                 $"  models          {client.ModelChangesApplied} applied / " +
                 $"{client.ModelChangesRefused} given up on");
+            builder.Append($"  explosions      {client.RemoteEntities.VehicleExplosionsDrawn} drawn for wrecked vehicles");
             return builder.ToString();
         }
 

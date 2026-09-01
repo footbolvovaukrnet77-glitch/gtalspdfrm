@@ -1,3 +1,4 @@
+using System.Linq;
 using System.Collections.Generic;
 using Gtamp.Client.Diagnostics;
 using Gtamp.Shared.Core;
@@ -208,6 +209,45 @@ namespace Gtamp.Tests
 
             List<SelfTestResult> results = BridgeSelfTest.Run(player.Client);
             Assert.Equal(SelfTestOutcome.Broken, Find(results, "player model").Outcome);
+        }
+
+        /// <summary>
+        /// The explosion row must never say "works". This side can only know that the
+        /// explosion was *asked for*; whether a fireball appeared where the wreck is
+        /// standing cannot be judged from inside the game, and claiming otherwise is
+        /// exactly the overclaim the self test exists to avoid.
+        /// </summary>
+        [Fact]
+        public void ADrawnVehicleExplosionAsksForEyesRatherThanClaimingSuccess()
+        {
+            using var harness = new TestHarness();
+            TestClient watcher = harness.CreateClient("watcher");
+            watcher.Client.Connect("127.0.0.1", TestHarness.ServerEndPoint.Port);
+            Assert.True(harness.AdvanceUntil(() => watcher.Client.IsConnected));
+
+            var car = new VehicleEntity(harness.Server.World.AllocateEntityId())
+            {
+                Position = new NetVector3(220f, -800f, 30f),
+                ModelHash = 0x0BBA91E1,
+                EngineHealth = 1000f,
+            };
+            harness.Server.World.Spawn(car);
+
+            Assert.True(harness.AdvanceUntil(() =>
+                watcher.Client.RemoteEntities.Vehicles.Any(v => v.VehicleHandle != 0)));
+
+            // Before anything is destroyed the row is honest about having nothing to say.
+            Assert.Equal(
+                SelfTestOutcome.NotExercised,
+                Find(BridgeSelfTest.Run(watcher.Client), "vehicle explosions").Outcome);
+
+            car.Flags |= VehicleFlags.Burnt;
+            harness.Server.World.Touch(car);
+            Assert.True(harness.AdvanceUntil(() => watcher.Client.RemoteEntities.VehicleExplosionsDrawn > 0));
+
+            Assert.Equal(
+                SelfTestOutcome.NeedsEyes,
+                Find(BridgeSelfTest.Run(watcher.Client), "vehicle explosions").Outcome);
         }
 
     }

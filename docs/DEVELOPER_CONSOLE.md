@@ -224,6 +224,17 @@ another player near you, drive, fire a weapon and run it again. The same report 
 written into every `bundle`, which makes a bug report from a real session far more
 useful than one without it.
 
+Two rows are worth going out of your way to exercise, because they are the newest
+and the least proven:
+
+- **`player model`** reads `FAIL` when the server set a model this client could not
+  apply — which means the model is not installed here, and everyone else is looking
+  at a character this machine cannot draw. The log names the hash.
+- **`vehicle explosions`** reads `look` once a replicated vehicle has been destroyed
+  near you. Destroy a car in front of another player and check that they see a
+  fireball rather than a wreck that simply appears. This side can only know the
+  explosion was asked for.
+
 `ShowPlayerBlips` and `ShowPlayerNames` in `client.ini` control the map blip and
 the floating name drawn for each other player. Both default to **on**: a session in
 which you cannot find or identify anybody is not a session. The blip is coloured by

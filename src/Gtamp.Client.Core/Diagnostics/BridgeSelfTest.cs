@@ -215,6 +215,19 @@ namespace Gtamp.Client.Diagnostics
             results.Add(client.RemoteEntities.NpcCount > 0
                 ? new SelfTestResult("networked NPCs", SelfTestOutcome.Works, $"{client.RemoteEntities.NpcCount} drawn")
                 : new SelfTestResult("networked NPCs", SelfTestOutcome.NotExercised, "the server has spawned none"));
+
+            // "Works" would be an overclaim: this counts the times the explosion was
+            // *asked for*, which is all this side can know. Whether a fireball actually
+            // appeared where the wreck is standing is a question for eyes.
+            results.Add(client.RemoteEntities.VehicleExplosionsDrawn > 0
+                ? new SelfTestResult(
+                    "vehicle explosions",
+                    SelfTestOutcome.NeedsEyes,
+                    $"{client.RemoteEntities.VehicleExplosionsDrawn} drawn — look for a fireball, not just a wreck")
+                : new SelfTestResult(
+                    "vehicle explosions",
+                    SelfTestOutcome.NotExercised,
+                    "no replicated vehicle has been destroyed"));
         }
 
         private static void CheckEventPaths(MultiplayerClient client, List<SelfTestResult> results)
