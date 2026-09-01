@@ -153,6 +153,8 @@ namespace Gtamp.Client.Players
             AimPosition = NetVector3.Lerp(from.AimPosition, to.AimPosition, t),
             AnimationHash = to.AnimationHash,
             Ragdoll = RagdollPose.Lerp(from.Ragdoll, to.Ragdoll, t),
+            VehicleId = to.VehicleId,
+            VehicleSeat = to.VehicleSeat,
         };
 
         /// <summary>Interpolates headings the short way round, so 359° -&gt; 1° does not spin the ped.</summary>

@@ -133,6 +133,19 @@ namespace Gtamp.Client.Core
             {
                 Send = (type, payload, delivery) => Connection.Peer?.Send(type, payload, delivery),
             };
+            // A remote player's car may be a replicated vehicle or the one this client
+            // owns and is driving — a passenger in your own car is the ordinary case,
+            // and the two live in different places.
+            RemotePlayers.ResolveVehicleHandle = id =>
+            {
+                if (RemoteEntities.TryGetVehicle(id, out RemoteVehicle vehicle) && vehicle.VehicleHandle != 0)
+                {
+                    return vehicle.VehicleHandle;
+                }
+
+                return OwnedEntities.TryGetHandle(id, out int handle) ? handle : 0;
+            };
+
             Rpc = new RpcDispatcher<object?>(Log);
             Activities = new ActivityWatcher(Log);
 

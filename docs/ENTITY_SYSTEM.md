@@ -134,7 +134,7 @@ never reaches the ped. So the whole set is listed, applied or not.
 | --- | --- | --- |
 | `Dead` | `RemotePedController` → `DriveDead` | Placed, not tasked; the game's death animation owns it |
 | `Ragdoll` | `DriveRagdoll` + `RagdollDriver` | Head and both feet corrected with impulses |
-| `InVehicle` | `RemotePedController` | Held at the replicated position; the vehicle owns it |
+| `InVehicle` | `SeatRemotePedInVehicle`, once per seat change | Placed at the reported position only when the local game has no such vehicle to sit in |
 | `Aiming` | `TASK_AIM_GUN_AT_COORD` | Real aim target from the shooter's camera |
 | `Shooting` | `WeaponShot` relay | The rounds themselves, counted from the clip |
 | `Reloading` | `TASK_RELOAD_WEAPON`, once per reload | Re-issuing it every frame makes the ped fumble the magazine forever |
@@ -146,7 +146,7 @@ never reaches the ped. So the whole set is listed, applied or not.
 | `Melee` | **not applied** | A melee task needs a target entity, and the target is not replicated — only the flag. Issuing it without one makes the ped swing at the air in a random direction |
 | `InCover` | **not applied** | Cover is a position in the world, not a state of the ped. `TASK_STAY_IN_COVER` needs a cover point the receiving client would have to find for itself, and a wrong guess pins the ped to the wrong wall |
 | `Parachuting` | **not applied** | Needs the parachute prop, its own task set and a canopy state machine. Scheduled with the wider animation work |
-| `EnteringVehicle` | **not applied** | Phase 3 seats a ped in a vehicle outright; the entry animation is not played |
+| `EnteringVehicle` | **not applied** | A ped is seated outright; the entry animation is not played, so a player appears in a car rather than climbing into it |
 | `Invincible` | server-side only | Read by the anti-cheat as a god-mode signal. Never applied to a remote ped — a remote ped is already invincible, because its health comes from the server |
 
 Six applied, one superseded, one server-side, ten not applied. The ten are a real

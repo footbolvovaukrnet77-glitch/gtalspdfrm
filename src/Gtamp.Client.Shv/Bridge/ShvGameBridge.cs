@@ -381,6 +381,11 @@ namespace Gtamp.Client.Shv.Bridge
             ApplyWeapon(ped, command.WeaponHash, state);
             ApplyPosture(ped, in command, state);
 
+            if (command.Action != RemotePedAction.InVehicle)
+            {
+                LeaveVehicle(ped, state);
+            }
+
             switch (command.Action)
             {
                 case RemotePedAction.Dead:
@@ -392,11 +397,9 @@ namespace Gtamp.Client.Shv.Bridge
                     return;
 
                 case RemotePedAction.InVehicle:
-                    // Phase 3 seats the ped in the replicated vehicle. Until then it is
-                    // held at the reported position rather than left walking on water.
-                    Place(ped, command.TargetPosition, command.Heading);
-                    state.Reset();
+                    DriveSeated(ped, in command, state);
                     return;
+
 
                 case RemotePedAction.Idle:
                     DriveIdle(ped, in command, state);
@@ -605,6 +608,78 @@ namespace Gtamp.Client.Shv.Bridge
             helper.Impulse = ToGame(impulse);
             helper.Start();
             helper.Stop();
+        }
+
+        /// <summary>
+        /// Puts a riding ped in its seat, once.
+        /// <para>
+        /// Before this, <c>SeatRemotePedInVehicle</c> was on the bridge interface,
+        /// implemented, and called by nothing: a passing car was drawn empty while its
+        /// driver stood at the car's coordinates, sliding along the road with it.
+        /// </para>
+        /// <para>
+        /// Once, because seating is a task: re-issuing it every frame restarts the
+        /// entry animation and the ped climbs into the same seat forever. The seat is
+        /// re-asserted only when the vehicle or the seat index actually changes, or
+        /// when the game has taken the ped out of the car on its own.
+        /// </para>
+        /// </summary>
+        private void DriveSeated(Ped ped, in RemotePedCommand command, PedDriveState state)
+        {
+            LeaveRagdoll(ped, state);
+
+            if (command.VehicleHandle == 0)
+            {
+                // No vehicle to sit in on this client — it has not been created yet, or
+                // its model is missing. Holding the ped at the reported position is
+                // wrong-looking; leaving it where it was is worse.
+                Place(ped, command.TargetPosition, command.Heading);
+                state.Reset();
+                state.SeatedVehicle = 0;
+                return;
+            }
+
+            bool alreadySeated = state.SeatedVehicle == command.VehicleHandle
+                && state.SeatedIndex == command.VehicleSeat
+                && ped.IsInVehicle();
+
+            if (alreadySeated)
+            {
+                return;
+            }
+
+            SeatRemotePedInVehicle(ped.Handle, command.VehicleHandle, command.VehicleSeat);
+            state.Reset();
+            state.SeatedVehicle = command.VehicleHandle;
+            state.SeatedIndex = command.VehicleSeat;
+        }
+
+        /// <summary>
+        /// Takes a ped back out of a car once the server says it is on foot.
+        /// <para>
+        /// Placing a ped that is still sitting in a vehicle moves the seat, not the
+        /// ped — so without this a player who got out stayed in the car on every other
+        /// screen, being driven around by a driver who had also left.
+        /// <c>CLEAR_PED_TASKS_IMMEDIATELY</c> ejects rather than tasking an exit,
+        /// because an exit animation takes about a second and the next frame is going
+        /// to place this ped somewhere else anyway.
+        /// </para>
+        /// </summary>
+        private static void LeaveVehicle(Ped ped, PedDriveState state)
+        {
+            if (state.SeatedVehicle == 0)
+            {
+                return;
+            }
+
+            state.SeatedVehicle = 0;
+            state.SeatedIndex = -2;
+
+            if (ped.IsInVehicle())
+            {
+                Function.Call(Hash.CLEAR_PED_TASKS_IMMEDIATELY, ped.Handle);
+                state.Reset();
+            }
         }
 
         private void DriveIdle(Ped ped, in RemotePedCommand command, PedDriveState state)
@@ -1327,6 +1402,11 @@ namespace Gtamp.Client.Shv.Bridge
 
             /// <summary>Whether the reload task has already been issued for the reload in progress.</summary>
             public bool Reloading;
+
+            /// <summary>The vehicle and seat this ped was last put into, so it is not re-seated every frame.</summary>
+            public int SeatedVehicle;
+
+            public sbyte SeatedIndex = -2;
 
             public bool Ragdolling;
 

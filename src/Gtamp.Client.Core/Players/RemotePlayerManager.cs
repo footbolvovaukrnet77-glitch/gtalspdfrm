@@ -34,6 +34,17 @@ namespace Gtamp.Client.Players
         /// <summary>The local player's entity, which must never be given a remote ped.</summary>
         public EntityId LocalEntityId { get; set; } = EntityId.None;
 
+        /// <summary>
+        /// Turns the replicated id of a vehicle into the handle the local game has for
+        /// it, or 0 when it has none.
+        /// <para>
+        /// A delegate rather than a reference to the two managers that know: a
+        /// passenger's car may be a replicated one, or it may be the car this client
+        /// owns and is driving, and this class should not have to know which.
+        /// </para>
+        /// </summary>
+        public Func<EntityId, int>? ResolveVehicleHandle { get; set; }
+
         public int Count => _players.Count;
 
         public IEnumerable<RemotePlayer> Players => _players.Values;
@@ -158,9 +169,20 @@ namespace Gtamp.Client.Players
                     ? position
                     : frame.Position;
 
-                RemotePedCommand command = RemotePedController.Decide(in frame, pedPosition);
+                RemotePedCommand command = RemotePedController.Decide(
+                    in frame, pedPosition, VehicleHandleFor(in frame));
                 _bridge.ApplyRemotePedCommand(player.PedHandle, in command);
             }
+        }
+
+        private int VehicleHandleFor(in RemotePedFrame frame)
+        {
+            if (!frame.VehicleId.IsValid || frame.VehicleSeat <= -2 || ResolveVehicleHandle == null)
+            {
+                return 0;
+            }
+
+            return ResolveVehicleHandle(frame.VehicleId);
         }
 
         private void ApplyAppearanceIfChanged(RemotePlayer player)

@@ -56,6 +56,7 @@ against the real game.
 | Item | State |
 | --- | --- |
 | `VehicleEntity` | ✅ 27 replicated fields: physics, drivetrain, health, doors, windows, tyres, paint, livery, plate, extras, neon, mods, occupants, trailer |
+| Riders in seats | ✅ a replicated character is seated in the vehicle it reports riding in, once per seat change, and ejected when it reports being on foot |
 | `PedEntity` | ✅ networked NPCs sharing the character field set with players, and driven client-side by the same controller. Models are substituted when missing, unlike players |
 | `ObjectEntity` | ✅ props, including attachment to another entity |
 | Client-created entities | ✅ spawn request, server-assigned ids, correlated replies |
@@ -239,7 +240,7 @@ machine and real clients, and is not claimed here.
 | Step | What it guards |
 | --- | --- |
 | `dotnet build -c Release -warnaserror` | The zero-warning claim. Without `-warnaserror` it decays the first time a warning lands that nobody scrolls up far enough to see |
-| `dotnet test -c Release` | All 457 tests, with the `.trx` uploaded as an artifact so a failure is readable without re-running anything |
+| `dotnet test -c Release` | All 464 tests, with the `.trx` uploaded as an artifact so a failure is readable without re-running anything |
 | `python3 tools/check-docs.py` | Dead relative links, `#anchors` naming headings that no longer exist, and any document that lost its counterpart in the other language |
 
 The whole solution compiles on `ubuntu-latest`, the `net48` client included,

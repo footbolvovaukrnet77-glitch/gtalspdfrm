@@ -243,5 +243,10 @@ namespace Gtamp.Client.Core
 
         /// <summary>Replicated limb positions; <see cref="RagdollPose.None"/> when not ragdolling.</summary>
         public RagdollPose Ragdoll;
+
+        /// <summary>The vehicle this character is riding in, and which seat. -2 means on foot.</summary>
+        public EntityId VehicleId;
+
+        public sbyte VehicleSeat;
     }
 }

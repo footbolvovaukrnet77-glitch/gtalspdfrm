@@ -258,7 +258,12 @@ namespace Gtamp.Client.Entities
                     ? position
                     : frame.Position;
 
-                RemotePedCommand command = RemotePedController.Decide(in frame, pedPosition);
+                int vehicleHandle = frame.VehicleId.IsValid && frame.VehicleSeat > -2
+                    && _vehicles.TryGetValue(frame.VehicleId, out RemoteVehicle? ride)
+                    ? ride.VehicleHandle
+                    : 0;
+
+                RemotePedCommand command = RemotePedController.Decide(in frame, pedPosition, vehicleHandle);
                 _bridge.ApplyRemotePedCommand(npc.PedHandle, in command);
                 ApplyNpcAppearanceIfChanged(npc);
             }

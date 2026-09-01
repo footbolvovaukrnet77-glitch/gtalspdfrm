@@ -40,7 +40,9 @@ namespace Gtamp.Client.Players
             int armor,
             uint weaponHash,
             RagdollPose ragdoll = default,
-            PlayerFlags flags = PlayerFlags.None)
+            PlayerFlags flags = PlayerFlags.None,
+            int vehicleHandle = 0,
+            sbyte vehicleSeat = -2)
         {
             Action = action;
             TargetPosition = targetPosition;
@@ -54,6 +56,8 @@ namespace Gtamp.Client.Players
             WeaponHash = weaponHash;
             Ragdoll = ragdoll;
             Flags = flags;
+            VehicleHandle = vehicleHandle;
+            VehicleSeat = vehicleSeat;
         }
 
         public RemotePedAction Action { get; }
@@ -89,6 +93,20 @@ namespace Gtamp.Client.Players
         /// </para>
         /// </summary>
         public PlayerFlags Flags { get; }
+
+        /// <summary>
+        /// Game-side handle of the vehicle this ped belongs in, or 0 when there is
+        /// none to put it in — the vehicle has not been created on this client yet, or
+        /// the ped is on foot.
+        /// <para>
+        /// Resolved by the manager rather than the controller: the controller works in
+        /// replicated ids and knows nothing about what the local game has built.
+        /// </para>
+        /// </summary>
+        public int VehicleHandle { get; }
+
+        /// <summary>GTA V seat index; -1 is the driver seat, -2 means not in a vehicle.</summary>
+        public sbyte VehicleSeat { get; }
 
         public NetVector3 TargetPosition { get; }
 
@@ -142,7 +160,11 @@ namespace Gtamp.Client.Players
         /// <summary>Distance at which a ped is walked even though its replicated gait says idle.</summary>
         public const float StaleIdleDistance = 1.5f;
 
-        public static RemotePedCommand Decide(in RemotePedFrame frame, NetVector3 pedPosition)
+        /// <param name="vehicleHandle">
+        /// Game handle of the vehicle this character is riding in, resolved by the
+        /// caller, or 0 when the local game has no such vehicle.
+        /// </param>
+        public static RemotePedCommand Decide(in RemotePedFrame frame, NetVector3 pedPosition, int vehicleHandle = 0)
         {
             bool dead = frame.Health <= 0 || (frame.Flags & PlayerFlags.Dead) != 0;
             if (dead)
@@ -183,21 +205,31 @@ namespace Gtamp.Client.Players
 
             if ((frame.Flags & PlayerFlags.InVehicle) != 0)
             {
-                // The vehicle carries the ped. Until vehicles replicate (Phase 3) the
-                // ped is held at the replicated position without tasking.
+                // The vehicle carries the ped, so the ped is put in a seat and left
+                // alone — a seated ped that is also being placed every frame is a ped
+                // fighting the car it is sitting in.
+                //
+                // Placement is the fallback for when there is no seat to put it in:
+                // the vehicle has not been created on this client yet, or it is one
+                // this client cannot build. A player standing at their car's
+                // coordinates looks wrong; a player at the origin looks broken.
+                bool seatable = vehicleHandle != 0 && frame.VehicleSeat > -2;
+
                 return new RemotePedCommand(
                     RemotePedAction.InVehicle,
                     frame.Position,
                     frame.Heading,
                     0f,
-                    hardCorrect: true,
+                    hardCorrect: !seatable,
                     aiming: false,
                     frame.AimPosition,
                     frame.Health,
                     frame.Armor,
                     frame.CurrentWeaponHash,
                     RagdollPose.None,
-                    frame.Flags);
+                    frame.Flags,
+                    seatable ? vehicleHandle : 0,
+                    frame.VehicleSeat);
             }
 
             float distance = NetVector3.Distance(pedPosition, frame.Position);
