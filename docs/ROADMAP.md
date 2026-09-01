@@ -62,6 +62,7 @@ against the real game.
 | Owned-entity streaming | ✅ the owner reports through the entity's own serializer, so a mod type streams with no protocol change |
 | Ownership and migration | ✅ on disconnect, on distance, and back to the server when nobody is near |
 | Weapons and combat | ✅ server-arbitrated damage with per-weapon range and damage envelopes |
+| Hits reported to the arbiter | ✅ read from the engine's own damage record on the attacking client. Before this the arbiter was reachable only from tests |
 | Visible gunfire | ✅ rounds counted from the clip and relayed as `WeaponShot`; the receiving client draws the tracer, flash and impact with **damage 0**. Projectiles are not echoed — see NETWORK_PROTOCOL.md |
 | Physics correction | ⏸ vehicles interpolate; prediction and reconciliation are Phase 4 |
 
@@ -238,7 +239,7 @@ machine and real clients, and is not claimed here.
 | Step | What it guards |
 | --- | --- |
 | `dotnet build -c Release -warnaserror` | The zero-warning claim. Without `-warnaserror` it decays the first time a warning lands that nobody scrolls up far enough to see |
-| `dotnet test -c Release` | All 446 tests, with the `.trx` uploaded as an artifact so a failure is readable without re-running anything |
+| `dotnet test -c Release` | All 451 tests, with the `.trx` uploaded as an artifact so a failure is readable without re-running anything |
 | `python3 tools/check-docs.py` | Dead relative links, `#anchors` naming headings that no longer exist, and any document that lost its counterpart in the other language |
 
 The whole solution compiles on `ubuntu-latest`, the `net48` client included,

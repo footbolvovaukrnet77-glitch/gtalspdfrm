@@ -424,7 +424,8 @@ namespace Gtamp.Client.Ui
             builder.AppendLine($"  unacked         {client.Connection.Peer!.UnackedReliableCount} reliable message(s)");
             builder.AppendLine($"  snapshots       {client.ReplicatedWorld.SnapshotsApplied} applied / {client.ReplicatedWorld.SnapshotsDropped} dropped");
             builder.AppendLine($"  resyncs         {client.ResyncsRequested}");
-            builder.Append($"  shots           {client.ShotsFired} fired / {client.ShotsSeen} seen");
+            builder.AppendLine($"  shots           {client.ShotsFired} fired / {client.ShotsSeen} seen");
+            builder.Append($"  hits            {client.HitsReported} reported");
             return builder.ToString();
         }
 

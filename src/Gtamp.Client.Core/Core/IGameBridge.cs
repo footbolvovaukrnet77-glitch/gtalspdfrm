@@ -1,3 +1,4 @@
+using System.Collections.Generic;
 using Gtamp.Client.Entities;
 using Gtamp.Client.Players;
 using Gtamp.Shared.Core;
@@ -76,6 +77,18 @@ namespace Gtamp.Client.Core
         /// a shot is an event and the send rate would swallow most of them.
         /// </summary>
         LocalShotSample SampleLocalShots();
+
+        /// <summary>
+        /// Hits the local player has landed on other players' peds since the last
+        /// call, appended to <paramref name="into"/>.
+        /// <para>
+        /// The engine's own hit detection answers this — it already knows about
+        /// bullets, melee, vehicles and explosions, and re-deriving any of that from a
+        /// ray would be worse at all four. The bridge reads what the game recorded and
+        /// puts the ped's health back where the server says it should be.
+        /// </para>
+        /// </summary>
+        void SampleLocalHits(List<LocalHitSample> into);
 
         /// <summary>
         /// Draws one shot fired by somebody else — the tracer, the muzzle flash and
@@ -188,6 +201,30 @@ namespace Gtamp.Client.Core
 
         /// <summary>Impact point, or the aim point when the round hit nothing.</summary>
         public NetVector3 Impact;
+    }
+
+    /// <summary>One hit the local player landed on a remote ped, as the game scored it.</summary>
+    public struct LocalHitSample
+    {
+        /// <summary>Game-side handle of the ped that was hit.</summary>
+        public int PedHandle;
+
+        public uint WeaponHash;
+
+        /// <summary>
+        /// Damage as the *game* computed it — the drop in health plus armour. Using
+        /// the engine's number rather than a table of our own means range falloff,
+        /// body armour and weapon mods are already accounted for, and the server
+        /// still clamps it against its own envelope before applying anything.
+        /// </summary>
+        public int Damage;
+
+        public NetVector3 HitPosition;
+
+        /// <summary>GTA V bone index, or -1 when the game did not record one.</summary>
+        public short HitBone;
+
+        public bool IsMelee;
     }
 
     /// <summary>Interpolated state applied to another player's ped this frame.</summary>

@@ -307,7 +307,30 @@ namespace Gtamp.Client.Shv.Bridge
                 // A replicated ped must not be simulated by the local game: no AI
                 // reactions, no ragdoll from local physics, no damage from local
                 // events. Its state comes from the server and nowhere else.
-                ped.IsInvincible = true;
+                // Damageable on purpose, and never actually harmed.
+                //
+                // A remote ped's health comes from the server and is rewritten every
+                // frame, so leaving it invincible cost nothing visible — except that
+                // the engine then records no hit against it, and the engine's hit
+                // record is the only thing on this machine that knows the local player
+                // shot somebody. Letting damage land, reading it, and putting the
+                // health straight back is how the arbiter gets told about it at all.
+                // The safeguards below stop the local game acting on damage it is
+                // allowed to register: no critical hits, no death from injury.
+                ped.IsInvincible = false;
+                Function.Call(Hash.SET_PED_SUFFERS_CRITICAL_HITS, ped.Handle, false);
+                Function.Call(Hash.SET_PED_DIES_WHEN_INJURED, ped.Handle, false);
+
+                // Proof against everything that can take a ped from full health to
+                // zero inside one frame — fire, explosions, collisions, drowning —
+                // and deliberately *not* proof against bullets or melee, which are
+                // the two the hit sampler exists to notice. The health is rewritten
+                // from the server every frame either way; what these prevent is the
+                // local game killing a ped outright before that frame comes round,
+                // which GTA V will not let us undo in place.
+                Function.Call(
+                    Hash.SET_ENTITY_PROOFS, ped.Handle,
+                    false, true, true, true, false, true, 0, true);
                 ped.BlockPermanentEvents = true;
                 ped.CanRagdoll = false;
                 ped.RelationshipGroup = Game.Player.Character.RelationshipGroup;
@@ -444,15 +467,36 @@ namespace Gtamp.Client.Shv.Bridge
                 state.WasDead = false;
             }
 
-            if (ped.Health != command.Health)
+            if (ped.IsDead)
             {
-                ped.Health = command.Health < 1 ? 1 : command.Health;
+                // The local game killed a ped the server says is alive. The proofs
+                // above make this unlikely rather than impossible, and a dead ped
+                // cannot be revived in place — so it is discarded and the player
+                // manager builds a new one next frame, which is the same recovery a
+                // model change uses.
+                _log.Warning(
+                    LogCategory.Client,
+                    "A remote ped died locally while the server had it alive; rebuilding it.");
+                DestroyRemotePed(ped.Handle);
+                return;
+            }
+
+            int health = command.Health < 1 ? 1 : command.Health;
+            if (ped.Health != health)
+            {
+                ped.Health = health;
             }
 
             if (ped.Armor != command.Armor)
             {
                 ped.Armor = command.Armor;
             }
+
+            // The baseline the hit sampler measures against. Without it a hit can be
+            // detected but not sized, and a damage report with no number in it is not
+            // a report.
+            state.AppliedHealth = health;
+            state.AppliedArmor = command.Armor;
         }
 
         private void DriveDead(Ped ped, in RemotePedCommand command, PedDriveState state)
@@ -749,6 +793,110 @@ namespace Gtamp.Client.Shv.Bridge
             catch (Exception)
             {
                 return default;
+            }
+        }
+
+        /// <summary>
+        /// Reads the hits the local player landed on other players since the previous
+        /// frame, and restores every ped it touched.
+        /// <para>
+        /// <b>The damage number comes from the game, not from us.</b> It is the drop
+        /// in health plus armour that the engine itself computed, so range falloff,
+        /// body armour, weapon components and mod weapons are all already in it. The
+        /// server clamps it against its own envelope regardless — this is a claim,
+        /// and it is treated as one.
+        /// </para>
+        /// <para>
+        /// A hit the engine recorded but did not size — the damage landed on
+        /// something this bridge does not measure — is dropped rather than reported
+        /// with an invented number.
+        /// </para>
+        /// </summary>
+        public void SampleLocalHits(List<LocalHitSample> into)
+        {
+            if (_remotePeds.Count == 0)
+            {
+                return;
+            }
+
+            try
+            {
+                Ped player = Game.Player.Character;
+                if (!player.Exists())
+                {
+                    return;
+                }
+
+                uint weaponHash = 0;
+                bool melee = false;
+                Weapon weapon = player.Weapons.Current;
+                if (weapon != null && weapon.IsPresent)
+                {
+                    weaponHash = unchecked((uint)weapon.Hash);
+                    melee = weapon.Group == WeaponGroup.Melee || weapon.Group == WeaponGroup.Unarmed;
+                }
+
+                foreach (KeyValuePair<int, Ped> entry in _remotePeds)
+                {
+                    Ped ped = entry.Value;
+                    if (!ped.Exists()
+                        || !Function.Call<bool>(
+                            Hash.HAS_ENTITY_BEEN_DAMAGED_BY_ENTITY, ped.Handle, player.Handle, true))
+                    {
+                        continue;
+                    }
+
+                    Function.Call(Hash.CLEAR_ENTITY_LAST_DAMAGE_ENTITY, ped.Handle);
+
+                    if (!_driveState.TryGetValue(entry.Key, out PedDriveState state) || state.AppliedHealth < 0)
+                    {
+                        continue;
+                    }
+
+                    int damage = (state.AppliedHealth + state.AppliedArmor) - (ped.Health + ped.Armor);
+
+                    // Put it back before the local game can act on it. The server owns
+                    // this ped's health; what happened here was a measurement.
+                    ped.Health = state.AppliedHealth;
+                    ped.Armor = state.AppliedArmor;
+
+                    if (damage <= 0)
+                    {
+                        continue;
+                    }
+
+                    into.Add(new LocalHitSample
+                    {
+                        PedHandle = entry.Key,
+                        WeaponHash = weaponHash,
+                        Damage = damage,
+                        HitPosition = ToNet(ped.Position),
+                        HitBone = LastDamagedBone(ped),
+                        IsMelee = melee,
+                    });
+                }
+            }
+            catch (Exception exception)
+            {
+                _log.Error(LogCategory.Client, "Could not read local hits.", exception);
+            }
+        }
+
+        /// <summary>
+        /// Which bone the game recorded as last damaged, or -1 when it recorded none.
+        /// The server uses it for hit-location logic; an invented value would be worse
+        /// than an absent one.
+        /// </summary>
+        private static short LastDamagedBone(Ped ped)
+        {
+            try
+            {
+                PedBone bone = ped.Bones.LastDamaged;
+                return bone.IsValid ? unchecked((short)bone.Index) : (short)-1;
+            }
+            catch (Exception)
+            {
+                return -1;
             }
         }
 
@@ -1188,6 +1336,11 @@ namespace Gtamp.Client.Shv.Bridge
             /// </summary>
             public int RagdollFrames;
             public bool WasDead;
+
+            /// <summary>Health and armour as last written from the server, so a hit can be measured as a drop from them.</summary>
+            public int AppliedHealth = -1;
+
+            public int AppliedArmor;
 
             /// <summary>
             /// The weapon last actually given to this ped, so the natives are called on

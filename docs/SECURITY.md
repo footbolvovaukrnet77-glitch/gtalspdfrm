@@ -169,6 +169,28 @@ update are two different packets. A player who switches weapons right after firi
 produces a mismatch legitimately, so enforcing it costs honest players hits. It
 belongs at Strict, where the operator has accepted that trade.
 
+**Where the claim comes from.** The attacking client asks the engine, rather than
+deciding for itself. A remote ped is left damageable and its health is rewritten
+from the server every frame, so the game's own hit detection records the hit — the
+weapon, the bone, the amount, with range falloff and body armour already applied —
+and the bridge reads that record and puts the health straight back. This is the
+whole reason a remote ped is not invincible: an invincible ped records no hit, and
+the engine's record is the only thing on that machine that knows the shot
+connected.
+
+It costs two things, both stated rather than hidden:
+
+- **A remote ped can be damaged by the local world**, not only by the local player.
+  An NPC or an explosion can take its health down. That damage is absorbed — the
+  next frame writes the server's value back — and only damage attributed to the
+  local player is ever reported.
+- **A remote ped could in principle be killed locally** before that frame arrives,
+  and GTA V cannot revive a dead ped in place. Fire, explosion, collision and
+  drowning proofs plus `SET_PED_SUFFERS_CRITICAL_HITS(false)` remove every
+  one-frame killer we know of, and if one gets through anyway the ped is discarded
+  and rebuilt — the same recovery a model change uses. The recovery is visible: the
+  ped blinks.
+
 **What is not checked: line of sight.** A client claiming a hit through a wall,
 within range and with the right weapon, is accepted. This is the same limitation
 as everywhere else in the framework — the server has no map geometry — and it is

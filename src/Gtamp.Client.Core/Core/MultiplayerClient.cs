@@ -32,6 +32,9 @@ namespace Gtamp.Client.Core
     public sealed class MultiplayerClient : IDisposable
     {
         private readonly List<ReceivedMessage> _inbox = new List<ReceivedMessage>();
+
+        /// <summary>Reused every frame; hits are rare and allocating a list per frame for nothing is not.</summary>
+        private readonly List<LocalHitSample> _hits = new List<LocalHitSample>();
         private readonly IDatagramTransport _transport;
         private readonly IdentityKey? _identity;
 
@@ -246,6 +249,9 @@ namespace Gtamp.Client.Core
 
         public int ShotsSeen { get; private set; }
 
+        /// <summary>Hits this client has claimed against other players. Read by the overlay and `netstat`.</summary>
+        public int HitsReported { get; private set; }
+
         public bool IsConnected => Connection.IsConnected;
 
         /// <summary>Scans for installed mods and starts any adapters that apply.</summary>
@@ -416,6 +422,7 @@ namespace Gtamp.Client.Core
 
                 SendLocalState(now);
                 SendLocalShots();
+                SendLocalHits();
                 SendPeriodicPing(now);
 
                 OwnedEntities.LocalPlayerId = LocalPlayerId;
@@ -793,6 +800,39 @@ namespace Gtamp.Client.Core
             }
 
             ShotsFired += shot.Rounds;
+        }
+
+        /// <summary>
+        /// Reports the hits the local player landed since the last frame.
+        /// <para>
+        /// Until this existed, <see cref="ReportDamage"/> was called by nothing but
+        /// tests: the combat arbiter, the weapon envelopes, the kill feed and the
+        /// whole death-and-respawn path were reachable only from the test suite, and
+        /// in a real game no player could damage another at all.
+        /// </para>
+        /// </summary>
+        private void SendLocalHits()
+        {
+            if (!Bridge.IsPlayerReady || !LocalEntityId.IsValid)
+            {
+                return;
+            }
+
+            _hits.Clear();
+            Bridge.SampleLocalHits(_hits);
+
+            foreach (LocalHitSample hit in _hits)
+            {
+                if (!RemotePlayers.TryGetByPedHandle(hit.PedHandle, out RemotePlayer victim))
+                {
+                    // A ped this client drew for a player who has since left. The hit
+                    // is real but there is nobody to attribute it to.
+                    continue;
+                }
+
+                ReportDamage(victim.EntityId, hit.WeaponHash, hit.Damage, hit.HitPosition, hit.HitBone, hit.IsMelee);
+                HitsReported++;
+            }
         }
 
         private void SendLocalState(double now)

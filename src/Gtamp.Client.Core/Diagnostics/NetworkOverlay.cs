@@ -90,7 +90,7 @@ namespace Gtamp.Client.Diagnostics
                 client.ResyncsRequested > 0 ? OverlaySeverity.Bad : OverlaySeverity.Normal));
 
             lines.Add(new OverlayLine(
-                $"shots {client.ShotsFired} fired   {client.ShotsSeen} seen",
+                $"shots {client.ShotsFired} fired   {client.ShotsSeen} seen   hits {client.HitsReported}",
                 OverlaySeverity.Normal));
 
             lines.Add(new OverlayLine(

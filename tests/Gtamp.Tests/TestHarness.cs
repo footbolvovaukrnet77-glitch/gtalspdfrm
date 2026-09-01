@@ -112,6 +112,15 @@ namespace Gtamp.Tests
         public List<(int Handle, uint Weapon, NetVector3 Origin, NetVector3 Impact)> ShotsPlayed { get; } =
             new List<(int, uint, NetVector3, NetVector3)>();
 
+        /// <summary>Hits SampleLocalHits will report next, drained on the next call.</summary>
+        public List<LocalHitSample> PendingHits { get; } = new List<LocalHitSample>();
+
+        public void SampleLocalHits(List<LocalHitSample> into)
+        {
+            into.AddRange(PendingHits);
+            PendingHits.Clear();
+        }
+
         public LocalShotSample SampleLocalShots()
         {
             LocalShotSample shot = PendingShot;

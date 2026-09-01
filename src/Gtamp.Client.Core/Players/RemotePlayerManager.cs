@@ -40,6 +40,29 @@ namespace Gtamp.Client.Players
 
         public bool TryGet(EntityId id, out RemotePlayer player) => _players.TryGetValue(id, out player!);
 
+        /// <summary>
+        /// Finds the player a game-side ped handle belongs to. The bridge speaks in
+        /// handles because that is all the game gives it; everything above speaks in
+        /// entity ids.
+        /// </summary>
+        public bool TryGetByPedHandle(int pedHandle, out RemotePlayer player)
+        {
+            if (pedHandle != 0)
+            {
+                foreach (RemotePlayer candidate in _players.Values)
+                {
+                    if (candidate.PedHandle == pedHandle)
+                    {
+                        player = candidate;
+                        return true;
+                    }
+                }
+            }
+
+            player = null!;
+            return false;
+        }
+
         /// <summary>Feeds a freshly applied snapshot view into the interpolation buffers.</summary>
         public void Sync(EntitySnapshotView view)
         {
