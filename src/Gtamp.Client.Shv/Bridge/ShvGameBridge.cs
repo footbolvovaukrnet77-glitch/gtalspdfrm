@@ -44,6 +44,15 @@ namespace Gtamp.Client.Shv.Bridge
         private readonly LogBus _log;
         private readonly ShvVehicleBridge _vehicles;
         private readonly Dictionary<int, Ped> _remotePeds = new Dictionary<int, Ped>();
+
+        /// <summary>Counts the local player's rounds. See <see cref="ShotDetector"/> for why the clip is the signal.</summary>
+        private readonly ShotDetector _shots = new ShotDetector();
+
+        /// <summary>Rockstar's shared particle library. Holds the muzzle flashes.</summary>
+        private ParticleEffectAsset _muzzleAsset = new ParticleEffectAsset("core");
+
+        /// <summary>The weapon model the last remote shot was drawn with, kept so it is requested once.</summary>
+        private WeaponAsset? _shotAsset;
         private readonly Dictionary<int, PedDriveState> _driveState = new Dictionary<int, PedDriveState>();
         private readonly PedAppearance _localAppearance = new PedAppearance();
 
@@ -651,6 +660,176 @@ namespace Gtamp.Client.Shv.Bridge
                 Hash.SET_ENTITY_COORDS_NO_OFFSET, ped.Handle, position.X, position.Y, position.Z, false, false, false);
             ped.Heading = heading;
         }
+
+        /// <summary>
+        /// Reads the rounds the local player fired since the previous frame.
+        /// <para>
+        /// The counting lives in <see cref="ShotDetector"/>, which is unit-tested;
+        /// what is here is the two things only the game can answer — how full the clip
+        /// is, and where the round started and ended.
+        /// </para>
+        /// </summary>
+        public LocalShotSample SampleLocalShots()
+        {
+            var sample = default(LocalShotSample);
+
+            try
+            {
+                Ped ped = Game.Player.Character;
+                if (!ped.Exists() || ped.IsDead)
+                {
+                    _shots.Reset();
+                    return sample;
+                }
+
+                Weapon weapon = ped.Weapons.Current;
+                if (weapon == null || !weapon.IsPresent || !ShotDetector.IsHitscan(Classify(weapon.Group)))
+                {
+                    // A thrown grenade or a rocket is an entity that flies; drawing it
+                    // as an instant line from muzzle to impact would show everyone an
+                    // explosion arriving at the speed of light. Resetting rather than
+                    // returning zero keeps the next hitscan weapon from inheriting this
+                    // one's clip count.
+                    _shots.Reset();
+                    return sample;
+                }
+
+                uint weaponHash = unchecked((uint)weapon.Hash);
+                int rounds = _shots.Observe(weaponHash, weapon.AmmoInClip, ped.IsShooting);
+                if (rounds <= 0)
+                {
+                    return sample;
+                }
+
+                sample.Rounds = rounds;
+                sample.WeaponHash = weaponHash;
+                sample.Origin = ToNet(MuzzlePosition(ped));
+
+                // The impact is where the game's own trace landed. It is zero when the
+                // round hit nothing within range, and the aim point is then the honest
+                // answer — a tracer to the horizon rather than one to the origin.
+                Vector3 impact = ped.LastWeaponImpactPosition;
+                sample.Impact = impact == Vector3.Zero ? SampleAimPosition(ped) : ToNet(impact);
+                return sample;
+            }
+            catch (Exception)
+            {
+                return default;
+            }
+        }
+
+        public void PlayRemoteShot(int pedHandle, uint weaponHash, NetVector3 origin, NetVector3 impact)
+        {
+            if (!_remotePeds.TryGetValue(pedHandle, out Ped ped) || !ped.Exists())
+            {
+                return;
+            }
+
+            try
+            {
+                if (_shotAsset?.Hash != unchecked((int)weaponHash))
+                {
+                    _shotAsset?.MarkAsNoLongerNeeded();
+                    _shotAsset = new WeaponAsset(weaponHash);
+                }
+
+                // Request is asynchronous; the first shot with a newly seen weapon is
+                // dropped rather than drawn with the wrong model.
+                if (!_shotAsset.Value.IsLoaded)
+                {
+                    _shotAsset.Value.Request();
+                    return;
+                }
+
+                // Damage zero, deliberately and permanently. The hit is arbitrated by
+                // the server from the shooter's own damage report; a rendered bullet
+                // that also wounded would count one trigger pull once per client that
+                // drew it.
+                GtaWorld.ShootBullet(ToGame(origin), ToGame(impact), ped, _shotAsset.Value, 0, -1f);
+                PlayMuzzleFlash(ped, origin);
+            }
+            catch (Exception)
+            {
+                // A weapon model this client does not have. The shot is silently not
+                // drawn, which is what a missing mod costs here.
+            }
+        }
+
+        /// <summary>
+        /// The muzzle flash. Drawn separately because <c>ShootBullet</c> renders the
+        /// round and its impact but nothing at the barrel.
+        /// <para>
+        /// The effect names are Rockstar's own, taken from the weapon groups. They are
+        /// **not verified against a running game** — an unknown name produces no
+        /// effect rather than an error, so a wrong one here costs a flash and nothing
+        /// else.
+        /// </para>
+        /// </summary>
+        private void PlayMuzzleFlash(Ped ped, NetVector3 origin)
+        {
+            if (!_muzzleAsset.IsLoaded)
+            {
+                _muzzleAsset.Request();
+                return;
+            }
+
+            Prop weaponObject = ped.Weapons.CurrentWeaponObject;
+            Vector3 rotation = weaponObject != null && weaponObject.Exists() ? weaponObject.Rotation : ped.Rotation;
+
+            GtaWorld.CreateParticleEffectNonLooped(
+                _muzzleAsset, MuzzleEffect(ped.Weapons.Current?.Group ?? WeaponGroup.Unarmed),
+                ToGame(origin), rotation, 1f);
+        }
+
+        private static string MuzzleEffect(WeaponGroup group) => group switch
+        {
+            WeaponGroup.Pistol => "muz_pistol",
+            WeaponGroup.SMG => "muz_smg",
+            WeaponGroup.Shotgun => "muz_shotgun",
+            WeaponGroup.Sniper => "muz_sniper_rifle",
+            WeaponGroup.MG => "muz_minigun",
+            _ => "muz_assault_rifle",
+        };
+
+        /// <summary>
+        /// Where the round leaves the weapon. The weapon model carries a
+        /// <c>gun_muzzle</c> bone; a weapon whose model has not streamed in yet does
+        /// not, and the firing hand is close enough that the difference is a few
+        /// centimetres over a shot that may be a hundred metres long.
+        /// </summary>
+        private static Vector3 MuzzlePosition(Ped ped)
+        {
+            Prop weaponObject = ped.Weapons.CurrentWeaponObject;
+            if (weaponObject != null && weaponObject.Exists() && weaponObject.Bones.Contains("gun_muzzle"))
+            {
+                return weaponObject.Bones["gun_muzzle"].Position;
+            }
+
+            return ped.Bones[Bone.SkelRightHand].Position + (ped.ForwardVector * 0.4f);
+        }
+
+        /// <summary>
+        /// What a weapon sends downrange, from its group.
+        /// <para>
+        /// Groups rather than a hash list because a hash list cannot classify a
+        /// weapon added by a mod. `Heavy` is excluded even though a railgun in it is
+        /// hitscan: the same group holds the rocket and grenade launchers, and
+        /// drawing a rocket as an instant line is a worse error than not drawing a
+        /// railgun at all.
+        /// </para>
+        /// </summary>
+        private static WeaponClass Classify(WeaponGroup group) => group switch
+        {
+            WeaponGroup.Pistol => WeaponClass.Hitscan,
+            WeaponGroup.SMG => WeaponClass.Hitscan,
+            WeaponGroup.AssaultRifle => WeaponClass.Hitscan,
+            WeaponGroup.MG => WeaponClass.Hitscan,
+            WeaponGroup.Shotgun => WeaponClass.Hitscan,
+            WeaponGroup.Sniper => WeaponClass.Hitscan,
+            WeaponGroup.Thrown => WeaponClass.Projectile,
+            WeaponGroup.Heavy => WeaponClass.Projectile,
+            _ => WeaponClass.None,
+        };
 
         public void ApplyRemotePedAppearance(int handle, PedAppearance appearance)
         {

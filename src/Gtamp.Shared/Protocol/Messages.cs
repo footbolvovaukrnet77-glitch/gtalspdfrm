@@ -671,6 +671,56 @@ namespace Gtamp.Shared.Protocol
         }
     }
 
+    /// <summary>
+    /// One shot fired, travelling up from the shooter and back down to everyone near
+    /// enough to see it.
+    /// <para>
+    /// <b>This carries no damage and never will.</b> The hit is arbitrated from
+    /// <see cref="DamageReportMessage"/> against the server's own world; this message
+    /// exists so the shot is *visible*. Letting a rendered bullet also deal damage
+    /// would mean the same trigger pull is counted once by the arbiter and again by
+    /// every client that drew it.
+    /// </para>
+    /// </summary>
+    public sealed class WeaponShotMessage
+    {
+        /// <summary>
+        /// Who fired. Left empty on the way up — the server fills it in from the
+        /// session, because a client that names its own shooter can name someone else.
+        /// </summary>
+        public EntityId ShooterId { get; set; }
+
+        public uint WeaponHash { get; set; }
+
+        /// <summary>Muzzle position when the round left the barrel.</summary>
+        public NetVector3 Origin { get; set; }
+
+        /// <summary>Where the round ended: the impact point, or the aim point when it hit nothing.</summary>
+        public NetVector3 Impact { get; set; }
+
+        public byte[] Serialize()
+        {
+            var writer = new NetWriter(32);
+            writer.WriteVarUInt(ShooterId.Value);
+            writer.WriteUInt32(WeaponHash);
+            writer.WriteQuantizedPosition(Origin);
+            writer.WriteQuantizedPosition(Impact);
+            return writer.ToArray();
+        }
+
+        public static WeaponShotMessage Deserialize(byte[] payload)
+        {
+            var reader = new NetReader(payload);
+            return new WeaponShotMessage
+            {
+                ShooterId = new EntityId(reader.ReadVarUInt()),
+                WeaponHash = reader.ReadUInt32(),
+                Origin = reader.ReadQuantizedPosition(),
+                Impact = reader.ReadQuantizedPosition(),
+            };
+        }
+    }
+
     public sealed class SnapshotAckMessage
     {
         public uint SnapshotId { get; set; }

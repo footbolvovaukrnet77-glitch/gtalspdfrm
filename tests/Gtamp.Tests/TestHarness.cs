@@ -105,6 +105,23 @@ namespace Gtamp.Tests
             PedAppearances[handle] = appearance.Clone();
         }
 
+        /// <summary>What SampleLocalShots will report next. Set by a test, cleared once read.</summary>
+        public LocalShotSample PendingShot;
+
+        /// <summary>Every shot this bridge was asked to draw, in order.</summary>
+        public List<(int Handle, uint Weapon, NetVector3 Origin, NetVector3 Impact)> ShotsPlayed { get; } =
+            new List<(int, uint, NetVector3, NetVector3)>();
+
+        public LocalShotSample SampleLocalShots()
+        {
+            LocalShotSample shot = PendingShot;
+            PendingShot = default;
+            return shot;
+        }
+
+        public void PlayRemoteShot(int pedHandle, uint weaponHash, NetVector3 origin, NetVector3 impact) =>
+            ShotsPlayed.Add((pedHandle, weaponHash, origin, impact));
+
         public bool TryGetRemotePedPosition(int handle, out NetVector3 position) =>
             _pedPositions.TryGetValue(handle, out position);
 

@@ -36,6 +36,25 @@ namespace Gtamp.Server.Core
         /// <summary>How long an authority hold waits for its acknowledgement before giving up.</summary>
         public const double AuthorityHoldTimeoutSeconds = 10d;
 
+        /// <summary>
+        /// How far a gunshot is relayed. A rifle report carries a few hundred metres
+        /// in the game and a muzzle flash is invisible long before that, so 250 m
+        /// covers everyone who could notice and drops the rest. This filters
+        /// *replication* only — no entity leaves the world at any distance.
+        /// </summary>
+        public const float ShotRelayRange = 250f;
+
+        /// <summary>
+        /// How far a claimed muzzle may sit from the shooter's own position. A barrel
+        /// is under two metres from its owner; the rest is slack for the report
+        /// interval and the round trip.
+        /// </summary>
+        public const float MaxMuzzleOffset = 10f;
+
+        private const float ShotRelayRangeSquared = ShotRelayRange * ShotRelayRange;
+
+        private const float MaxMuzzleOffsetSquared = MaxMuzzleOffset * MaxMuzzleOffset;
+
         private readonly IDatagramTransport _transport;
         private readonly Dictionary<IPEndPoint, PendingAuthentication> _pendingAuth =
             new Dictionary<IPEndPoint, PendingAuthentication>();
@@ -822,6 +841,10 @@ namespace Gtamp.Server.Core
                     HandleDamageReport(session, DamageReportMessage.Deserialize(message.Payload));
                     break;
 
+                case NetMessageType.WeaponShot:
+                    HandleWeaponShot(session, WeaponShotMessage.Deserialize(message.Payload));
+                    break;
+
                 case NetMessageType.ModRpcRequest:
                 {
                     ModRpcRequestMessage request = ModRpcRequestMessage.Deserialize(message.Payload);
@@ -1240,6 +1263,61 @@ namespace Gtamp.Server.Core
             {
                 Log.Info(LogCategory.Server, $"{victimSession.Name} was killed by {session.Name}.");
                 Kill(victimSession, victim);
+            }
+        }
+
+        /// <summary>
+        /// Relays one gunshot to the players near enough to see it.
+        /// <para>
+        /// It carries no damage and is not arbitrated — that is
+        /// <see cref="HandleDamageReport"/>'s job, against the server's own world. The
+        /// only claim in this message the server trusts is that a shot happened; who
+        /// fired it is overwritten from the session, because a client that names its
+        /// own shooter can name somebody else and put a muzzle flash in an innocent
+        /// player's hands.
+        /// </para>
+        /// </summary>
+        private void HandleWeaponShot(PlayerSession session, WeaponShotMessage shot)
+        {
+            PlayerEntity? shooter = World.GetPlayer(session.EntityId);
+            if (shooter == null || !session.Shots.TryTake(_now))
+            {
+                return;
+            }
+
+            // The muzzle is a claim too. It is not arbitrated — nothing hangs on it —
+            // but it decides where the flash is drawn and who is close enough to see
+            // it, so a shot claiming to come from across the street is dropped rather
+            // than relayed. The slack covers the report interval and the round trip:
+            // the server's position for this player is a report old.
+            if (NetVector3.DistanceSquared(shooter.Position, shot.Origin) > MaxMuzzleOffsetSquared)
+            {
+                return;
+            }
+
+            shot.ShooterId = session.EntityId;
+            byte[] payload = shot.Serialize();
+
+            foreach (PlayerSession other in Players.Sessions)
+            {
+                if (other == session || other.PendingRemoval)
+                {
+                    continue;
+                }
+
+                // Distance is a *replication* filter, never a world-state one: the
+                // shot is relayed to whoever could see it and dropped for everyone
+                // else, and no entity is touched either way.
+                // Measured from the shooter's *server* position, not the claimed
+                // muzzle: who hears a shot is the server's decision to make.
+                PlayerEntity? listener = World.GetPlayer(other.EntityId);
+                if (listener == null
+                    || NetVector3.DistanceSquared(listener.Position, shooter.Position) > ShotRelayRangeSquared)
+                {
+                    continue;
+                }
+
+                other.Peer.Send(NetMessageType.WeaponShot, payload, DeliveryMethod.Unreliable);
             }
         }
 

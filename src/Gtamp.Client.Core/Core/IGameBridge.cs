@@ -71,6 +71,21 @@ namespace Gtamp.Client.Core
         void ApplyRemotePedAppearance(int handle, PedAppearance appearance);
 
         /// <summary>
+        /// Rounds the local player fired since the last call, with the geometry of the
+        /// last of them. Called every frame, unlike <see cref="SampleLocalPlayer"/>:
+        /// a shot is an event and the send rate would swallow most of them.
+        /// </summary>
+        LocalShotSample SampleLocalShots();
+
+        /// <summary>
+        /// Draws one shot fired by somebody else — the tracer, the muzzle flash and
+        /// the impact. It deals no damage: the hit is arbitrated by the server from a
+        /// separate report, and a rendered bullet that also wounded would count the
+        /// same trigger pull twice.
+        /// </summary>
+        void PlayRemoteShot(int pedHandle, uint weaponHash, NetVector3 origin, NetVector3 impact);
+
+        /// <summary>
         /// Where the ped currently is in the game. The controller needs this to decide
         /// between tasking it to walk and correcting it outright.
         /// </summary>
@@ -158,6 +173,21 @@ namespace Gtamp.Client.Core
 
         /// <summary>Clothing and props. Null when the bridge could not read them this frame.</summary>
         public PedAppearance? Appearance;
+    }
+
+    /// <summary>What the local player fired this frame, if anything.</summary>
+    public struct LocalShotSample
+    {
+        /// <summary>Rounds fired since the previous frame. Zero means nothing to report.</summary>
+        public int Rounds;
+
+        public uint WeaponHash;
+
+        /// <summary>Muzzle position.</summary>
+        public NetVector3 Origin;
+
+        /// <summary>Impact point, or the aim point when the round hit nothing.</summary>
+        public NetVector3 Impact;
     }
 
     /// <summary>Interpolated state applied to another player's ped this frame.</summary>

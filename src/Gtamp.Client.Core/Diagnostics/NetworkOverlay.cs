@@ -90,6 +90,10 @@ namespace Gtamp.Client.Diagnostics
                 client.ResyncsRequested > 0 ? OverlaySeverity.Bad : OverlaySeverity.Normal));
 
             lines.Add(new OverlayLine(
+                $"shots {client.ShotsFired} fired   {client.ShotsSeen} seen",
+                OverlaySeverity.Normal));
+
+            lines.Add(new OverlayLine(
                 $"entities {client.ReplicatedWorld.EntityCount}   " +
                 $"vehicles {client.RemoteEntities.VehicleCount}   objects {client.RemoteEntities.ObjectCount}",
                 OverlaySeverity.Normal));

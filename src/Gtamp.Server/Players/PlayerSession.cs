@@ -48,6 +48,9 @@ namespace Gtamp.Server.Players
 
         public PlayerValidationState Validation { get; } = new PlayerValidationState();
 
+        /// <summary>Rate limit on relayed gunshots. See <see cref="ShotBudget"/> for why it drops rather than punishes.</summary>
+        public ShotBudget Shots { get; } = new ShotBudget();
+
         public ModManifest Manifest { get; set; } = new ModManifest();
 
         /// <summary>

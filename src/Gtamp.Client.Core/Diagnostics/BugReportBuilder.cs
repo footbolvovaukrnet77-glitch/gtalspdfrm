@@ -151,6 +151,7 @@ namespace Gtamp.Client.Diagnostics
 
             builder.AppendLine($"  snapshots       {client.ReplicatedWorld.SnapshotsApplied} applied / {client.ReplicatedWorld.SnapshotsDropped} dropped");
             builder.AppendLine($"  resyncs         {client.ResyncsRequested}");
+            builder.AppendLine($"  shots           {client.ShotsFired} fired / {client.ShotsSeen} seen");
             builder.AppendLine();
         }
 

@@ -293,6 +293,7 @@ practice.
 | `0x30` | EntityEvent | reliable | S → C |
 | `0x31` | ServerEvent | reliable | S → C |
 | `0x32` | ChatMessage | reliable | both |
+| `0x33` | WeaponShot | unreliable | both |
 | `0x40` | ModManifest | reliable | both |
 | `0x41` | ModCompatibilityReport | reliable | S → C |
 | `0x50` | AdminCommand | reliable | C → S |
@@ -391,6 +392,41 @@ snapshot actually answers.
 
 Regression test:
 `CorrectionTests.AnAcceptedChangeIsNotUndoneByASnapshotThatPredatesIt`.
+
+## Gunshots
+
+A shot is an event, not a state, so it does not travel on the snapshot. The
+shooting flag on `PlayerFlags` says a weapon is being fired; it cannot say how
+often, and a rifle at 600 rounds a minute holds it for six frames per round at 60
+fps. Rounds are counted from the clip instead — it falls by exactly one per shot —
+and each one is sent as its own `WeaponShot`.
+
+Unreliable in both directions, deliberately: a muzzle flash retransmitted after
+its bullet has already been arbitrated is worse than a missing one.
+
+Three things the server does not take on trust:
+
+| Claim | What the server does |
+| --- | --- |
+| Who fired | Overwritten from the session. A client that names its own shooter can name somebody else. |
+| Where the muzzle was | Dropped if further than `GameServer.MaxMuzzleOffset` (10 m) from the shooter's own position. |
+| How often | A token bucket, `ShotBudget`: 80 rounds/second sustained, 20 burst. Over-budget shots are dropped and **not** counted as a violation — the ceiling is only a factor of two above a minigun, and counting there would eventually kick a player for owning one. |
+
+Relay is distance-filtered to `GameServer.ShotRelayRange` (250 m), measured from
+the shooter's *server* position. This filters replication only: no entity leaves
+the world at any distance, and `WeaponShotTests.AShotFromTheOtherSideOfTheMapIsNotRelayed`
+asserts both — no shot drawn, both players still in the world.
+
+**The relayed bullet carries no damage and never will.** The hit is arbitrated
+from `DamageReport` against the server's own world; a rendered bullet that also
+wounded would count one trigger pull once per client that drew it. The receiving
+client fires it with damage 0.
+
+**Projectiles are not echoed.** A rocket or a grenade is an entity that flies, and
+drawing it as an instant line from muzzle to impact would show every player an
+explosion arriving at the speed of light. Weapon groups `Thrown` and `Heavy` are
+excluded — which also excludes the railgun, a hitscan weapon in the same group as
+the rocket launcher. Drawing a rocket wrongly is the worse error.
 
 ## Quantisation
 

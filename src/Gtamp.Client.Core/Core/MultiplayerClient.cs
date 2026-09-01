@@ -237,6 +237,15 @@ namespace Gtamp.Client.Core
         /// <summary>How many times the server has had to correct the local player's position.</summary>
         public int CorrectionsApplied { get; private set; }
 
+        /// <summary>
+        /// Rounds this client has reported firing, and rounds it has drawn for other
+        /// players. Both are read by the overlay, `netstat` and the diagnostic bundle
+        /// — a counter nothing reads is how three earlier defects stayed invisible.
+        /// </summary>
+        public int ShotsFired { get; private set; }
+
+        public int ShotsSeen { get; private set; }
+
         public bool IsConnected => Connection.IsConnected;
 
         /// <summary>Scans for installed mods and starts any adapters that apply.</summary>
@@ -406,6 +415,7 @@ namespace Gtamp.Client.Core
                 EstimatedServerTime += frameDelta;
 
                 SendLocalState(now);
+                SendLocalShots();
                 SendPeriodicPing(now);
 
                 OwnedEntities.LocalPlayerId = LocalPlayerId;
@@ -514,6 +524,19 @@ namespace Gtamp.Client.Core
                         if (notice.Kind != SecurityNoticeKind.CommandResult)
                         {
                             Bridge.ShowNotification(notice.Text);
+                        }
+
+                        break;
+                    }
+
+                    case NetMessageType.WeaponShot:
+                    {
+                        WeaponShotMessage shot = WeaponShotMessage.Deserialize(message.Payload);
+                        if (RemotePlayers.TryGet(shot.ShooterId, out RemotePlayer shooter)
+                            && shooter.PedHandle != 0)
+                        {
+                            Bridge.PlayRemoteShot(shooter.PedHandle, shot.WeaponHash, shot.Origin, shot.Impact);
+                            ShotsSeen++;
                         }
 
                         break;
@@ -730,6 +753,46 @@ namespace Gtamp.Client.Core
             };
 
             Connection.Peer!.Send(NetMessageType.DamageReport, report.Serialize(), DeliveryMethod.ReliableOrdered);
+        }
+
+        /// <summary>
+        /// Reports the rounds the local player fired this frame.
+        /// <para>
+        /// Every frame, unlike the state report: a shot is an event, not a state, and
+        /// at the state rate most of a burst would fall between two samples. It is
+        /// sent unreliably for the same reason — a muzzle flash retransmitted after
+        /// the bullet has already been arbitrated is worse than a missing one.
+        /// </para>
+        /// </summary>
+        private void SendLocalShots()
+        {
+            if (!Bridge.IsPlayerReady)
+            {
+                return;
+            }
+
+            LocalShotSample shot = Bridge.SampleLocalShots();
+            if (shot.Rounds <= 0)
+            {
+                return;
+            }
+
+            // ShooterId is left empty. The server stamps it from the session, because
+            // a client that names its own shooter can name somebody else.
+            var message = new WeaponShotMessage
+            {
+                WeaponHash = shot.WeaponHash,
+                Origin = shot.Origin,
+                Impact = shot.Impact,
+            };
+
+            byte[] payload = message.Serialize();
+            for (int i = 0; i < shot.Rounds; i++)
+            {
+                Connection.Peer?.Send(NetMessageType.WeaponShot, payload, DeliveryMethod.Unreliable);
+            }
+
+            ShotsFired += shot.Rounds;
         }
 
         private void SendLocalState(double now)

@@ -70,6 +70,13 @@ namespace Gtamp.Shared.Protocol
         ServerEvent = 0x31,
         ChatMessage = 0x32,
 
+        /// <summary>
+        /// One bullet leaving one weapon. Sent unreliably in both directions: a shot
+        /// is only worth showing at the moment it happens, and a retransmitted muzzle
+        /// flash arrives after the bullet it belongs to has already been arbitrated.
+        /// </summary>
+        WeaponShot = 0x33,
+
         // 0x40-0x4F — mod negotiation.
         ModManifest = 0x40,
         ModCompatibilityReport = 0x41,
