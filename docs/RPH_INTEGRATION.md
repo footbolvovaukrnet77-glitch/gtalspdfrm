@@ -143,6 +143,21 @@ There is no registry of another plugin's entities, no event bus, no state
 interface. So there is nothing generic to read: "replicate RPH plugins" is not a
 feature that can be built from outside those plugins.
 
+**This is now verified rather than assumed.** The whole public surface of
+`RagePluginHookSDK.dll` was enumerated from its metadata, and the only
+plugin-related members it exposes are `Rage.Attributes.PluginAttribute` — assembly
+metadata describing *your own* plugin — and `Rage.Game.ReloadActivePlugin`,
+`TerminateActivePlugin` and `UnloadActivePlugin`, all three of which act on the
+active plugin, meaning yours. There is no `GetPlugins`, no plugin registry, no
+cross-plugin accessor of any kind. The limitation was previously stated from the
+documentation; it is now stated from the assembly.
+
+Worth noting for contrast: **LSPDFR does expose one**, `Functions.GetAllUserPlugins()`,
+which returns the assemblies LSPDFR itself loaded. That enumerates LSPDFR's own
+plugins, not RPH's, and returns assemblies rather than state — so it identifies
+what is installed, which the mod manifest already covers, and still says nothing
+about what those plugins are doing.
+
 What is possible, and is implemented:
 
 - the *fact* of a plugin being loaded, with its name and version, published into

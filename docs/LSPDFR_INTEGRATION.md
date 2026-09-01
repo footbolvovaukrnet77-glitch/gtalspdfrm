@@ -60,21 +60,52 @@ Gtamp.RphBridge.dll  ──gtamp.lspdfr.event──►  Gtamp.Adapters.Lspdfr
 
 ### What the observer polls
 
-Only public, parameterless methods on `LSPD_First_Response.Mod.API.Functions` —
-the documented surface, never internals:
+Public static methods on `LSPD_First_Response.Mod.API.Functions` — the documented
+surface, never internals:
 
-| Key | Bound to |
-| --- | --- |
-| `onDuty` | `IsPlayerAvailable()` |
-| `callout.running` | `IsCalloutRunning()` |
-| `callout.current` | `GetCurrentCallout()` |
-| `pullover.current` | `GetCurrentPullover()` |
-| `pursuit.active` | `GetActivePursuit()` |
-| `player.state` | `GetPlayerState()` |
+| Key | Bound to | Shape |
+| --- | --- | --- |
+| `callout.running` | `IsCalloutRunning()` | parameterless |
+| `pullover.active` | `IsPlayerPerformingPullover()` | parameterless |
+| `pursuit.active` | `GetActivePursuit()` | parameterless, returns a handle |
+| `pursuit.calledIn` | `IsPursuitCalledIn(handle)` | derived from `GetActivePursuit()` |
+| `pursuit.running` | `IsPursuitStillRunning(handle)` | derived from `GetActivePursuit()` |
+
+Every name here was checked against `LSPD_First_Response.XML`, the API
+documentation LSPDFR ships beside its assembly.
+
+**That check deleted four of the original six probes.** `IsPlayerAvailable`,
+`GetCurrentCallout`, `GetCurrentPullover` and `GetPlayerState` do not exist in the
+documented API — they were plausible names, bound by name, and every one of them
+could only ever have landed in `MissingProbes`. Nothing lied: unbound probes were
+always counted and reported. But four of six slots were noise in the one list an
+operator reads to find out what is genuinely unavailable, and two thirds of the
+feature was never going to work. They are gone.
+
+**Handles are passed back, never opened.** `GetActivePursuit()` returns an
+`LHandle`, which is opaque and stays that way — the observer reports only that
+there is one, and hands it straight back to LSPDFR for the questions LSPDFR can
+answer about it. That is what turns "a pursuit is happening" into "a pursuit is
+happening, it has been called in, and it is still running". A null handle is
+reported as `none` rather than called through, because calling through a null
+handle is how a quiet moment becomes an exception on every poll.
+
+**An ambiguous overload is left unbound.** Two single-argument overloads of one
+name cannot be told apart without naming LSPDFR's types, and picking one would
+hand LSPDFR the wrong argument type. The probe is reported missing instead.
 
 Anything that fails to bind is listed in `MissingProbes` and reported, so an
 LSPDFR update that renames a method produces a visible diagnostic rather than
 silence.
+
+**This is now tested.** The observer moved from the RPH bridge into
+`Gtamp.Shared` — it touches no `Rage` type, only `System.Reflection` — which made
+it ordinary reflection over a type, and a type is something a test can supply.
+`LspdfrBindingTests` exercises binding, the handle plumbing, the null-handle case,
+a throwing getter, a sparse build, an ambiguous overload and LSPDFR being absent
+entirely, against stand-in types that mirror the documented signatures. What that
+proves is this side of the boundary; it does not prove how the real LSPDFR
+behaves.
 
 **Why polling rather than event subscription.** LSPDFR's event hooks take
 delegates whose signatures use LSPDFR's own types. Those types cannot be named at
@@ -105,18 +136,41 @@ Two consequences worth being explicit about:
 ## The limit that is not a roadmap item
 
 **Callout logic cannot be shared.** `API.Functions` exposes *whether* a callout is
-running and which one — not the decisions inside it, and there is no supported way
-to drive another player's LSPDFR into the same callout state. Building that would
-mean binding to LSPDFR internals by name, producing an integration that works
-against one LSPDFR build and breaks on the next, silently, in the middle of a
-callout.
+running — not the decisions inside it, and there is no supported way to drive
+another player's LSPDFR into the same callout state. Building that would mean
+binding to LSPDFR internals by name, producing an integration that works against
+one LSPDFR build and breaks on the next, silently, in the middle of a callout.
 
 So what crosses the wire is the observable facts, not the simulation:
 
-- who is on duty;
-- who has a callout running, and its name;
-- who is in a pursuit or a traffic stop;
-- the reported player state.
+- whether a callout is running;
+- whether the player is performing a traffic stop;
+- whether there is an active pursuit, whether it has been called in, and whether
+  it is still running.
+
+**Three things this list used to claim and no longer does.** Checking the probe
+names against the documentation removed them rather than adding them, which is
+worth stating plainly:
+
+- **The callout's name.** `GetCalloutFriendlyName(LHandle)` exists, and its own
+  documentation says it is "the friendly name representation of a callout that is
+  used for LSPDFR Sync" — so it is exactly the right method. It needs a callout
+  `LHandle`, and the shipped documentation contains **no parameterless way to
+  obtain the handle of the callout currently running**. Handles reach a plugin
+  through callout lifecycle events, which is a delegate-synthesis problem, not a
+  lookup. So the name is readable in principle and not reachable by polling, and
+  the framework does not pretend otherwise.
+- **Who is on duty.** There is no polling method for it at all: on-duty is
+  published as the events `OnOnDutyStateChanged` and
+  `PlayerWentOnDutyFinishedSelection`. `IsPlayerAvailable`, which the observer
+  used to ask for, does not exist. On-duty state is therefore no longer reported.
+- **"The reported player state."** `GetPlayerState` does not exist. The phrase
+  described a probe that could never have bound.
+
+Absence from the documentation is not proof of absence from the assembly — it
+lists only members carrying doc comments — so an undocumented parameterless
+accessor may well exist. But an unverified name is a guess, and guessing is what
+put four dead probes in the list in the first place.
 
 **What players still see of each other's callouts.** The peds and vehicles a
 callout spawns replicate normally — as peds and vehicles, through the ordinary

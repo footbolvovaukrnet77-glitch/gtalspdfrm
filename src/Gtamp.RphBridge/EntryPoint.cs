@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Reflection;
 using System.Text;
+using Gtamp.Shared.Integration;
 using Gtamp.Shared.Interop;
 using Rage;
 using Rage.Attributes;
