@@ -204,7 +204,7 @@ replicates nothing is worse than an absent one: it looks supported.
 
 **`CharacterEntity`** carries everything a player and a networked NPC have in
 common — body, weapon, vehicle seat, appearance — declared once in
-`CharacterFields`. Two hand-maintained copies of fourteen field declarations would
+`CharacterFields`. Two hand-maintained copies of fifteen field declarations would
 drift, and a drift between them is a silent decode corruption rather than a
 compile error.
 

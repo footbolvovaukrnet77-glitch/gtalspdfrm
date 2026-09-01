@@ -182,6 +182,12 @@ namespace Gtamp.Client.Core
         public MovementState Movement;
         public uint CurrentWeaponHash;
         public int Ammo;
+
+        /// <summary>Weapon tint index and the components fitted to the weapon in hand.</summary>
+        public byte WeaponTint;
+
+        /// <summary>Null when the bridge could not read them this frame.</summary>
+        public List<uint>? WeaponComponents;
         public NetVector3 AimPosition;
         public int InteriorId;
         public uint AnimationHash;
@@ -247,6 +253,8 @@ namespace Gtamp.Client.Core
         public PlayerFlags Flags;
         public MovementState Movement;
         public uint CurrentWeaponHash;
+        public byte WeaponTint;
+        public List<uint>? WeaponComponents;
         public NetVector3 AimPosition;
         public uint AnimationHash;
 

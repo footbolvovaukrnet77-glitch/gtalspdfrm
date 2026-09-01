@@ -88,6 +88,8 @@ namespace Gtamp.Client.Entities
             frame.Flags = after.Flags;
             frame.Movement = after.Movement;
             frame.CurrentWeaponHash = after.CurrentWeaponHash;
+            frame.WeaponTint = after.WeaponTint;
+            frame.WeaponComponents = after.WeaponComponents;
             frame.VehicleId = after.VehicleId;
             frame.VehicleSeat = after.VehicleSeat;
             frame.AnimationHash = after.AnimationHash;

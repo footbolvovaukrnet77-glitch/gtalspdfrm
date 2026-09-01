@@ -150,6 +150,8 @@ namespace Gtamp.Client.Players
             Flags = to.Flags,
             Movement = to.Movement,
             CurrentWeaponHash = to.CurrentWeaponHash,
+            WeaponTint = to.WeaponTint,
+            WeaponComponents = to.WeaponComponents,
             AimPosition = NetVector3.Lerp(from.AimPosition, to.AimPosition, t),
             AnimationHash = to.AnimationHash,
             Ragdoll = RagdollPose.Lerp(from.Ragdoll, to.Ragdoll, t),

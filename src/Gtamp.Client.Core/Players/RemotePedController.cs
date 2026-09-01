@@ -42,7 +42,9 @@ namespace Gtamp.Client.Players
             RagdollPose ragdoll = default,
             PlayerFlags flags = PlayerFlags.None,
             int vehicleHandle = 0,
-            sbyte vehicleSeat = -2)
+            sbyte vehicleSeat = -2,
+            byte weaponTint = 0,
+            System.Collections.Generic.List<uint>? weaponComponents = null)
         {
             Action = action;
             TargetPosition = targetPosition;
@@ -58,6 +60,8 @@ namespace Gtamp.Client.Players
             Flags = flags;
             VehicleHandle = vehicleHandle;
             VehicleSeat = vehicleSeat;
+            WeaponTint = weaponTint;
+            WeaponComponents = weaponComponents;
         }
 
         public RemotePedAction Action { get; }
@@ -107,6 +111,15 @@ namespace Gtamp.Client.Players
 
         /// <summary>GTA V seat index; -1 is the driver seat, -2 means not in a vehicle.</summary>
         public sbyte VehicleSeat { get; }
+
+        /// <summary>
+        /// Tint and components fitted to <see cref="WeaponHash"/>. Null when none were
+        /// reported — which is not the same as an empty list, and the bridge treats it
+        /// differently: null leaves the weapon as it is, empty strips it bare.
+        /// </summary>
+        public byte WeaponTint { get; }
+
+        public System.Collections.Generic.List<uint>? WeaponComponents { get; }
 
         public NetVector3 TargetPosition { get; }
 
@@ -173,7 +186,8 @@ namespace Gtamp.Client.Players
                 // owns it from there, and walking a corpse looks like a bug.
                 return new RemotePedCommand(
                     RemotePedAction.Dead, frame.Position, frame.Heading, 0f, true, false, frame.AimPosition, 0, 0,
-                    frame.CurrentWeaponHash, RagdollPose.None, frame.Flags);
+                    frame.CurrentWeaponHash, RagdollPose.None, frame.Flags, 0, -2,
+                    frame.WeaponTint, frame.WeaponComponents);
             }
 
             if ((frame.Flags & PlayerFlags.Ragdoll) != 0)
@@ -200,7 +214,11 @@ namespace Gtamp.Client.Players
                     frame.Armor,
                     frame.CurrentWeaponHash,
                     frame.Ragdoll,
-                    frame.Flags);
+                    frame.Flags,
+                    0,
+                    -2,
+                    frame.WeaponTint,
+                    frame.WeaponComponents);
             }
 
             if ((frame.Flags & PlayerFlags.InVehicle) != 0)
@@ -229,7 +247,9 @@ namespace Gtamp.Client.Players
                     RagdollPose.None,
                     frame.Flags,
                     seatable ? vehicleHandle : 0,
-                    frame.VehicleSeat);
+                    frame.VehicleSeat,
+                    frame.WeaponTint,
+                    frame.WeaponComponents);
             }
 
             float distance = NetVector3.Distance(pedPosition, frame.Position);
@@ -258,7 +278,11 @@ namespace Gtamp.Client.Players
                 frame.Armor,
                 frame.CurrentWeaponHash,
                 RagdollPose.None,
-                frame.Flags);
+                frame.Flags,
+                0,
+                -2,
+                frame.WeaponTint,
+                frame.WeaponComponents);
         }
 
         private static RemotePedAction ChooseGait(in RemotePedFrame frame, float distance)

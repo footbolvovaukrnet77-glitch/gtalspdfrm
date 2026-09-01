@@ -941,6 +941,9 @@ namespace Gtamp.Server.Core
             entity.ModelHash = update.ModelHash;
             entity.CurrentWeaponHash = update.CurrentWeaponHash;
             entity.Ammo = update.Ammo;
+            entity.WeaponTint = update.WeaponTint;
+            entity.WeaponComponents.Clear();
+            entity.WeaponComponents.AddRange(update.WeaponComponents);
             entity.AimPosition = update.AimPosition;
             entity.InteriorId = update.InteriorId;
             entity.AnimationHash = update.AnimationHash;

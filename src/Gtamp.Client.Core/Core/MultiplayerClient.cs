@@ -873,11 +873,17 @@ namespace Gtamp.Client.Core
                 ModelHash = sample.ModelHash,
                 CurrentWeaponHash = sample.CurrentWeaponHash,
                 Ammo = sample.Ammo,
+                WeaponTint = sample.WeaponTint,
                 AimPosition = sample.AimPosition,
                 InteriorId = sample.InteriorId,
                 AnimationHash = sample.AnimationHash,
                 Ragdoll = sample.Ragdoll,
             };
+
+            if (sample.WeaponComponents != null)
+            {
+                update.WeaponComponents.AddRange(sample.WeaponComponents);
+            }
 
             if (sample.Appearance != null)
             {

@@ -205,6 +205,11 @@ namespace Gtamp.Shared.Protocol
 
         public int Ammo { get; set; }
 
+        /// <summary>Weapon tint and fitted components. See <see cref="CharacterEntity"/>.</summary>
+        public byte WeaponTint { get; set; }
+
+        public List<uint> WeaponComponents { get; } = new List<uint>();
+
         public NetVector3 AimPosition { get; set; }
 
         public int InteriorId { get; set; }
@@ -246,6 +251,13 @@ namespace Gtamp.Shared.Protocol
             writer.WriteUInt32(ModelHash);
             writer.WriteUInt32(CurrentWeaponHash);
             writer.WriteVarInt(Ammo);
+            writer.WriteByte(WeaponTint);
+            writer.WriteVarUInt((uint)WeaponComponents.Count);
+            foreach (uint component in WeaponComponents)
+            {
+                writer.WriteUInt32(component);
+            }
+
             writer.WriteQuantizedPosition(AimPosition);
             writer.WriteVarInt(InteriorId);
             writer.WriteUInt32(AnimationHash);
@@ -258,6 +270,30 @@ namespace Gtamp.Shared.Protocol
 
             Appearance.Write(writer);
             return writer.ToArray();
+        }
+
+        /// <summary>
+        /// Reads the tint and the component list. The count is bounded here for the
+        /// same reason as on the entity: an unbounded count is an allocation a hostile
+        /// client gets to choose.
+        /// </summary>
+        private static byte ReadWeaponAttachments(NetReader reader, out List<uint> components)
+        {
+            byte tint = reader.ReadByte();
+            uint count = reader.ReadVarUInt();
+            if (count > CharacterEntity.MaxWeaponComponents)
+            {
+                throw new NetSerializationException(
+                    $"A client claims {count} weapon components; the limit is {CharacterEntity.MaxWeaponComponents}.");
+            }
+
+            components = new List<uint>((int)count);
+            for (uint i = 0; i < count; i++)
+            {
+                components.Add(reader.ReadUInt32());
+            }
+
+            return tint;
         }
 
         public static ClientStateUpdateMessage Deserialize(byte[] payload)
@@ -279,10 +315,13 @@ namespace Gtamp.Shared.Protocol
                 ModelHash = reader.ReadUInt32(),
                 CurrentWeaponHash = reader.ReadUInt32(),
                 Ammo = reader.ReadVarInt(),
+                WeaponTint = ReadWeaponAttachments(reader, out List<uint> components),
                 AimPosition = reader.ReadQuantizedPosition(),
                 InteriorId = reader.ReadVarInt(),
                 AnimationHash = reader.ReadUInt32(),
             };
+
+            message.WeaponComponents.AddRange(components);
 
             if ((message.Flags & PlayerFlags.Ragdoll) != 0)
             {

@@ -151,10 +151,54 @@ namespace Gtamp.Client.Shv.Bridge
             {
                 sample.CurrentWeaponHash = unchecked((uint)weapon.Hash);
                 sample.Ammo = weapon.Ammo;
+                sample.WeaponTint = (byte)weapon.Tint;
+                sample.WeaponComponents = ReadWeaponComponents(weapon);
             }
 
             sample.Ragdoll = SampleRagdollPose(ped, sample.Flags, sample.Position);
             return sample;
+        }
+
+        /// <summary>
+        /// The components actually fitted to a weapon: suppressor, scope, extended
+        /// clip, grip, flashlight.
+        /// <para>
+        /// Enumerating the collection asks the game which variants exist for this
+        /// weapon and which are active. Only the active ones travel — the full list of
+        /// what *could* be fitted is the same on every client that has the weapon, and
+        /// sending it would be a dozen hashes a player to say nothing.
+        /// </para>
+        /// </summary>
+        private static List<uint>? ReadWeaponComponents(Weapon weapon)
+        {
+            try
+            {
+                List<uint>? active = null;
+                foreach (WeaponComponent component in weapon.Components)
+                {
+                    if (!component.Active)
+                    {
+                        continue;
+                    }
+
+                    active ??= new List<uint>(4);
+                    if (active.Count >= CharacterEntity.MaxWeaponComponents)
+                    {
+                        break;
+                    }
+
+                    active.Add(unchecked((uint)component.ComponentHash));
+                }
+
+                // An empty list rather than null when the weapon is bare: null means
+                // "not read", and the difference decides whether a remote ped keeps
+                // the suppressor it had.
+                return active ?? new List<uint>();
+            }
+            catch (Exception)
+            {
+                return null;
+            }
         }
 
         /// <summary>
@@ -379,6 +423,7 @@ namespace Gtamp.Client.Shv.Bridge
 
             ApplyVitals(ped, in command, state);
             ApplyWeapon(ped, command.WeaponHash, state);
+            ApplyWeaponAttachments(ped, in command, state);
             ApplyPosture(ped, in command, state);
 
             if (command.Action != RemotePedAction.InVehicle)
@@ -760,6 +805,83 @@ namespace Gtamp.Client.Shv.Bridge
         /// travels to no effect is worth naming rather than leaving to be discovered.
         /// </para>
         /// </summary>
+        /// <summary>
+        /// Fits the components and tint the owner has on the weapon this ped is
+        /// holding.
+        /// <para>
+        /// Without this a remote player's silenced, scoped rifle appears as a bare
+        /// one: the weapon hash names the weapon, not what is bolted to it. Applied
+        /// on change, because <c>GIVE_WEAPON_COMPONENT_TO_PED</c> re-equips the weapon
+        /// and calling it every frame keeps a ped permanently mid-draw.
+        /// </para>
+        /// <para>
+        /// A null list means the reporting client could not read them, and the safe
+        /// answer there is to leave the weapon alone rather than strip it.
+        /// </para>
+        /// </summary>
+        private static void ApplyWeaponAttachments(Ped ped, in RemotePedCommand command, PedDriveState state)
+        {
+            if (command.WeaponComponents == null || command.WeaponHash == 0)
+            {
+                return;
+            }
+
+            if (state.AppliedTint == command.WeaponTint
+                && state.AppliedComponentsWeapon == command.WeaponHash
+                && SameComponents(state.AppliedComponents, command.WeaponComponents))
+            {
+                return;
+            }
+
+            try
+            {
+                foreach (uint previous in state.AppliedComponents)
+                {
+                    if (!command.WeaponComponents.Contains(previous))
+                    {
+                        Function.Call(
+                            Hash.REMOVE_WEAPON_COMPONENT_FROM_PED, ped.Handle, command.WeaponHash, previous);
+                    }
+                }
+
+                foreach (uint component in command.WeaponComponents)
+                {
+                    Function.Call(Hash.GIVE_WEAPON_COMPONENT_TO_PED, ped.Handle, command.WeaponHash, component);
+                }
+
+                Function.Call(
+                    Hash.SET_PED_WEAPON_TINT_INDEX, ped.Handle, command.WeaponHash, (int)command.WeaponTint);
+
+                state.AppliedTint = command.WeaponTint;
+                state.AppliedComponentsWeapon = command.WeaponHash;
+                state.AppliedComponents.Clear();
+                state.AppliedComponents.AddRange(command.WeaponComponents);
+            }
+            catch (Exception)
+            {
+                // A component from a weapon mod this client does not have. The weapon
+                // stays as it is rather than half-fitted.
+            }
+        }
+
+        private static bool SameComponents(List<uint> applied, List<uint> wanted)
+        {
+            if (applied.Count != wanted.Count)
+            {
+                return false;
+            }
+
+            for (int i = 0; i < applied.Count; i++)
+            {
+                if (applied[i] != wanted[i])
+                {
+                    return false;
+                }
+            }
+
+            return true;
+        }
+
         private static void ApplyPosture(Ped ped, in RemotePedCommand command, PedDriveState state)
         {
             bool crouching = (command.Flags & PlayerFlags.Crouching) != 0;
@@ -1430,6 +1552,13 @@ namespace Gtamp.Client.Shv.Bridge
             /// applied once like any other.
             /// </summary>
             public uint? AppliedWeapon;
+
+            /// <summary>Tint and components last actually fitted, so the natives fire on a change.</summary>
+            public byte AppliedTint;
+
+            public uint AppliedComponentsWeapon;
+
+            public List<uint> AppliedComponents { get; } = new List<uint>();
 
             public void Reset()
             {
