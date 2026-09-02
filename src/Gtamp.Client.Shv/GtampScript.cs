@@ -5,6 +5,7 @@ using System.Net;
 using System.Windows.Forms;
 using Gtamp.Client.Core;
 using Gtamp.Client.Mods;
+using Gtamp.Client.Network;
 using Gtamp.Client.Diagnostics;
 using Gtamp.Client.Shv.Bridge;
 using Gtamp.Client.Shv.Ui;
@@ -38,6 +39,13 @@ namespace Gtamp.Client.Shv
         private ClientConfig? _config;
         private string _configPath = string.Empty;
         private bool _failed;
+
+        /// <summary>
+        /// The compatibility probe runs once, on the first frame rather than in the
+        /// constructor, because it calls into the game and the first frame is the
+        /// earliest point where that is unambiguously safe.
+        /// </summary>
+        private bool _compatibilityChecked;
 
         /// <summary>
         /// Resolved before anything that can throw, so the last-resort crash log lands in
@@ -150,6 +158,12 @@ namespace Gtamp.Client.Shv
                 return;
             }
 
+            if (!_compatibilityChecked)
+            {
+                _compatibilityChecked = true;
+                CheckGameApi();
+            }
+
             double now = _clock.Elapsed.TotalSeconds;
 
             try
@@ -202,6 +216,89 @@ namespace Gtamp.Client.Shv
         /// permission refusal — that this is worth a catch rather than a crash before
         /// the logger exists.
         /// </summary>
+        /// <summary>
+        /// Asks ScriptHookVDotNet one question that goes through the memory map it builds
+        /// by scanning the game's code, and refuses to connect when the answer is an
+        /// exception.
+        /// <para>
+        /// Without this the failure arrives later and somewhere else: the client starts,
+        /// says it loaded, connects, and dies on whichever frame first tries to spawn a
+        /// remote player — with a .NET stack trace naming SHVDN internals, in whatever
+        /// language the player's Windows is set to. The information needed to diagnose it
+        /// is available on the first frame, so it is read on the first frame.
+        /// </para>
+        /// </summary>
+        private void CheckGameApi()
+        {
+            bool works;
+            try
+            {
+                // Game.Version is (GameVersion)NativeMemory.GetGameVersion(): the shortest
+                // route into the class that fails, needing no ped, vehicle or world state.
+                _ = Game.Version;
+                works = true;
+            }
+            catch (Exception exception)
+            {
+                works = false;
+                _log?.Debug(LogCategory.Client, "The managed game API is unusable: " + exception);
+            }
+
+            string? reason = ScriptHostCompatibility.Describe(works, ReadGameBuild(), ReadScriptHostVersion());
+            if (reason == null || _client == null)
+            {
+                return;
+            }
+
+            _client.BlockReason = reason;
+            _log?.Error(LogCategory.Client, reason);
+            Ui.NativeDraw.Notify(ScriptHostCompatibility.ShortNotification);
+
+            // AutoConnectOnStart runs before the first frame, so a session may already be
+            // opening by the time this is known. Refusing new connections without closing
+            // that one would leave exactly the half-working session this check exists to
+            // prevent.
+            if (_client.Connection.State != ClientConnectionState.Disconnected)
+            {
+                _client.Disconnect("the game API is unusable on this game build");
+            }
+        }
+
+        /// <summary>
+        /// The game build, read from GTA5.exe rather than from the game, because the
+        /// call that asks the game is the one that just failed.
+        /// </summary>
+        private string? ReadGameBuild()
+        {
+            try
+            {
+                string? executable = TryGetExecutablePath();
+                if (string.IsNullOrEmpty(executable) || !File.Exists(executable))
+                {
+                    return null;
+                }
+
+                return FileVersionInfo.GetVersionInfo(executable!).FileVersion;
+            }
+            catch (Exception)
+            {
+                return null;
+            }
+        }
+
+        /// <summary>The API assembly actually loaded, which is the one that has to change.</summary>
+        private static string? ReadScriptHostVersion()
+        {
+            try
+            {
+                return typeof(Game).Assembly.GetName().Version?.ToString();
+            }
+            catch (Exception)
+            {
+                return null;
+            }
+        }
+
         private static string? TryGetExecutablePath()
         {
             try

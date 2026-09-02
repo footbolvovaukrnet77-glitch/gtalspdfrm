@@ -144,10 +144,65 @@ Test-NetConnection -ComputerName <сервер> -Port 27015 -InformationLevel De
 | Симптом | Причина | Решение |
 | --- | --- | --- |
 | DLL вообще не упоминается | Не та папка | Он кладётся в `<GTA V>\scripts\`, а не в корень |
-| `Aborted script Gtamp.Client.Shv.GtampScript`, а в трассировке `SHVDN.NativeMemory..cctor()` | ScriptHookVDotNet не поддерживает эту сборку GTA V | Это не дефект фреймворка. `NativeMemory` при первом обращении сканирует игру по байтовым сигнатурам, и на неподдерживаемой сборке не находит их, а инициализатор типа падает. Всплывает на первой отрисовке текста — для этого клиента в момент открытия консоли, — поэтому выглядит как «консоль не открывается». Сверьте `game version is VER_...` из `ScriptHookV.log` с примечаниями к релизам SHVDN и поставьте поддерживающую сборку |
+| `Aborted script Gtamp.Client.Shv.GtampScript`, а в трассировке `SHVDN.NativeMemory..cctor()` | ScriptHookVDotNet не поддерживает эту сборку GTA V | Это не дефект фреймворка — см. [ScriptHookVDotNet не читает эту сборку игры](#scripthookvdotnet-не-читает-эту-сборку-игры) ниже. Сборки клиента до появления этой проверки падали здесь на первой отрисовке текста — то есть в момент открытия консоли, — поэтому это выглядело как «консоль не открывается» |
 | `Could not load file or assembly 'Gtamp.Client.Core'` | Скопирован только один DLL | Копируйте все три: `Gtamp.Client.Shv.dll`, `Gtamp.Client.Core.dll`, `Gtamp.Shared.dll` |
 | После обновления игры не грузится ничего | ScriptHookV отстаёт от обновлений GTA V | Дождитесь релиза ScriptHookV под новую сборку |
 | Существует `<GTA V>/Gtamp/logs/startup-failure.log` | Клиент упал раньше, чем появился его логгер | В файле лежит исключение. Теперь об этом говорит и сама игра при нажатии консольной клавиши: клавишу, которая молча не делает ничего, невозможно отличить от неверной |
+
+---
+
+## ScriptHookVDotNet не читает эту сборку игры
+
+Клиент сообщает об этом на первом кадре — в логе и красным уведомлением — и
+отказывается подключаться:
+
+```
+ScriptHookVDotNet 3.6.0.0 cannot read game build 1.0.3889.0. It locates the game's
+data by scanning for byte patterns, and on a build it does not know that scan fails,
+so every call that reads or changes the world — spawning a ped, reading a vehicle,
+checking that an entity still exists — throws instead of answering.
+```
+
+**Это не дефект фреймворка, и обойти это фреймворк не может.** ScriptHookVDotNet не
+спрашивает у игры, где лежат её данные: он ищет в скомпилированном коде игры байтовые
+сигнатуры и вычисляет адреса. После обновления игры сигнатуры смещаются, поиск
+возвращает пустоту, и `SHVDN.NativeMemory` не инициализируется. С этого момента любой
+член, построенный на нём, бросает `TypeInitializationException` — навсегда, до конца
+сессии, при первом же обращении.
+
+Тридцать восемь членов ScriptHookVDotNet, которые вызывает этот клиент, входят в эту
+группу, включая те, которым нет замены:
+
+- `World.CreatePed`, `World.CreateVehicle`, `World.CreatePropNoOffset` — ни одного
+  удалённого игрока вообще нельзя создать
+- `Ped.Exists`, `Vehicle.Exists`, `Prop.Exists`, `Entity.FromHandle` — ничего нельзя
+  проверить перед использованием
+- `Ped.CurrentVehicle`, `Vehicle.Driver` — кто в какой машине
+- `Vehicle.CurrentRPM`, `.ThrottlePower`, `.BrakePower`, `.SteeringAngle`,
+  `.FuelLevel`, `.CurrentGear`, поворотники — вся телеметрия транспорта
+- `Entity.ForwardVector`, `GameplayCamera.Direction` — куда направлен выстрел
+
+Консоль и логи это не затрагивает: клиент рисует их только через `Function.Call`,
+который к `NativeMemory` не обращается.
+
+**Исправление**, и единственное:
+
+1. Посмотрите сборку игры в `<GTA V>/ScriptHookV.log`, первая строка —
+   `game version is VER_1_0_3889_0`.
+2. Скачайте nightly с
+   https://github.com/scripthookvdotnet/scripthookvdotnet-nightly/releases, где эта
+   сборка заявлена как поддерживаемая. Стабильные релизы отстают от игры на месяцы;
+   поддержка новой сборки появляется сначала в nightly, и аккаунт GitHub для скачивания
+   не нужен.
+3. Замените `ScriptHookVDotNet.asi`, `ScriptHookVDotNet2.dll` и
+   `ScriptHookVDotNet3.dll` в каталоге GTA V на файлы оттуда.
+4. Перезапустите игру. Сообщение исчезнет, `connect` заработает.
+
+Почему клиент отказывается подключаться, а не пробует: сессия, в которой сетевая
+половина работает, а игровая бросает исключения, выглядит подключённой — список
+игроков заполняется, пинг нормальный, и больше в мире не происходит ничего. Отказ на
+входе — честный ответ, и это единственное место, где такой отказ ещё можно объяснить
+словами.
 
 ---
 

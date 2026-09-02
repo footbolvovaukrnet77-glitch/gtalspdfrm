@@ -432,8 +432,27 @@ namespace Gtamp.Client.Core
             return Adapters.ReloadFrom(AdapterDirectory, Sdk, Environment);
         }
 
+        /// <summary>
+        /// Non-null when connecting is refused, and why. Set by the host when the game
+        /// API it needs is unusable — see <see cref="ScriptHostCompatibility"/>.
+        /// <para>
+        /// The refusal is deliberate. A client that connects but cannot spawn a ped or
+        /// read a vehicle looks connected: the player list fills, the ping is fine, and
+        /// nothing else in the world happens. That is the failure this project keeps
+        /// finding — state that arrives correctly and never reaches the thing it
+        /// describes — and here it can be refused at the door instead.
+        /// </para>
+        /// </summary>
+        public string? BlockReason { get; set; }
+
         public void Connect(string host, int port)
         {
+            if (!string.IsNullOrEmpty(BlockReason))
+            {
+                Log.Error(LogCategory.Client, BlockReason!);
+                return;
+            }
+
             if (Connection.State == ClientConnectionState.Connecting)
             {
                 Log.Warning(LogCategory.Client, "A connection attempt is already in progress.");

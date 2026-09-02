@@ -49,7 +49,7 @@ Expected output: `Build succeeded. 0 Warning(s) 0 Error(s)`.
 ./tools/test.sh          # or tools\test.bat
 ```
 
-Expected: `Passed! - Failed: 0, Passed: 613`.
+Expected: `Passed! - Failed: 0, Passed: 623`.
 
 ### Check the documentation
 
@@ -161,6 +161,16 @@ Type `help` at the prompt for the admin commands, `stop` to shut down cleanly.
 3. **ScriptHookVDotNet 3** — https://github.com/scripthookvdotnet/scripthookvdotnet/releases
    Copy `ScriptHookVDotNet.asi`, `ScriptHookVDotNet2.dll` and
    `ScriptHookVDotNet3.dll` into the same directory.
+
+   **Check that the release supports your game build.** ScriptHookVDotNet finds the
+   game's data by scanning for byte patterns, so a build it does not know about is not
+   partly supported — it is not supported at all, and every call this client makes into
+   the world throws. The stable releases lag the game by months; when yours is newer,
+   take a nightly from
+   https://github.com/scripthookvdotnet/scripthookvdotnet-nightly/releases instead.
+   The client checks this on the first frame and refuses to connect with an explanation
+   rather than dying later — see
+   [ScriptHookVDotNet cannot read this game build](../TROUBLESHOOTING.md#scripthookvdotnet-cannot-read-this-game-build).
 
 Optional, and genuinely optional:
 

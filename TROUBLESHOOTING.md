@@ -142,10 +142,63 @@ Once the log exists:
 | Symptom | Cause | Fix |
 | --- | --- | --- |
 | No mention of the DLL | Wrong folder | It goes in `<GTA V>\scripts\`, not the root |
-| `Aborted script Gtamp.Client.Shv.GtampScript` with `SHVDN.NativeMemory..cctor()` in the trace | ScriptHookVDotNet does not support this build of GTA V | Not a defect in this framework. `NativeMemory` scans the game for byte patterns when it is first touched, and on an unsupported build the scan finds nothing and the type initialiser throws. It surfaces on the first text draw — for this client, the moment the console opens — so it reads as "the console does not open". Compare `ScriptHookV.log`'s `game version is VER_...` against the SHVDN release notes and install a build that supports it |
+| `Aborted script Gtamp.Client.Shv.GtampScript` with `SHVDN.NativeMemory..cctor()` in the trace | ScriptHookVDotNet does not support this build of GTA V | Not a defect in this framework — see [ScriptHookVDotNet cannot read this game build](#scripthookvdotnet-cannot-read-this-game-build) below. Builds of this client before that check existed died here on the first text draw, which is the moment the console opens, so it read as "the console does not open" |
 | `Could not load file or assembly 'Gtamp.Client.Core'` | Only one DLL was copied | Copy all three: `Gtamp.Client.Shv.dll`, `Gtamp.Client.Core.dll`, `Gtamp.Shared.dll` |
 | Nothing loads at all after a game update | ScriptHookV lags GTA V updates | Wait for a ScriptHookV release matching the new build |
 | `<GTA V>/Gtamp/logs/startup-failure.log` exists | The client threw before its logger existed | The file has the exception. Pressing the console key also says so in-game now: a key that silently does nothing cannot be told apart from the wrong key |
+
+---
+
+## ScriptHookVDotNet cannot read this game build
+
+The client says this on the first frame, in the log and as a red notification, and
+refuses to connect:
+
+```
+ScriptHookVDotNet 3.6.0.0 cannot read game build 1.0.3889.0. It locates the game's
+data by scanning for byte patterns, and on a build it does not know that scan fails,
+so every call that reads or changes the world — spawning a ped, reading a vehicle,
+checking that an entity still exists — throws instead of answering.
+```
+
+**This is not a defect in this framework, and nothing in this framework can work
+around it.** ScriptHookVDotNet does not ask the game where its data lives; it searches
+the game's compiled code for byte patterns and derives the addresses. When the game
+updates, those patterns move, the search returns nothing, and `SHVDN.NativeMemory`
+fails to initialise. From then on every member built on it throws
+`TypeInitializationException` — for good, for the rest of the session, on first touch.
+
+Thirty-eight of the ScriptHookVDotNet members this client calls are in that group,
+including the ones there is no substitute for:
+
+- `World.CreatePed`, `World.CreateVehicle`, `World.CreatePropNoOffset` — no remote
+  player can be spawned at all
+- `Ped.Exists`, `Vehicle.Exists`, `Prop.Exists`, `Entity.FromHandle` — nothing can be
+  checked before it is used
+- `Ped.CurrentVehicle`, `Vehicle.Driver` — who is in which car
+- `Vehicle.CurrentRPM`, `.ThrottlePower`, `.BrakePower`, `.SteeringAngle`,
+  `.FuelLevel`, `.CurrentGear`, the indicator lights — the whole vehicle telemetry
+- `Entity.ForwardVector`, `GameplayCamera.Direction` — where a shot is aimed
+
+The console and the logs are unaffected: this client draws them through
+`Function.Call` alone, which does not go near `NativeMemory`.
+
+**The fix**, and the only one:
+
+1. Read the game build from `<GTA V>/ScriptHookV.log`, first line —
+   `game version is VER_1_0_3889_0`.
+2. Download a nightly from
+   https://github.com/scripthookvdotnet/scripthookvdotnet-nightly/releases that lists
+   support for it. The stable releases lag the game by months; the nightly mirror is
+   where support for a new build lands first, and it needs no GitHub account.
+3. Replace `ScriptHookVDotNet.asi`, `ScriptHookVDotNet2.dll` and
+   `ScriptHookVDotNet3.dll` in the GTA V directory with the ones from it.
+4. Restart the game. The message is gone and `connect` works.
+
+Why the client refuses to connect rather than trying: a session in which the network
+half works and the game half throws looks connected — the player list fills, the ping
+is fine, and nothing else in the world ever happens. Refusing at the door is the
+honest answer, and it is the one place this failure can still be explained in words.
 
 ---
 

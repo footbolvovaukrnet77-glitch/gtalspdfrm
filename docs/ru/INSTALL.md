@@ -50,7 +50,7 @@ tools\build.bat Release
 ./tools/test.sh          # или tools\test.bat
 ```
 
-Ожидается: `Passed! - Failed: 0, Passed: 613`.
+Ожидается: `Passed! - Failed: 0, Passed: 623`.
 
 ### Проверка документации
 
@@ -164,6 +164,16 @@ sudo ufw allow 27015/udp
 3. **ScriptHookVDotNet 3** — https://github.com/scripthookvdotnet/scripthookvdotnet/releases
    Скопируйте `ScriptHookVDotNet.asi`, `ScriptHookVDotNet2.dll` и
    `ScriptHookVDotNet3.dll` в тот же каталог.
+
+   **Проверьте, что релиз поддерживает вашу сборку игры.** ScriptHookVDotNet находит
+   данные игры сканированием байтовых сигнатур, поэтому неизвестная ему сборка
+   поддерживается не частично — она не поддерживается вовсе, и любой вызов этого
+   клиента в мир бросает исключение. Стабильные релизы отстают от игры на месяцы; если
+   ваша новее, берите nightly с
+   https://github.com/scripthookvdotnet/scripthookvdotnet-nightly/releases.
+   Клиент проверяет это на первом кадре и отказывается подключаться с объяснением,
+   вместо того чтобы упасть позже — см.
+   [ScriptHookVDotNet не читает эту сборку игры](../../TROUBLESHOOTING.ru.md#scripthookvdotnet-не-читает-эту-сборку-игры).
 
 Опционально — и действительно опционально:
 
