@@ -22,3 +22,4 @@ Gtamp/client.ini
 # OS
 .DS_Store
 Thumbs.db
+diagnostics/

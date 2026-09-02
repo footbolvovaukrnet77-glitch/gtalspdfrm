@@ -59,6 +59,22 @@ screen — it removes the need for a second person to be looking at one.
 
 Exit code 0 means no task failed. Windows equivalent: `tools\run-bot.bat`.
 
+## Run the watcher (record what breaks)
+
+Full description: [docs/WATCHER.md](docs/WATCHER.md). It reads logs and never
+touches the game. Nothing leaves the machine unless `--publish` is given, and that
+refuses on a public repository until `--public-ok` is given too.
+
+| Command | What it does |
+| --- | --- |
+| `./tools/run-watcher.sh` | Watch the logs and write a record whenever something breaks |
+| `./tools/run-watcher.sh --screenshot` | Also grab the screen — needs the game windowed or borderless |
+| `./tools/run-watcher.sh --rules` | What counts as a problem, and what each one means |
+| `./tools/run-watcher.sh --publish --public-ok` | Push the records to the `diagnostics` branch, having acknowledged the repository is public |
+| `./tools/run-watcher.sh --help` | Every key |
+
+Windows equivalent: `tools\run-watcher.bat`.
+
 ## Server console
 
 Type these at the running server's prompt.
