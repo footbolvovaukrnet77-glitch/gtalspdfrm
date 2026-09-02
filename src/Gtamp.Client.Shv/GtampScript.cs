@@ -39,8 +39,22 @@ namespace Gtamp.Client.Shv
         private string _configPath = string.Empty;
         private bool _failed;
 
+        /// <summary>
+        /// Resolved before anything that can throw, so the last-resort crash log lands in
+        /// the same place as every other file this client owns. It used to resolve its own
+        /// directory from the app domain base — which is the scripts folder — so the one
+        /// log a player is told to look for when nothing else worked was written somewhere
+        /// they were never told to look.
+        /// </summary>
+        private readonly string _gameDirectory;
+
+        private readonly string _baseDirectory;
+
         public GtampScript()
         {
+            _baseDirectory = AppDomain.CurrentDomain.BaseDirectory;
+            _gameDirectory = GameDirectory.Resolve(_baseDirectory, TryGetExecutablePath());
+
             try
             {
                 Initialize();
@@ -49,7 +63,7 @@ namespace Gtamp.Client.Shv
             {
                 _failed = true;
                 GTA.UI.Notification.Show("~r~GTAMP failed to start~s~. See Gtamp/logs.", false);
-                WriteFallbackCrashLog(exception);
+                WriteFallbackCrashLog(_gameDirectory, exception);
             }
 
             Tick += OnTick;
@@ -59,8 +73,8 @@ namespace Gtamp.Client.Shv
 
         private void Initialize()
         {
-            string baseDirectory = AppDomain.CurrentDomain.BaseDirectory;
-            string gameDirectory = GameDirectory.Resolve(baseDirectory, TryGetExecutablePath());
+            string baseDirectory = _baseDirectory;
+            string gameDirectory = _gameDirectory;
             string root = Path.Combine(gameDirectory, "Gtamp");
             _configPath = Path.Combine(root, "client.ini");
 
@@ -192,6 +206,19 @@ namespace Gtamp.Client.Shv
         {
             if (_failed || _client == null || _config == null)
             {
+                // A key that does nothing at all is the worst answer available: the
+                // player cannot tell a broken install from a wrong key. The startup
+                // notification is shown once and is easy to miss behind a loading
+                // screen, so the console key says it again, every time it is pressed.
+                int wanted = _config?.ConsoleKey ?? ClientConfig.DefaultConsoleKey;
+                if ((int)e.KeyCode == wanted)
+                {
+                    GTA.UI.Notification.Show(
+                        "~r~GTAMP did not start~s~, so the console is not available. "
+                        + "See Gtamp/logs/startup-failure.log.",
+                        false);
+                }
+
                 return;
             }
 
@@ -331,11 +358,11 @@ namespace Gtamp.Client.Shv
         }
 
         /// <summary>Last-resort log when the failure happened before the log bus existed.</summary>
-        private static void WriteFallbackCrashLog(Exception exception)
+        private static void WriteFallbackCrashLog(string gameDirectory, Exception exception)
         {
             try
             {
-                string directory = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "Gtamp", "logs");
+                string directory = Path.Combine(gameDirectory, "Gtamp", "logs");
                 Directory.CreateDirectory(directory);
                 File.AppendAllText(
                     Path.Combine(directory, "startup-failure.log"),

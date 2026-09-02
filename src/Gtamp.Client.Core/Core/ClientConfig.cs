@@ -45,8 +45,15 @@ namespace Gtamp.Client.Core
         /// </summary>
         public string IdentitySecret { get; set; } = string.Empty;
 
+        /// <summary>
+        /// F8. Named rather than repeated, because the host needs the same number before
+        /// a configuration exists — when the client failed to start, the key that opens
+        /// the console still has to be recognised so it can say why it will not open.
+        /// </summary>
+        public const int DefaultConsoleKey = 119;
+
         /// <summary>Virtual key code that opens the developer console. 119 is F8.</summary>
-        public int ConsoleKey { get; set; } = 119;
+        public int ConsoleKey { get; set; } = DefaultConsoleKey;
 
         /// <summary>
         /// How far behind the newest snapshot remote players are rendered, in seconds.
