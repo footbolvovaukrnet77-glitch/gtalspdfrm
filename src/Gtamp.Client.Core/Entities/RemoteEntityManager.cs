@@ -180,12 +180,24 @@ namespace Gtamp.Client.Entities
             return _objects.TryGetValue(id, out int handle) ? handle : 0;
         }
 
+        /// <summary>
+        /// Drops what the snapshot says is gone.
+        /// <para>
+        /// Absence only means "gone" when the view is a complete picture. A snapshot
+        /// the byte budget cut short leaves out entities that are alive and simply
+        /// have not arrived yet, and deleting those means destroying and rebuilding
+        /// the same car every frame the budget is tight — which is what a joining
+        /// client saw as vehicles flickering in and out of the world.
+        /// </para>
+        /// </summary>
         private void RemoveVanished(EntitySnapshotView view)
         {
+            bool absenceMeansGone = view.IsComplete;
+
             _removalBuffer.Clear();
             foreach (EntityId id in _vehicles.Keys)
             {
-                if (!view.Contains(id) || IsOwnedLocally(view, id))
+                if ((absenceMeansGone && !view.Contains(id)) || IsOwnedLocally(view, id))
                 {
                     _removalBuffer.Add(id);
                 }
@@ -199,7 +211,7 @@ namespace Gtamp.Client.Entities
             _removalBuffer.Clear();
             foreach (EntityId id in _npcs.Keys)
             {
-                if (!view.Contains(id) || IsOwnedLocally(view, id))
+                if ((absenceMeansGone && !view.Contains(id)) || IsOwnedLocally(view, id))
                 {
                     _removalBuffer.Add(id);
                 }
@@ -213,7 +225,7 @@ namespace Gtamp.Client.Entities
             _removalBuffer.Clear();
             foreach (EntityId id in _objects.Keys)
             {
-                if (!view.Contains(id) || IsOwnedLocally(view, id))
+                if ((absenceMeansGone && !view.Contains(id)) || IsOwnedLocally(view, id))
                 {
                     _removalBuffer.Add(id);
                 }

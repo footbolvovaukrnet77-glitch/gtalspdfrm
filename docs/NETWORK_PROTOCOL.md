@@ -336,6 +336,7 @@ varuint  tick
 f64      serverTime
 varuint  ackClientUpdate     newest client update this snapshot accounts for
 u8       flags               bit0 = environment block present
+                             bit1 = the resulting view holds the whole world
 [environment]
 varuint  removedCount
 varuint  removedEntityId *
@@ -376,6 +377,53 @@ This is the mechanism that lets replication be optimised without the server worl
 state ever being reduced. `StressTests.DistanceNeverRemovesAnEntityFromTheServerWorld`
 scatters 100 entities across the whole map, far outside any streaming range of the
 only connected player, and asserts the client converges on all of them.
+
+### Absence is not removal
+
+"Its baseline state carries forward" holds for a delta, where an entity left out
+is simply not mentioned. It does **not** hold for a full snapshot, whose baseline
+is nothing: an entity left out of a full snapshot is absent from the view the
+client builds, and a client that reads absence as removal will destroy it.
+
+Flags bit1 closes that. The writer counts the view the receiver will end up
+holding against the world it is replicating, and sets the bit only when the two
+match. Removal is then a conclusion the client may draw **only from a snapshot
+that claims the whole world**; from any other, a missing entity is one still on
+its way. `EntitySnapshotView.IsComplete` carries the same answer on both sides.
+
+It is counted against the world rather than taken from "did this packet defer
+anything", because a delta that fits does not make the world whole if its
+baseline was already short — and, equally, a later snapshot that closes the gap
+does make it whole again.
+
+Known limitation: absence is the only removal signal a view carries, so an entity
+the server removes in the same snapshot that defers something else lingers on the
+client until the next complete snapshot — normally the next frame. Closing that
+would mean carrying the explicit removal list alongside every view; it is not
+built.
+
+### Ordering while nothing is acknowledged
+
+Priority normally demotes an entity once it has been sent, so the next snapshot
+leads with whatever has waited longest. That is right for deltas and wrong before
+the first acknowledgement arrives, when *every* snapshot is a full one written
+against nothing: snapshot 1 would carry one half of the world, and snapshot 2 —
+still written against nothing, because the ack had not had time to cross —
+the other half, each describing a world the other half was not in. A joining
+player watched the same parked cars be created and destroyed once per snapshot
+for as long as the burst lasted.
+
+So while `AcknowledgedSnapshotId` is 0, send history is left out of the score and
+the order is a pure function of the world (`ReplicationPriority.Score`). Every
+full snapshot in that burst then carries the same entities and simply repeats
+itself until one gets through, at which point the deferred entities become the
+highest priority there is and flow in as deltas.
+
+The cost is that convergence now waits on an acknowledgement rather than
+happening regardless: if every ack were lost the server would repeat the same
+first slice indefinitely. At 20 snapshots a second that needs near-total loss on
+the ack path, on which the session's own timeout would fire first — but it is a
+real dependency and not a theoretical one.
 
 ### Why the snapshot echoes a client update sequence
 

@@ -23,7 +23,7 @@ namespace Gtamp.Shared.World
     public sealed class EntitySnapshotView
     {
         public static readonly EntitySnapshotView Empty = new EntitySnapshotView(
-            0, 0, 0d, new Dictionary<EntityId, NetEntity>(), new WorldEnvironment());
+            0, 0, 0d, new Dictionary<EntityId, NetEntity>(), new WorldEnvironment(), complete: true);
 
         private readonly Dictionary<EntityId, NetEntity> _entities;
 
@@ -32,13 +32,15 @@ namespace Gtamp.Shared.World
             uint tick,
             double serverTime,
             Dictionary<EntityId, NetEntity> entities,
-            WorldEnvironment environment)
+            WorldEnvironment environment,
+            bool complete)
         {
             SnapshotId = snapshotId;
             Tick = tick;
             ServerTime = serverTime;
             _entities = entities;
             Environment = environment;
+            IsComplete = complete;
         }
 
         public uint SnapshotId { get; }
@@ -48,6 +50,35 @@ namespace Gtamp.Shared.World
         public double ServerTime { get; }
 
         public WorldEnvironment Environment { get; }
+
+        /// <summary>
+        /// Whether this view is the whole replicated world, or only as much of it as
+        /// fitted in the byte budget.
+        /// <para>
+        /// The snapshot writer offers entities in priority order and stops when the
+        /// packet is full; whatever is left over goes out in the next snapshot. Until
+        /// then the view is a real but <em>incomplete</em> picture, and an entity
+        /// missing from it has not been destroyed — it simply has not arrived yet.
+        /// Consumers that reconcile a local table against a view must therefore only
+        /// treat absence as removal when this is true, or they will destroy and
+        /// rebuild an entity every time the budget is tight (master prompt section 28:
+        /// replication may be optimised, the world may not be pruned).
+        /// </para>
+        /// <para>
+        /// This is counted against the world by the snapshot writer and carried on the
+        /// wire, not inferred from one packet: a delta that fits does not make the
+        /// world whole if its baseline was already short, and a later snapshot that
+        /// closes the gap does make it whole again.
+        /// </para>
+        /// <para>
+        /// KNOWN LIMITATION: absence is the only removal signal a consumer of a view
+        /// has, so an entity the server removes in the same snapshot that defers
+        /// something else lingers on the client until the next complete snapshot —
+        /// normally the next frame. Closing that would mean carrying the explicit
+        /// removal list alongside every view; it is not built.
+        /// </para>
+        /// </summary>
+        public bool IsComplete { get; }
 
         public int Count => _entities.Count;
 
@@ -68,7 +99,8 @@ namespace Gtamp.Shared.World
             double serverTime,
             IReadOnlyDictionary<EntityId, NetEntity> changed,
             IReadOnlyCollection<EntityId> removed,
-            WorldEnvironment environment)
+            WorldEnvironment environment,
+            bool complete)
         {
             var entities = new Dictionary<EntityId, NetEntity>(_entities);
             foreach (EntityId id in removed)
@@ -81,7 +113,7 @@ namespace Gtamp.Shared.World
                 entities[pair.Key] = pair.Value;
             }
 
-            return new EntitySnapshotView(snapshotId, tick, serverTime, entities, environment);
+            return new EntitySnapshotView(snapshotId, tick, serverTime, entities, environment, complete);
         }
 
         internal static EntitySnapshotView FromEntities(
@@ -90,6 +122,6 @@ namespace Gtamp.Shared.World
             double serverTime,
             Dictionary<EntityId, NetEntity> entities,
             WorldEnvironment environment) =>
-            new EntitySnapshotView(snapshotId, tick, serverTime, entities, environment);
+            new EntitySnapshotView(snapshotId, tick, serverTime, entities, environment, complete: true);
     }
 }

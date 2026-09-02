@@ -112,12 +112,18 @@ namespace Gtamp.Client.Missions
                 tracked.Snapshot = (ActivityEntity)activity.Clone();
             }
 
+            // As everywhere else: absence from a partial view is "not here yet", not
+            // "cancelled". Ending an activity the server never ended would fire
+            // OnFinished at every listener for nothing.
             _removalBuffer.Clear();
-            foreach (EntityId id in _tracked.Keys)
+            if (view.IsComplete)
             {
-                if (!view.Contains(id))
+                foreach (EntityId id in _tracked.Keys)
                 {
-                    _removalBuffer.Add(id);
+                    if (!view.Contains(id))
+                    {
+                        _removalBuffer.Add(id);
+                    }
                 }
             }
 

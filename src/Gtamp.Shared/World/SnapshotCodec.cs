@@ -26,6 +26,9 @@ namespace Gtamp.Shared.World
         /// <summary>Entities that had changes but did not fit in the byte budget; they go out next snapshot.</summary>
         public int DeferredCount { get; set; }
 
+        /// <summary>Whether <see cref="ResultingView"/> holds every entity replicated to this client.</summary>
+        public bool DescribesWholeWorld { get; set; }
+
         public bool EnvironmentIncluded { get; set; }
 
         /// <summary>The view the client will hold once it acknowledges this snapshot.</summary>
@@ -61,6 +64,17 @@ namespace Gtamp.Shared.World
         public List<EntityId> RemovedIds { get; } = new List<EntityId>();
 
         public bool IsFullSnapshot => BaselineId == 0;
+
+        /// <summary>
+        /// Whether the view this snapshot produces holds the whole replicated world.
+        /// <para>
+        /// False when the byte budget left entities out, here or in any earlier
+        /// snapshot whose gap this one did not close. They are not lost and they are
+        /// not removed — they go out in a following snapshot. A receiver must not read
+        /// absence from an incomplete snapshot as "this entity is gone".
+        /// </para>
+        /// </summary>
+        public bool DescribesWholeWorld { get; set; } = true;
     }
 
     public sealed class SnapshotApplyResult
@@ -74,7 +88,7 @@ namespace Gtamp.Shared.World
     /// Wire format of the world snapshot message.
     /// <code>
     /// varuint snapshotId | varuint baselineId | varuint tick | f64 serverTime
-    /// u8 flags (bit0 = environment present) | [environment]
+    /// u8 flags (bit0 = environment present, bit1 = view holds the whole world) | [environment]
     /// varuint removedCount | varuint removedId*
     /// varuint entityCount
     ///   varuint entityId | u8 entryFlags (bit0 = full state) | [u8 typeId] | fields
@@ -84,6 +98,13 @@ namespace Gtamp.Shared.World
     public static class SnapshotCodec
     {
         private const byte FlagEnvironmentPresent = 0x01;
+
+        /// <summary>
+        /// Set when the view the receiver ends up with holds every entity the server
+        /// is replicating to it. Clear means "some are still on their way" — never
+        /// "the rest are gone".
+        /// </summary>
+        private const byte FlagWholeWorld = 0x02;
         private const byte EntryFlagFullState = 0x01;
 
         /// <summary>
@@ -145,6 +166,9 @@ namespace Gtamp.Shared.World
             writer.WriteVarUInt(world.Tick);
             writer.WriteDouble(world.ServerTime);
             writer.WriteVarUInt(acknowledgedClientUpdate);
+            // Whether the world fits is only known once the budget runs out, so the
+            // slot is written now and patched below rather than reordering the header.
+            int flagsOffset = writer.Length;
             writer.WriteByte(environmentChanged ? FlagEnvironmentPresent : (byte)0);
             if (environmentChanged)
             {
@@ -207,16 +231,47 @@ namespace Gtamp.Shared.World
                 result.WrittenStates[entity.Id] = entity.Clone();
             }
 
+            // Completeness is a property of the world the receiver ends up holding,
+            // not of this one packet: a snapshot that deferred nothing still leaves
+            // the receiver short if its baseline was already missing entities. So it
+            // is counted against the world rather than inferred from DeferredCount,
+            // which is what lets it recover once the backlog has gone out.
+            int replicated = 0;
+            foreach (NetEntity entity in world.Entities)
+            {
+                if (visible == null || visible(entity))
+                {
+                    replicated++;
+                }
+            }
+
+            int carried = baseline.Count - result.RemovedIds.Count;
+            foreach (EntityId id in result.WrittenStates.Keys)
+            {
+                if (!baseline.Contains(id))
+                {
+                    carried++;
+                }
+            }
+
+            bool wholeWorld = carried >= replicated;
+            if (wholeWorld)
+            {
+                writer.Buffer[flagsOffset] |= FlagWholeWorld;
+            }
+
             writer.WriteVarUInt((uint)entityCount);
             writer.WriteBytes(body.Buffer, 0, body.Length);
             result.Payload = writer.ToArray();
+            result.DescribesWholeWorld = wholeWorld;
             result.ResultingView = baseline.Derive(
                 snapshotId,
                 world.Tick,
                 world.ServerTime,
                 result.WrittenStates,
                 result.RemovedIds,
-                world.Environment.Clone());
+                world.Environment.Clone(),
+                complete: wholeWorld);
 
             return result;
         }
@@ -256,6 +311,7 @@ namespace Gtamp.Shared.World
 
             WorldEnvironment environment = baseline.Environment.Clone();
             byte flags = reader.ReadByte();
+            header.DescribesWholeWorld = (flags & FlagWholeWorld) != 0;
             if ((flags & FlagEnvironmentPresent) != 0)
             {
                 ReadEnvironment(reader, environment);
@@ -303,7 +359,13 @@ namespace Gtamp.Shared.World
             {
                 Header = header,
                 View = baseline.Derive(
-                    header.SnapshotId, header.Tick, header.ServerTime, changed, header.RemovedIds, environment),
+                    header.SnapshotId,
+                    header.Tick,
+                    header.ServerTime,
+                    changed,
+                    header.RemovedIds,
+                    environment,
+                    complete: header.DescribesWholeWorld),
             };
         }
 

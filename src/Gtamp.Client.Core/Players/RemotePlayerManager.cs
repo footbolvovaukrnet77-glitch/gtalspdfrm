@@ -105,12 +105,18 @@ namespace Gtamp.Client.Players
                 remote.Push(view.ServerTime, player);
             }
 
+            // Only a complete view can say somebody left: a snapshot the byte budget
+            // cut short omits players who are still very much there, and despawning
+            // them makes another player blink out of existence mid-conversation.
             _removalBuffer.Clear();
-            foreach (KeyValuePair<EntityId, RemotePlayer> pair in _players)
+            if (view.IsComplete)
             {
-                if (!view.Contains(pair.Key))
+                foreach (KeyValuePair<EntityId, RemotePlayer> pair in _players)
                 {
-                    _removalBuffer.Add(pair.Key);
+                    if (!view.Contains(pair.Key))
+                    {
+                        _removalBuffer.Add(pair.Key);
+                    }
                 }
             }
 

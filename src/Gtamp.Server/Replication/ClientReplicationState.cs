@@ -142,7 +142,15 @@ namespace Gtamp.Server.Replication
                 scored.Add(new KeyValuePair<double, NetEntity>(Score(entity, viewer, currentTick, state), entity));
             }
 
-            scored.Sort(static (a, b) => b.Key.CompareTo(a.Key));
+            // Entity id breaks ties so the order is total. Without it List.Sort is
+            // free to return equal-scoring entities in a different order on every
+            // call, and two snapshots written against the same baseline would carry
+            // different halves of the world for no reason.
+            scored.Sort(static (a, b) =>
+            {
+                int byScore = b.Key.CompareTo(a.Key);
+                return byScore != 0 ? byScore : a.Value.Id.Value.CompareTo(b.Value.Id.Value);
+            });
 
             var ordered = new List<NetEntity>(scored.Count);
             foreach (KeyValuePair<double, NetEntity> pair in scored)
@@ -155,10 +163,24 @@ namespace Gtamp.Server.Replication
 
         public static double Score(NetEntity entity, NetVector3 viewer, uint currentTick, ClientReplicationState state)
         {
+            uint lastSent = state.LastSentTick(entity.Id);
+
+            // Until the client acknowledges a snapshot, every snapshot is a full one
+            // written against nothing, and "what I have already sent" must not enter
+            // the score. It used to: an entity written into full snapshot 1 stopped
+            // being top priority, so full snapshot 2 — still written against nothing,
+            // because the acknowledgement had not had time to arrive — carried the
+            // *other* half of the world and described a world the first half was not
+            // in. A joining client watched the same cars be created and destroyed
+            // once per snapshot until the first ack landed. Ordering while
+            // unacknowledged is therefore a pure function of the world, so every
+            // full snapshot in that burst carries the same entities and simply
+            // repeats itself until one gets through.
+            bool converged = state.AcknowledgedSnapshotId != 0;
+
             // Never sent before: highest possible priority, so a joining client
             // converges on the full world as fast as the budget allows.
-            uint lastSent = state.LastSentTick(entity.Id);
-            if (lastSent == 0)
+            if (converged && lastSent == 0)
             {
                 return double.MaxValue;
             }
@@ -168,7 +190,7 @@ namespace Gtamp.Server.Replication
 
             // Staleness grows without bound, so a distant entity that has not been
             // refreshed for a while eventually outranks a nearby idle one.
-            double staleness = currentTick > lastSent ? currentTick - lastSent : 0d;
+            double staleness = converged && currentTick > lastSent ? currentTick - lastSent : 0d;
 
             // Players outrank scenery of the same distance.
             double typeWeight = entity.Type == EntityType.Player ? 4d : 1d;
