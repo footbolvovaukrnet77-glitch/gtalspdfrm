@@ -42,6 +42,23 @@ gives the same answer every time.
 | `./tools/run-server.sh --config /etc/gtamp/server.json` | Use another config |
 | `echo stop \| ./tools/run-server.sh` | Start and shut down — useful for a smoke test |
 
+## Run the bot (a second player without a second person)
+
+Full description: [docs/BOT.md](docs/BOT.md). It decides everything the *server*
+decides and nothing the *engine* decides, so it does not replace looking at a
+screen — it removes the need for a second person to be looking at one.
+
+| Command | What it does |
+| --- | --- |
+| `./tools/run-bot.sh` | Connect to `127.0.0.1:27015` and run every task in order |
+| `./tools/run-bot.sh --task follow` | Walk after the nearest real player, so you have somebody to watch |
+| `./tools/run-bot.sh --count 2 --task stand,follow,shoot,die` | Two bots, which gives each of them somebody to see, shoot and be shot by |
+| `./tools/run-bot.sh --count 10 --task patrol` | Ten players at once — what the byte budget does under real density |
+| `./tools/run-bot.sh --server 192.168.1.5:27015 --name Напарник` | Another server, another name |
+| `./tools/run-bot.sh --help` | Every key and every task |
+
+Exit code 0 means no task failed. Windows equivalent: `tools\run-bot.bat`.
+
 ## Server console
 
 Type these at the running server's prompt.

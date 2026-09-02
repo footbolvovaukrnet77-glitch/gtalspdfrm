@@ -82,6 +82,18 @@ namespace Gtamp.Client.Mods
         /// </summary>
         public bool Report(uint modelHash, EntityType wantedBy, EntityId entityId, bool substituted)
         {
+            if (modelHash == 0)
+            {
+                // Zero is the absence of a value, not a model nobody has. It is what
+                // an entity carries between the moment the server creates it and the
+                // moment its owner's first state update lands — so every join
+                // reported "a mod is missing" at the other players, and 0x00000000
+                // went into the bug report's MISSING CONTENT list, where it names
+                // nothing anyone could install. Found by the bot the first time two
+                // clients were ever connected at once.
+                return false;
+            }
+
             if (!_models.TryGetValue(modelHash, out MissingModel? record))
             {
                 record = new MissingModel(modelHash, wantedBy);

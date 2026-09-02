@@ -97,7 +97,7 @@ including their own character, across a server restart.
   and requires it to be absent from the wire — with a control test that requires
   the same canary to be findable when encryption is off.
 
-663 automated tests, all passing, covering everything except the ScriptHookVDotNet
+674 automated tests, all passing, covering everything except the ScriptHookVDotNet
 host layer and the two plugin-host bridges, which need a running game.
 
 Every push and pull request runs the build, the suite and a documentation check
@@ -177,6 +177,7 @@ Full walkthrough, including prerequisites and how to uninstall:
 | [docs/PERSISTENCE.md](docs/PERSISTENCE.md) | Schema, opaque mod blobs, restart flow |
 | [docs/SECURITY.md](docs/SECURITY.md) | What is defensible, the movement budget, trust boundaries |
 | [docs/DEVELOPER_CONSOLE.md](docs/DEVELOPER_CONSOLE.md) | Console, colours, commands, bug reports |
+| [docs/BOT.md](docs/BOT.md) | The headless bot: a second player without a second person, what it can decide and what it cannot |
 | [docs/ROADMAP.md](docs/ROADMAP.md) | Phases 1–12 and what was deliberately not faked |
 | [docs/INSTALL.md](docs/INSTALL.md) | Concrete install, verify and rollback commands |
 | [docs/THIRD_PARTY.md](docs/THIRD_PARTY.md) | Every project read, its licence, what was learned from it and what was deliberately not taken |
