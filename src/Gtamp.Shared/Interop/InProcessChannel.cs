@@ -21,6 +21,25 @@ namespace Gtamp.Shared.Interop
     /// contract is a wire format rather than an interface.
     /// </para>
     /// <para>
+    /// <b>KNOWN LIMITATION, and it is not a small one.</b> <see cref="AppDomain"/> data
+    /// is per-domain, and RAGE Plugin Hook loads every plugin into an AppDomain of its
+    /// own — <c>AppDomainPool::InitializeAppDomain</c>, <c>"Gtamp.RphBridge_AppDomain"</c>
+    /// in its log. So the bridge writes into that domain's dictionary and the
+    /// ScriptHookVDotNet-hosted client reads from a different one. <b>In a real game the
+    /// two halves never see each other</b>, however correct each half is: the bridge
+    /// starts, announces, and polls an inbox nothing will ever fill, while the client
+    /// waits ten seconds and reports that the bridge never answered.
+    /// </para>
+    /// <para>
+    /// This passed every test in the suite because the tests run both endpoints in one
+    /// AppDomain, where <see cref="AppDomain.CurrentDomain"/> is the same object for
+    /// both. Neither half is wrong; the rendezvous between them is, and no test here can
+    /// reach it. Closing it needs a process-wide primitive — a memory-mapped file under a
+    /// named mutex — rather than domain-local state. <b>That is not built.</b> Until it
+    /// is, RPH and LSPDFR state stays local, which is what
+    /// <c>docs/RPH_INTEGRATION.md</c> now says.
+    /// </para>
+    /// <para>
     /// <b>Why it is not just a lock-free queue.</b> Neither side may block the other:
     /// RPH work runs on a <c>GameFiber</c> and SHVDN work on the script thread, and a
     /// blocking call from one into the other deadlocks the game. Both queues are

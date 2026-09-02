@@ -9,13 +9,45 @@
 | Detection and version reporting | **Working** |
 | Publication into the mod manifest | **Working** |
 | Registration points for mod authors | **Working** |
-| In-process channel to an RPH-loaded plugin | **Working** |
-| RPH plugin enumeration, live from RPH | **Working** |
-| LSPDFR state observation (see [LSPDFR_INTEGRATION.md](LSPDFR_INTEGRATION.md)) | **Working** |
-| Replicating an arbitrary RPH plugin's internal state | **Not possible** — see below |
+| The bridge loading and running under RPH | **Working** |
+| In-process channel to an RPH-loaded plugin | **Broken in a real game** — see below |
+| RPH plugin enumeration, live from RPH | Built, unreachable while the channel is broken |
+| LSPDFR state observation (see [LSPDFR_INTEGRATION.md](LSPDFR_INTEGRATION.md)) | Built, unreachable while the channel is broken |
+| Replicating an arbitrary RPH plugin's internal state | **Not possible** — a limit of what RPH exposes |
 
-The last row is not a roadmap entry. It is a limit of what RPH exposes, and it is
-described rather than promised.
+The last row is a limit of RPH. The second is ours, and it was claimed as working for
+most of this project's life.
+
+### The channel does not cross the AppDomain boundary
+
+`InProcessChannel` rendezvouses through `AppDomain.CurrentDomain.SetData`. RAGE Plugin
+Hook loads **every plugin into an AppDomain of its own** — its log says so on each start:
+
+```
+AppDomainPool::InitializeAppDomain: Creating new app domain "Gtamp.RphBridge_AppDomain"
+```
+
+`AppDomain` data is per-domain. So the bridge writes into that domain's dictionary and
+the ScriptHookVDotNet-hosted client reads a different one: the bridge starts, announces,
+and polls an inbox nothing will ever fill, while the client waits ten seconds and reports
+that the bridge never answered. Both halves are correct. The rendezvous between them is
+not.
+
+It passed every test because the suite runs both endpoints in **one** AppDomain, where
+`AppDomain.CurrentDomain` is the same object for both — the same shape of defect this
+project has now found in the join between `ModEnvironment` and the host, and between the
+snapshot streamer and the snapshot view: two correct halves and an untested seam.
+
+**What it would take:** a process-wide primitive instead of domain-local state — a
+memory-mapped file under a named mutex, framed the same way, with the same bounded
+non-blocking rules. **It is not built**, and until it is, RPH and LSPDFR state stays on
+the machine that produced it. Multiplayer is unaffected: this channel carries mod state
+only.
+
+**How to tell which you are looking at.** `RagePluginHook.log` with
+`[GTAMP] RPH bridge started` and a client that still says the bridge never answered is
+this limitation. Without that line it is an installation problem, and the log names
+which.
 
 ## RPH is not required
 

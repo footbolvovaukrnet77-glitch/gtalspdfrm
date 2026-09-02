@@ -123,11 +123,17 @@ namespace Gtamp.Adapters.Rph
                 _log?.Warning(
                     LogCategory.Mod,
                     "RAGE Plugin Hook is installed but Gtamp.RphBridge.dll never answered. " +
-                    "One of three things: the game was not started through RPH; Gtamp.RphBridge.dll and " +
-                    "Gtamp.Shared.dll are not BOTH in '<GTA V>\\Plugins\\' (the copies in 'scripts\\' do not " +
-                    "count); or the two are from different builds. RagePluginHook.log has a GTAMP line " +
-                    "naming which. " +
-                    "RPH state will not be replicated. See docs/RPH_INTEGRATION.md.");
+                    "If RagePluginHook.log says '[GTAMP] RPH bridge started', the bridge is running and " +
+                    "this is the known limitation rather than your installation: RPH loads each plugin " +
+                    "into its own AppDomain, and the in-process channel between the two halves is " +
+                    "AppDomain-local, so they cannot see each other. Closing that needs a process-wide " +
+                    "channel and is not built. " +
+                    "If that line is absent, it is your installation: the game was not started through " +
+                    "RPH, or Gtamp.RphBridge.dll and Gtamp.Shared.dll are not BOTH in " +
+                    "'<GTA V>\\Plugins\\' (the copies in 'scripts\\' do not count), or the two are from " +
+                    "different builds — RagePluginHook.log names which. " +
+                    "Either way RPH state is not replicated and multiplayer is unaffected. " +
+                    "See docs/RPH_INTEGRATION.md.");
             }
         }
 
