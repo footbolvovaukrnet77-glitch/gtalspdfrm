@@ -222,10 +222,17 @@ System.IO.FileNotFoundException: Could not load file or assembly
 at Gtamp.RphBridge.EntryPoint.Main()
 ```
 
-`Gtamp.RphBridge.dll` was copied into `<GTA V>\Plugins\` **without
-`Gtamp.Shared.dll`**. RAGE Plugin Hook resolves a plugin's dependencies from its own
-plugins folder and never from `<GTA V>\scripts\`, so the copy in `scripts\` does not
-count. Copy the whole contents of `dist/client/RagePluginHook-plugins/`, both files.
+Copy the whole contents of `dist/client/RagePluginHook-plugins/` — **both**
+`Gtamp.RphBridge.dll` and `Gtamp.Shared.dll`. The copy in `scripts\` does not count.
+
+**And even with both files there, this used to happen anyway.** RAGE Plugin Hook loads
+each plugin into its own `AppDomain`, and that domain does not probe the plugins folder
+for a plugin's dependencies — so `Gtamp.Shared.dll` sitting in `Plugins\` beside the
+bridge was not found. This was diagnosed from a player's screenshot showing the file in
+place, timestamped five minutes before the run that could not load it. The bridge now
+resolves its own dependencies from the folder it was loaded from, so both files in
+`Plugins\` is all that is needed. If you see this message with both files present, they
+are from different builds: rebuild and copy both again.
 
 Builds from before this was found took the game down with them: RPH treats an unhandled
 exception on a game fiber as fatal, and the plugin's own `try` could not catch it —
