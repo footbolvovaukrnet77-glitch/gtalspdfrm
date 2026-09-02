@@ -2,7 +2,7 @@
 
 > Русская версия. English: [../NETWORK_PROTOCOL.md](../NETWORK_PROTOCOL.md).
 
-Транспорт: UDP. Порядок байтов: little-endian. Версия протокола: **9**
+Транспорт: UDP. Порядок байтов: little-endian. Версия протокола: **10**
 (`ProtocolConstants.ProtocolVersion`); несовпадение отклоняется во время
 рукопожатия с читаемым сообщением.
 
