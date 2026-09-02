@@ -181,7 +181,16 @@ including the ones there is no substitute for:
 - `Entity.ForwardVector`, `GameplayCamera.Direction` — where a shot is aimed
 
 The console and the logs are unaffected: this client draws them through
-`Function.Call` alone, which does not go near `NativeMemory`.
+`Function.Call` and pins its own strings.
+
+**A string argument is the trap.** `Function.Call` itself is safe on a build
+ScriptHookVDotNet does not know — it goes through ScriptHookV's own invoker. But handing
+it a `string` is not a free conversion: `InputArgument`'s implicit operator pins the text
+through `SHVDN.ScriptDomain.PinString`, which calls `NativeMemory.StringToCoTaskMemUTF8`.
+`Function.Call<string>` comes back the same way. So the identical native call succeeds
+carrying numbers and throws carrying text, and every text native carries text. This
+client pins its own strings and passes pointers, so none of its drawing depends on that
+layer.
 
 **The fix**, and the only one:
 

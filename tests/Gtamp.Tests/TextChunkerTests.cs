@@ -1,5 +1,6 @@
 using System.Collections.Generic;
 using System.Linq;
+using System.Text;
 using Gtamp.Client.Ui;
 using Xunit;
 
@@ -78,6 +79,84 @@ namespace Gtamp.Tests
         {
             Assert.Empty(TextChunker.Split("text", 0));
             Assert.Empty(TextChunker.Split("text", -1));
+        }
+
+        [Fact]
+        public void SplittingOnBytesYieldsTheWholeStringWhenItFits()
+        {
+            Assert.Equal(new[] { "hello" }, TextChunker.SplitUtf8("hello", 99));
+        }
+
+        [Theory]
+        [InlineData(null)]
+        [InlineData("")]
+        public void SplittingOnBytesYieldsNothingForNothing(string? text)
+        {
+            Assert.Empty(TextChunker.SplitUtf8(text, 99));
+        }
+
+        [Fact]
+        public void SplittingOnBytesRefusesANonPositiveLimit()
+        {
+            Assert.Empty(TextChunker.SplitUtf8("hello", 0));
+        }
+
+        /// <summary>
+        /// The defect this exists for. Cyrillic is two bytes per character, so ten
+        /// characters is twenty bytes: counting characters would have called this one
+        /// piece and let the game silently drop the second half.
+        /// </summary>
+        [Fact]
+        public void CyrillicIsMeasuredInBytesNotCharacters()
+        {
+            string[] pieces = TextChunker.SplitUtf8("привет", 4).ToArray();
+
+            Assert.Equal(new[] { "пр", "ив", "ет" }, pieces);
+            Assert.All(pieces, piece => Assert.True(Encoding.UTF8.GetByteCount(piece) <= 4));
+        }
+
+        [Fact]
+        public void NoPieceEverExceedsTheByteLimit()
+        {
+            const string mixed = "GTAMP — сессия: 12 игроков, пинг 34 мс, потери 0.2%";
+
+            foreach (string piece in TextChunker.SplitUtf8(mixed, 7))
+            {
+                Assert.True(Encoding.UTF8.GetByteCount(piece) <= 7, piece);
+            }
+        }
+
+        [Fact]
+        public void SplittingOnBytesLosesNothing()
+        {
+            const string mixed = "GTAMP — сессия: 12 игроков";
+
+            Assert.Equal(mixed, string.Concat(TextChunker.SplitUtf8(mixed, 5)));
+        }
+
+        /// <summary>
+        /// Half a surrogate pair is not a character. Split between the two chars and each
+        /// half encodes to the replacement glyph, so the name on screen would be two boxes
+        /// instead of one emoji.
+        /// </summary>
+        [Fact]
+        public void ASurrogatePairIsNeverSplit()
+        {
+            string[] pieces = TextChunker.SplitUtf8("ab\U0001F600cd", 3).ToArray();
+
+            Assert.Equal(new[] { "ab", "\U0001F600", "cd" }, pieces);
+        }
+
+        /// <summary>
+        /// A single character larger than the limit still has to come out, or the loop
+        /// would never advance. It is emitted whole and over the limit rather than
+        /// dropped: the game truncates one component, where an infinite loop hangs
+        /// the game.
+        /// </summary>
+        [Fact]
+        public void ACharacterLargerThanTheLimitIsStillEmitted()
+        {
+            Assert.Equal(new[] { "\U0001F600" }, TextChunker.SplitUtf8("\U0001F600", 1).ToArray());
         }
     }
 }

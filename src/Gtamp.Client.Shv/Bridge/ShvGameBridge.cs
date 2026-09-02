@@ -76,7 +76,26 @@ namespace Gtamp.Client.Shv.Bridge
             _vehicles = new ShvVehicleBridge(_log);
         }
 
-        public string GameVersion => Game.Version.ToString();
+        /// <summary>
+        /// The game build as ScriptHookVDotNet sees it — which on a build it does not
+        /// support is an exception rather than a number. <c>diagnostics</c> and
+        /// <c>bugreport</c> are exactly what a player runs when things are broken, so
+        /// neither may be the thing that breaks.
+        /// </summary>
+        public string GameVersion
+        {
+            get
+            {
+                try
+                {
+                    return Game.Version.ToString();
+                }
+                catch (Exception)
+                {
+                    return "unknown — ScriptHookVDotNet cannot read this build";
+                }
+            }
+        }
 
         /// <summary>
         /// Asks the streamer whether a hash names a model this installation has.
@@ -1469,9 +1488,23 @@ namespace Gtamp.Client.Shv.Bridge
                 Function.Call(Hash.SET_BLIP_SPRITE, blip, PlayerBlipSprite);
                 Function.Call(Hash.SET_BLIP_SCALE, blip, 0.85f);
                 Function.Call(Hash.SHOW_HEADING_INDICATOR_ON_BLIP, blip, true);
-                Function.Call(Hash.BEGIN_TEXT_COMMAND_SET_BLIP_NAME, "STRING");
-                Function.Call(Hash.ADD_TEXT_COMPONENT_SUBSTRING_PLAYER_NAME, marker.Name ?? string.Empty);
-                Function.Call(Hash.END_TEXT_COMMAND_SET_BLIP_NAME, blip);
+                // Through NativeDraw's pinning, not by handing SHVDN a string: its
+                // string marshalling is part of the layer that dies on an unsupported
+                // game build. See NativeDraw for the whole story.
+                try
+                {
+                    Function.Call(Hash.BEGIN_TEXT_COMMAND_SET_BLIP_NAME, Interop.NativeString.Arg("STRING"));
+                    foreach (InputArgument component in Interop.NativeString.Components(marker.Name ?? string.Empty))
+                    {
+                        Function.Call(Hash.ADD_TEXT_COMPONENT_SUBSTRING_PLAYER_NAME, component);
+                    }
+
+                    Function.Call(Hash.END_TEXT_COMMAND_SET_BLIP_NAME, blip);
+                }
+                finally
+                {
+                    Interop.NativeString.Release();
+                }
 
                 record = new BlipRecord(blip, -1);
             }
@@ -1528,9 +1561,24 @@ namespace Gtamp.Client.Shv.Bridge
             Function.Call(Hash.SET_TEXT_CENTRE, true);
             Function.Call(Hash.SET_TEXT_OUTLINE);
             Function.Call(Hash.SET_TEXT_COLOUR, 255, 255, 255, (int)(opacity * 255f));
-            Function.Call(Hash.BEGIN_TEXT_COMMAND_DISPLAY_TEXT, "STRING");
-            Function.Call(Hash.ADD_TEXT_COMPONENT_SUBSTRING_PLAYER_NAME, name);
-            Function.Call(Hash.END_TEXT_COMMAND_DISPLAY_TEXT, 0f, 0f);
+
+            // Strings pinned here rather than converted by ScriptHookVDotNet: a name in
+            // Cyrillic is also why the split is counted in bytes and not characters.
+            try
+            {
+                Function.Call(Hash.BEGIN_TEXT_COMMAND_DISPLAY_TEXT, Interop.NativeString.Arg("STRING"));
+                foreach (InputArgument component in Interop.NativeString.Components(name))
+                {
+                    Function.Call(Hash.ADD_TEXT_COMPONENT_SUBSTRING_PLAYER_NAME, component);
+                }
+
+                Function.Call(Hash.END_TEXT_COMMAND_DISPLAY_TEXT, 0f, 0f);
+            }
+            finally
+            {
+                Interop.NativeString.Release();
+            }
+
             Function.Call(Hash.CLEAR_DRAW_ORIGIN);
         }
 

@@ -70,8 +70,14 @@ namespace Gtamp.Client.Shv
             catch (Exception exception)
             {
                 _failed = true;
-                Ui.NativeDraw.Notify("~r~GTAMP failed to start~s~. See Gtamp/logs.");
+
+                // The file first, then the screen. The screen is drawn by machinery that
+                // may be part of what just failed — and once was: the notification threw
+                // out of this handler, the crash log was never written, and a client that
+                // used to run for three seconds stopped starting at all. The order here is
+                // the rule that prevents it, and NativeDraw not throwing is the other half.
                 WriteFallbackCrashLog(_gameDirectory, exception);
+                Ui.NativeDraw.Notify("~r~GTAMP failed to start~s~. See Gtamp/logs.");
             }
 
             Tick += OnTick;

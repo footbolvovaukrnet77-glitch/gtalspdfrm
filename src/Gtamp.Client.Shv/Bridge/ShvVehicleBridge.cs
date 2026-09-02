@@ -6,6 +6,7 @@ using Gtamp.Shared.Diagnostics;
 using Gtamp.Shared.Entities;
 using GTA;
 using GTA.Math;
+using Gtamp.Client.Shv.Interop;
 using GTA.Native;
 using GtaWorld = GTA.World;
 using NetVehicleMod = Gtamp.Shared.Entities.VehicleMod;
@@ -375,7 +376,17 @@ namespace Gtamp.Client.Shv.Bridge
 
             if (!string.IsNullOrEmpty(state.LicensePlate))
             {
-                Function.Call(Hash.SET_VEHICLE_NUMBER_PLATE_TEXT, vehicle.Handle, state.LicensePlate);
+                try
+                {
+                    Function.Call(
+                        Hash.SET_VEHICLE_NUMBER_PLATE_TEXT,
+                        vehicle.Handle,
+                        NativeString.Arg(state.LicensePlate));
+                }
+                finally
+                {
+                    NativeString.Release();
+                }
             }
 
             mods.LicensePlateStyle = (LicensePlateStyle)state.PlateType;
@@ -515,7 +526,12 @@ namespace Gtamp.Client.Shv.Bridge
                 return;
             }
 
-            string name = Function.Call<string>(Hash.GET_RADIO_STATION_NAME, (int)station);
+            // Read as a pointer and decoded here rather than through
+            // Function.Call<string>, which marshals via SHVDN's NativeMemory — the layer
+            // that fails outright on a game build the installed ScriptHookVDotNet does
+            // not know. See Interop.NativeString.
+            string name = NativeString.Read(
+                Function.Call<IntPtr>(Hash.GET_RADIO_STATION_NAME, (int)station));
             if (string.IsNullOrEmpty(name))
             {
                 // A station this client does not have. Silence is wrong; the wrong
@@ -524,7 +540,14 @@ namespace Gtamp.Client.Shv.Bridge
             }
 
             Function.Call(Hash.SET_VEHICLE_RADIO_ENABLED, vehicle.Handle, true);
-            Function.Call(Hash.SET_VEH_RADIO_STATION, vehicle.Handle, name);
+            try
+            {
+                Function.Call(Hash.SET_VEH_RADIO_STATION, vehicle.Handle, NativeString.Arg(name));
+            }
+            finally
+            {
+                NativeString.Release();
+            }
         }
 
         /// <summary>
