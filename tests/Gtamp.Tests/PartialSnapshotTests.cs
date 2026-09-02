@@ -1,5 +1,7 @@
 using System.Collections.Generic;
 using Gtamp.Client.Entities;
+using Gtamp.Shared.Net;
+using Gtamp.Shared.Protocol;
 using Gtamp.Client.Mods;
 using Gtamp.Client.Players;
 using Gtamp.Server.Replication;
@@ -220,6 +222,74 @@ namespace Gtamp.Tests
             players.Sync(cramped.ResultingView);
 
             Assert.Equal(2, players.Count);
+        }
+
+        /// <summary>
+        /// The streamer gives an owned entity five seconds of grace before deciding a
+        /// snapshot that never carries it means the server let it go. A busy server can
+        /// leave the same vehicle out of the budget for longer than that, so the grace
+        /// timer must not run at all while the view is incomplete — otherwise the
+        /// player hands back a car they are still driving.
+        /// </summary>
+        [Fact]
+        public void AnOwnedVehicleIsNotHandedBackWhileTheViewIsIncomplete()
+        {
+            var bridge = new FakeGameBridge();
+            bridge.PutLocalPlayerInVehicle(0x1B38E955u, new NetVector3(10f, 20f, 30f));
+
+            var sent = new List<byte[]>();
+            var streamer = new OwnedEntityStreamer(bridge, Registry, new LogBus())
+            {
+                LocalPlayerId = 1,
+                Send = (type, payload, delivery) =>
+                {
+                    if (type == NetMessageType.EntitySpawnRequest)
+                    {
+                        sent.Add(payload);
+                    }
+                },
+            };
+
+            streamer.RegisterLocalVehicleIfNeeded(EntitySnapshotView.Empty, 100d);
+            streamer.HandleEntityEvent(new EntityEventMessage
+            {
+                Kind = EntityEventKind.SpawnAccepted,
+                EntityId = new EntityId(7),
+                RequestTag = EntitySpawnRequestMessage.Deserialize(sent[0]).RequestTag,
+            });
+            Assert.Equal(1, streamer.OwnedCount);
+
+            // A crowded world that does not contain #7, sent under a budget too tight
+            // to hold it: incomplete, and it stays incomplete far longer than the grace.
+            var world = new WorldState { Tick = 1, ServerTime = 1d };
+            for (uint i = 100; i < 120; i++)
+            {
+                world.Add(Vehicle(i, i * 10f));
+            }
+
+            EntitySnapshotView cramped = SnapshotCodec.Write(
+                world, EntitySnapshotView.Empty, Registry, AllOf(world), 1, 512).ResultingView;
+            Assert.False(cramped.IsComplete);
+
+            // Two passes far enough apart to outlast the grace several times over.
+            // Without the guard the second one hands the vehicle back.
+            streamer.Stream(cramped, 100d, 0d);
+            streamer.Stream(cramped, 100d + (OwnedEntityStreamer.MissingEntityGrace * 4d), 0d);
+
+            Assert.Equal(1, streamer.OwnedCount);
+
+            // A complete view that still does not carry it does let it go, so this has
+            // not become "an owned entity is never released".
+            EntitySnapshotView whole = SnapshotCodec.Write(
+                world, EntitySnapshotView.Empty, Registry, AllOf(world), 2, 64 * 1024).ResultingView;
+            Assert.True(whole.IsComplete);
+
+            double t = 200d;
+            streamer.Stream(whole, t, 0d);
+            Assert.Equal(1, streamer.OwnedCount);
+            streamer.Stream(whole, t + (OwnedEntityStreamer.MissingEntityGrace * 2d), 0d);
+
+            Assert.Equal(0, streamer.OwnedCount);
         }
 
         /// <summary>

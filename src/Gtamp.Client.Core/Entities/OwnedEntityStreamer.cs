@@ -207,6 +207,16 @@ namespace Gtamp.Client.Entities
             {
                 if (!view.TryGet(pair.Key, out NetEntity entity))
                 {
+                    if (!view.IsComplete)
+                    {
+                        // The snapshot did not claim to hold the whole world, so this
+                        // says nothing about the entity. Not even the grace timer may
+                        // run on it: on a busy server the budget can leave the same
+                        // vehicle out for longer than the grace, and we would hand back
+                        // a car the player is still driving.
+                        continue;
+                    }
+
                     // Not in the view yet — usually just a snapshot that has not caught
                     // up with the reliable acceptance. Give it a moment before deciding
                     // the entity is really gone.
