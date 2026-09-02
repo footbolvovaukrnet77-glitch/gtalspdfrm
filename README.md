@@ -97,7 +97,7 @@ including their own character, across a server restart.
   and requires it to be absent from the wire — with a control test that requires
   the same canary to be findable when encryption is off.
 
-605 automated tests, all passing, covering everything except the ScriptHookVDotNet
+606 automated tests, all passing, covering everything except the ScriptHookVDotNet
 host layer and the two plugin-host bridges, which need a running game.
 
 Every push and pull request runs the build, the suite and a documentation check

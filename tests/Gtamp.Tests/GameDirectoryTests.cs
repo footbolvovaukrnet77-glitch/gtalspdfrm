@@ -1,3 +1,5 @@
+using System;
+using System.IO;
 using Gtamp.Client.Mods;
 using Xunit;
 
@@ -95,5 +97,56 @@ namespace Gtamp.Tests
             Assert.Null(GameDirectory.LegacyRoot(@"E:\GTAV\", @"E:\GTAV"));
             Assert.Null(GameDirectory.LegacyRoot(null, @"E:\GTAV"));
         }
+        /// <summary>
+        /// The join, which is where the defect actually lived.
+        /// <para>
+        /// Neither component was wrong. <c>ModEnvironment.Detect</c> finds what is in the
+        /// directory it is given, and <c>InteropTests</c> has always proved that. The
+        /// host chose the directory, and chose the wrong one — so the scan reported
+        /// <c>ScriptHookV=no</c> from a machine with ScriptHookV loaded and running.
+        /// A test of either half alone passes; only the two together catch it.
+        /// </para>
+        /// </summary>
+        [Fact]
+        public void ResolvingFromTheScriptsFolderFindsTheModsThatAreInstalled()
+        {
+            string game = Path.Combine(Path.GetTempPath(), "gtamp-dir-" + Guid.NewGuid().ToString("N"));
+            string scripts = Path.Combine(game, "scripts");
+            Directory.CreateDirectory(scripts);
+
+            try
+            {
+                // A real install: the loaders sit beside GTA5.exe, our client sits in
+                // scripts, and the host is rooted in scripts because that is where
+                // ScriptHookVDotNet loaded it from.
+                File.WriteAllText(Path.Combine(game, "ScriptHookV.dll"), "stub");
+                File.WriteAllText(Path.Combine(game, "ScriptHookVDotNet3.dll"), "stub");
+                File.WriteAllText(Path.Combine(scripts, "Gtamp.Client.Shv.dll"), "stub");
+
+                // What the host used to do.
+                ModEnvironment naive = ModEnvironment.Detect(scripts);
+                Assert.False(naive.ScriptHookV);
+                Assert.False(naive.ScriptHookVDotNet);
+
+                // What it does now.
+                string resolved = GameDirectory.Resolve(scripts, processExecutablePath: null);
+                ModEnvironment detected = ModEnvironment.Detect(resolved);
+
+                Assert.True(detected.ScriptHookV);
+                Assert.True(detected.ScriptHookVDotNet);
+            }
+            finally
+            {
+                try
+                {
+                    Directory.Delete(game, recursive: true);
+                }
+                catch (IOException)
+                {
+                    // A leftover temp directory is not worth failing a test over.
+                }
+            }
+        }
+
     }
 }
