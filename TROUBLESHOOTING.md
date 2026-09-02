@@ -359,6 +359,26 @@ replicated correctly, there are simply more of them than you parked.
 
 ---
 
+## The same cars keep re-appearing, and the game hitches
+
+Fixed. Ownership of an entity was **taken and kept at the same distance**, which makes
+that distance a switch rather than a boundary: a player driving across it hands every
+entity near it back to the server, takes it again on the next check, and repeats. One
+session flipped eleven vehicles eight times in fifteen minutes.
+
+Each flip is not free. A client granted an entity it has no local handle for drops the
+remote copy it was drawing, so eleven cars were destroyed and rebuilt in the game every
+cycle — which is where the frame hitches, and very likely where the snapshot stalls that
+end in `Connection timed out` come from.
+
+Ownership is now taken at `OwnershipHandoffDistance` and kept out to
+`OwnershipHandoffDistance × OwnershipKeepFactor` — 300 m and 450 m by default. Both are
+in `server.ini`. If you still see the same vehicle appearing over and over, raise
+`OwnershipKeepFactor`: the gap has to be wider than a player moves between two ownership
+checks.
+
+---
+
 ## RPH or LSPDFR conflict
 
 **Symptom:** the game starts through RPH but the multiplayer console never opens.

@@ -272,6 +272,77 @@ namespace Gtamp.Tests
 
             Assert.Equal(Gtamp.Shared.Protocol.EntityEventKind.SpawnRejected, reply.Kind);
         }
+
+        /// <summary>
+        /// Ownership does not flap at the boundary.
+        /// <para>
+        /// Taking and keeping an entity used to use the same distance, which makes that
+        /// distance a switch: a player hovering around it hands the entity back to the
+        /// server and takes it again on every check, forever. One real session flipped
+        /// eleven vehicles eight times in fifteen minutes, and each flip destroyed and
+        /// rebuilt eleven cars in the game.
+        /// </para>
+        /// </summary>
+        [Fact]
+        public void OwnershipDoesNotFlapAtTheHandoffBoundary()
+        {
+            using var harness = new TestHarness(Config(handoff: 100f));
+            TestClient alice = Connected(harness, "alice");
+
+            var where = new NetVector3(0f, 0f, 30f);
+            alice.Bridge.PutLocalPlayerInVehicle(Adder, where, 0f);
+            Assert.True(
+                harness.AdvanceUntil(() => ServerVehicle(harness) != null),
+                "the server never adopted the vehicle");
+
+            VehicleEntity vehicle = ServerVehicle(harness)!;
+            alice.Bridge.LocalVehicleHandle = 0;
+            Assert.True(
+                harness.AdvanceUntil(() => vehicle.OwnerId == alice.Client.LocalPlayerId),
+                "alice never owned the vehicle she created");
+
+            int migrationsBefore = harness.Server.Entities.OwnershipMigrations;
+
+            // Straddling the taking distance: just outside it, then just inside, over and
+            // over. With one threshold this alternates owner and server every check.
+            for (int step = 0; step < 12; step++)
+            {
+                alice.Bridge.Sample.Position = new NetVector3(step % 2 == 0 ? 110f : 90f, 0f, 30f);
+                harness.Advance(0.5d);
+            }
+
+            int migrations = harness.Server.Entities.OwnershipMigrations - migrationsBefore;
+
+            // The vehicle is still hers, and ownership did not change once per check.
+            // Twelve straddles at two checks each is roughly twenty-four opportunities to
+            // flap; a handful of transients is not flapping, twenty is.
+            Assert.Equal(alice.Client.LocalPlayerId, vehicle.OwnerId);
+            Assert.True(migrations <= 4, $"ownership changed {migrations} times while hovering at the boundary");
+        }
+
+        /// <summary>
+        /// And it is still taken away when the owner really does leave, or an entity
+        /// nobody is near would stay assigned to somebody who cannot simulate it.
+        /// </summary>
+        [Fact]
+        public void AnOwnerWhoReallyLeavesLosesTheEntity()
+        {
+            using var harness = new TestHarness(Config(handoff: 100f));
+            TestClient alice = Connected(harness, "alice");
+
+            alice.Bridge.PutLocalPlayerInVehicle(Adder, new NetVector3(0f, 0f, 30f), 0f);
+            Assert.True(harness.AdvanceUntil(() => ServerVehicle(harness) != null));
+
+            VehicleEntity vehicle = ServerVehicle(harness)!;
+            alice.Bridge.LocalVehicleHandle = 0;
+            Assert.True(harness.AdvanceUntil(() => vehicle.OwnerId == alice.Client.LocalPlayerId));
+
+            alice.Bridge.Sample.Position = new NetVector3(5000f, 0f, 30f);
+
+            Assert.True(
+                harness.AdvanceUntil(() => vehicle.OwnerId == 0, timeoutSeconds: 5d),
+                "a vehicle nobody is near stayed assigned to a player five kilometres away");
+        }
     }
 
     public class DamageReplicationTests
@@ -426,5 +497,7 @@ namespace Gtamp.Tests
 
             Assert.Equal(before, bobOnServer.Health);
         }
+
+
     }
 }

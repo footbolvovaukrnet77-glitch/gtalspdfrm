@@ -92,6 +92,29 @@ namespace Gtamp.Server.Core
         /// </summary>
         public float OwnershipHandoffDistance { get; set; } = 300f;
 
+        /// <summary>
+        /// How far an owner may get before the entity is taken off them, as a multiple of
+        /// <see cref="OwnershipHandoffDistance"/>.
+        /// <para>
+        /// Taking and keeping used to use the same number, which makes the boundary a
+        /// switch: a player driving past it hands every nearby entity back to the server
+        /// and takes it again on the next check, forever. One real session flipped eleven
+        /// vehicles eight times in fifteen minutes, and each flip destroyed and rebuilt
+        /// eleven cars in the game, because a client that is granted an entity it has no
+        /// handle for drops the remote copy it was drawing.
+        /// </para>
+        /// <para>
+        /// Hysteresis is the standard answer and this is the standard shape of it: take it
+        /// at 300 m, keep it out to 450 m. The gap has to be wider than a player moves
+        /// between two ownership checks, or the flapping simply moves outwards.
+        /// </para>
+        /// </summary>
+        public float OwnershipKeepFactor { get; set; } = 1.5f;
+
+        /// <summary>The distance an existing owner is allowed to reach before losing it.</summary>
+        public float OwnershipReleaseDistance =>
+            OwnershipHandoffDistance * (OwnershipKeepFactor < 1f ? 1f : OwnershipKeepFactor);
+
         public double OwnershipCheckIntervalSeconds { get; set; } = 2;
 
         /// <summary>

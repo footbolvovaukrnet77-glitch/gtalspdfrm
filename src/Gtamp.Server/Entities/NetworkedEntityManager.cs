@@ -311,7 +311,15 @@ namespace Gtamp.Server.Entities
 
             // A close-enough owner keeps the entity. Migrating on every small change
             // would thrash ownership between two players standing near each other.
-            if (ownerDistance <= _config.OwnershipHandoffDistance)
+            //
+            // Kept out to a *larger* distance than it is taken at, which is the other
+            // thrash and the one that bit: with a single threshold the boundary is a
+            // switch, and a player driving across it hands every entity back to the
+            // server and takes it again on the next check, forever. Eleven vehicles,
+            // eight times, in one fifteen-minute session -- and each flip destroys and
+            // rebuilds eleven cars in the game, because a client granted an entity it has
+            // no handle for drops the remote copy it was drawing.
+            if (ownerDistance <= _config.OwnershipReleaseDistance)
             {
                 return;
             }
