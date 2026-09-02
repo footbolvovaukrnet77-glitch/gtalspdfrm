@@ -86,6 +86,23 @@ requirements to warnings.
 
 ---
 
+## Nothing appears in game
+
+**Before anything else:** when the client loads it now shows a green notification —
+`GTAMP <version> loaded. Press F8 for the console.` — in the top left, a few seconds
+after the game reaches single player.
+
+That one notification separates the two questions worth separating first, because it
+is drawn by the same native text machinery the console uses:
+
+| What you see | What it means |
+| --- | --- |
+| The notification appears | The client loaded **and** it can draw. If the console still does not open, the problem is the key or the console itself |
+| No notification, game running normally | Either the client did not load — see "Script does not load" — or it loaded and cannot draw. `<GTA V>/Gtamp/logs/client-*.log` tells you which: if it has a `loaded` line, drawing is the problem |
+| A red `GTAMP failed to start` notification | The client threw during startup. `<GTA V>/Gtamp/logs/startup-failure.log` has the exception |
+
+---
+
 ## Script does not load
 
 `<GTA V>/ScriptHookVDotNet.log` is the first place to look — **and the first thing to

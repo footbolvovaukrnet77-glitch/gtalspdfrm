@@ -103,6 +103,18 @@ namespace Gtamp.Client.Shv
             _renderer = new ConsoleRenderer(console);
 
             _log.Success(LogCategory.Client, $"GTAMP client {_client.ClientVersion} loaded. Press F8 for the console.");
+
+            // On screen as well as in the log, and not only as a courtesy. It is drawn by
+            // the same native text machinery the console uses, so it is the one signal a
+            // player gets *before* opening anything: if this notification appears, drawing
+            // works; if the game is running and it never appears, the client either did
+            // not load or cannot draw, and those are the two questions worth separating
+            // first. Until this existed, a client that loaded and a client that did not
+            // looked identical from inside the game.
+            Ui.NativeDraw.Notify(
+                $"~g~GTAMP {_client.ClientVersion}~s~ loaded. Press "
+                + (_config.ConsoleKey == ClientConfig.DefaultConsoleKey ? "F8" : $"key {_config.ConsoleKey}")
+                + " for the console.");
             _log.Info(LogCategory.Client, $"Config: {_configPath}");
 
             // Both, always. The app domain base is not the game directory under
