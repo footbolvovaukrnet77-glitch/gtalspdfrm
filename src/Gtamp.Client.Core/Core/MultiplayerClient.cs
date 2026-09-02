@@ -287,6 +287,38 @@ namespace Gtamp.Client.Core
 
         public int ResyncsRequested { get; private set; }
 
+        /// <summary>
+        /// Resync requests not sent because one was already outstanding.
+        /// <para>
+        /// Reported rather than hidden: a large number here is not a fault, it is this
+        /// client refusing to ask the same question hundreds of times in one frame. A
+        /// large number with <see cref="ResyncsRequested"/> also large is the interesting
+        /// case, and it means the baseline keeps going missing.
+        /// </para>
+        /// </summary>
+        public int ResyncsSuppressed { get; private set; }
+
+        /// <summary>
+        /// True between asking for a full snapshot and receiving one.
+        /// <para>
+        /// Without this, one undecodable delta produced a request per snapshot for as
+        /// long as it took the answer to arrive — in a real session, a hundred and eighty
+        /// reliable messages in a single millisecond, repeatedly, followed by silence and
+        /// a connection timeout.
+        /// </para>
+        /// </summary>
+        private bool _resyncPending;
+
+        private double _resyncRequestedAt;
+
+        /// <summary>
+        /// How long a resync request is assumed to still be in flight. Long enough to
+        /// cover a round trip and the server's next tick on any playable link, short
+        /// enough that a request genuinely lost on the way is asked again rather than
+        /// leaving the client frozen on a view it can no longer advance.
+        /// </summary>
+        private const double ResyncRetrySeconds = 2d;
+
         /// <summary>How many times the server has had to correct the local player's position.</summary>
         public int CorrectionsApplied { get; private set; }
 
@@ -474,6 +506,7 @@ namespace Gtamp.Client.Core
             RemotePlayers.Clear();
             RemoteEntities.Clear();
             OwnedEntities.Clear();
+            _resyncPending = false;
 
             ModManifest manifest = Environment.ToManifest(Registry.ComputeSchemaHash());
             Registry.Lock();
@@ -677,6 +710,13 @@ namespace Gtamp.Client.Core
 
                 RequestResync(error);
                 return;
+            }
+
+            if (header != null && header.IsFullSnapshot)
+            {
+                // The answer to the request, whichever request it was. Anything that
+                // cannot be decoded from here is a new problem and may ask again.
+                _resyncPending = false;
             }
 
             if (header != null && header.AcknowledgedClientUpdate > _serverAcknowledgedSequence)
@@ -1024,8 +1064,34 @@ namespace Gtamp.Client.Core
             _pendingModelHash = 0;
         }
 
+        /// <summary>
+        /// Asks the server for a full snapshot, at most once per <see cref="ResyncRetrySeconds"/>.
+        /// <para>
+        /// <b>One request at a time.</b> Snapshots arrive faster than a round trip, so
+        /// between asking and being answered there are always more deltas this client
+        /// still cannot decode — every one of them used to ask again. In a real session
+        /// that was a hundred and eighty reliable messages inside one millisecond, three
+        /// times over, each burst followed by silence and a timeout.
+        /// </para>
+        /// <para>
+        /// <b>Nothing is cleared.</b> This used to reset the replicated world and delete
+        /// every remote ped, which was wrong twice over: the full snapshot replaces the
+        /// view anyway, so the only effect was that other players vanished for a round
+        /// trip — and clearing the snapshot history guaranteed that every snapshot
+        /// already queued behind the failing one also failed, which is what turned one
+        /// missing baseline into a storm. The view stays until there is a better one.
+        /// </para>
+        /// </summary>
         private void RequestResync(string reason)
         {
+            if (_resyncPending && _now - _resyncRequestedAt < ResyncRetrySeconds)
+            {
+                ResyncsSuppressed++;
+                return;
+            }
+
+            _resyncPending = true;
+            _resyncRequestedAt = _now;
             ResyncsRequested++;
             Log.Warning(LogCategory.Network, $"Requesting a resync: {reason}");
 
@@ -1036,9 +1102,6 @@ namespace Gtamp.Client.Core
             };
 
             Connection.Peer?.Send(NetMessageType.ResyncRequest, request.Serialize(), DeliveryMethod.ReliableOrdered);
-            ReplicatedWorld.Reset();
-            RemotePlayers.Clear();
-            RemoteEntities.Clear();
         }
 
         /// <summary>Seconds between outbound state reports, as negotiated in the handshake.</summary>

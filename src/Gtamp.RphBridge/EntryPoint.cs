@@ -1,9 +1,5 @@
 using System;
-using System.Collections.Generic;
-using System.Reflection;
-using System.Text;
-using Gtamp.Shared.Integration;
-using Gtamp.Shared.Interop;
+using System.IO;
 using Rage;
 using Rage.Attributes;
 
@@ -17,224 +13,70 @@ using Rage.Attributes;
 namespace Gtamp.RphBridge
 {
     /// <summary>
-    /// The RAGE Plugin Hook half of the bridge.
+    /// The two methods RAGE Plugin Hook calls, and nothing else.
     /// <para>
-    /// It exists because there is no supported way for a ScriptHookVDotNet script to
-    /// reach RPH state: RPH exposes its API to assemblies it loads itself, and its
-    /// objects assume they are touched from a <c>GameFiber</c>. So the multiplayer
-    /// core does not try. This assembly is loaded by RPH, stays on RPH's scheduler,
-    /// and passes bytes across the in-process channel.
+    /// <b>Why this class is empty.</b> It used to be <see cref="BridgeHost"/> itself,
+    /// with the work inside a <c>try</c>. That <c>try</c> never ran. The JIT resolves a
+    /// method's type references when it compiles the method, before the first
+    /// instruction executes — so a missing <c>Gtamp.Shared.dll</c> threw
+    /// <see cref="FileNotFoundException"/> on the way <em>into</em> <c>Main</c>, where no
+    /// handler of its own can catch it. RAGE Plugin Hook treats an unhandled exception
+    /// on a game fiber as fatal, so the result was a crash report and a dead game rather
+    /// than a line in a log.
     /// </para>
     /// <para>
-    /// <b>It never blocks.</b> A blocking call between the two schedulers deadlocks
-    /// the game, so every exchange is a queue push or a queue poll.
+    /// Nothing here names a type from any other assembly, so this method always compiles
+    /// and the <c>try</c> always runs. The work is one call away, in a class the JIT does
+    /// not touch until that call is made — by which time the handler is in place.
     /// </para>
     /// </summary>
     public static class EntryPoint
     {
-        /// <summary>How often the bridge polls the channel, in milliseconds.</summary>
-        private const int PollIntervalMilliseconds = 50;
-
-        /// <summary>How often the plugin list is re-scanned. Plugins are loaded rarely.</summary>
-        private const int PluginScanIntervalMilliseconds = 5000;
-
-        private static InProcessEndpoint? _channel;
-        private static readonly LspdfrObserver Lspdfr = new LspdfrObserver();
-        private static bool _running;
-        private static uint _lastPluginScan;
-
         /// <summary>RPH's entry point. Runs on a GameFiber; returning ends the plugin.</summary>
         public static void Main()
         {
             try
             {
-                _channel = InProcessChannel.OpenPluginSide();
-                _running = true;
-
-                Game.LogTrivial($"[GTAMP] RPH bridge started (channel v{InProcessChannel.Version}).");
-
-                Lspdfr.Bind();
-                if (Lspdfr.IsAvailable)
-                {
-                    Game.LogTrivial(
-                        $"[GTAMP] LSPDFR {Lspdfr.Version} detected; bound {Lspdfr.BoundProbeCount} probe(s), " +
-                        $"{Lspdfr.MissingProbes.Count} missing.");
-
-                    foreach (string missing in Lspdfr.MissingProbes)
-                    {
-                        Game.LogTrivial($"[GTAMP] LSPDFR probe not found: {missing}");
-                    }
-                }
-
-                Announce();
-
-                while (_running)
-                {
-                    GameFiber.Wait(PollIntervalMilliseconds);
-                    Pump();
-                    PollLspdfr();
-                    MaybeScanPlugins();
-                }
+                BridgeHost.Run();
             }
             catch (Exception exception)
             {
-                // RPH kills the plugin on an unhandled exception. Logging first means
-                // the reason is visible in RagePluginHook.log rather than lost.
-                Game.LogTrivial("[GTAMP] RPH bridge failed: " + exception);
+                Report(exception);
             }
         }
 
         /// <summary>RPH's exit point, named by the plugin attribute's default convention.</summary>
         public static void Finally()
         {
-            _running = false;
-
-            if (_channel != null)
-            {
-                Send(InteropTopics.Hello, "state=stopped");
-                _channel = null;
-            }
-
-            // Detach from LSPDFR before this assembly goes away. The observer
-            // subscribes to LSPDFR's on-duty event when it can, and RPH reloads
-            // plugins -- a handler left attached would keep calling into an assembly
-            // that has stopped.
-            Lspdfr.Dispose();
-
-            Game.LogTrivial("[GTAMP] RPH bridge stopped.");
-        }
-
-        private static void Pump()
-        {
-            if (_channel == null)
-            {
-                return;
-            }
-
-            while (_channel.TryReceive(out string topic, out byte[] payload))
-            {
-                switch (topic)
-                {
-                    case InteropTopics.Describe:
-                        Announce();
-                        ScanPlugins();
-
-                        // A client that has just connected needs the whole picture, not
-                        // the changes since a poll it was not there for.
-                        Send(InteropTopics.LspdfrEvent, Lspdfr.Describe());
-                        break;
-
-                    case InteropTopics.ModPayload:
-                        // Nothing consumes mod payloads on this side yet. They are
-                        // logged rather than dropped silently so a mod author can see
-                        // their message arrived.
-                        Game.LogTrivialDebug($"[GTAMP] Mod payload received ({payload.Length} bytes).");
-                        break;
-                }
-            }
-        }
-
-        private static void PollLspdfr()
-        {
-            if (!Lspdfr.IsAvailable)
-            {
-                return;
-            }
-
-            string changes = Lspdfr.PollChanges();
-            if (changes.Length > 0)
-            {
-                Send(InteropTopics.LspdfrEvent, changes);
-            }
-        }
-
-        private static void Announce() =>
-            Send(
-                InteropTopics.Hello,
-                $"state=running;bridge={BridgeVersion()};rph={RphVersion()};lspdfr={Lspdfr.Version}");
-
-        private static void MaybeScanPlugins()
-        {
-            uint now = Game.GameTime;
-            if (_lastPluginScan != 0 && now - _lastPluginScan < PluginScanIntervalMilliseconds)
-            {
-                return;
-            }
-
-            _lastPluginScan = now;
-            ScanPlugins();
-        }
-
-        /// <summary>
-        /// Reports the RPH plugins loaded in this process.
-        /// <para>
-        /// Read from the loaded assemblies rather than from RPH's own plugin registry,
-        /// which is not public. An assembly carrying RPH's plugin attribute is an RPH
-        /// plugin, and that attribute <em>is</em> public — so this is a supported
-        /// surface rather than a reach into internals that would break on the next RPH
-        /// release.
-        /// </para>
-        /// </summary>
-        private static void ScanPlugins()
-        {
-            var names = new List<string>();
-
-            foreach (Assembly assembly in AppDomain.CurrentDomain.GetAssemblies())
-            {
-                try
-                {
-                    object[] attributes = assembly.GetCustomAttributes(typeof(PluginAttribute), false);
-                    if (attributes.Length == 0)
-                    {
-                        continue;
-                    }
-
-                    var plugin = (PluginAttribute)attributes[0];
-                    string version = assembly.GetName().Version?.ToString(3) ?? "unknown";
-                    names.Add($"{plugin.Name}|{version}");
-                }
-                catch (Exception)
-                {
-                    // A dynamic or unloadable assembly. Skipping it is right; failing
-                    // the scan because of one would lose the rest.
-                }
-            }
-
-            Send(InteropTopics.PluginList, string.Join(";", names.ToArray()));
-        }
-
-        private static string BridgeVersion() =>
-            typeof(EntryPoint).Assembly.GetName().Version?.ToString(3) ?? "0.1.0";
-
-        private static string RphVersion()
-        {
-            Assembly? rph = FindAssembly("RAGEPluginHook");
-            return rph?.GetName().Version?.ToString() ?? "unknown";
-        }
-
-        private static Assembly? FindAssembly(string simpleName)
-        {
-            foreach (Assembly assembly in AppDomain.CurrentDomain.GetAssemblies())
-            {
-                if (string.Equals(assembly.GetName().Name, simpleName, StringComparison.OrdinalIgnoreCase))
-                {
-                    return assembly;
-                }
-            }
-
-            return null;
-        }
-
-        private static void Send(string topic, string payload)
-        {
             try
             {
-                _channel?.Send(topic, Encoding.UTF8.GetBytes(payload));
+                BridgeHost.Stop();
             }
             catch (Exception exception)
             {
-                Game.LogTrivial($"[GTAMP] Could not send '{topic}': {exception.Message}");
+                Report(exception);
             }
+        }
+
+        /// <summary>
+        /// Says what happened in RagePluginHook.log, and for the one failure a player can
+        /// actually fix, says what to do about it.
+        /// </summary>
+        private static void Report(Exception exception)
+        {
+            if (exception is FileNotFoundException || exception is TypeLoadException
+                || exception is BadImageFormatException)
+            {
+                Game.LogTrivial(
+                    "[GTAMP] The RPH bridge could not start because an assembly it needs is missing "
+                    + "from the Plugins folder. Gtamp.RphBridge.dll and Gtamp.Shared.dll must BOTH be "
+                    + "in '<GTA V>\\Plugins\\' — RAGE Plugin Hook resolves a plugin's dependencies from "
+                    + "its own folder and never from '<GTA V>\\scripts\\'. Copy the whole contents of "
+                    + "dist/client/RagePluginHook-plugins/, not just the one file. Multiplayer itself "
+                    + "is unaffected; only RPH and LSPDFR state stay local.");
+            }
+
+            Game.LogTrivial("[GTAMP] RPH bridge failed: " + exception);
         }
     }
 }

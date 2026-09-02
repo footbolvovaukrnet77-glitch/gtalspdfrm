@@ -41,6 +41,56 @@ namespace Gtamp.Client.Mods
 
         public List<string> Scripts { get; } = new List<string>();
 
+        /// <summary>
+        /// This framework's own assemblies, which live in <c>scripts\</c> like any other
+        /// SHVDN script and are not mods.
+        /// <para>
+        /// They used to be scanned as third-party mods and sent in the handshake
+        /// manifest, so every connection warned three times that the server had no
+        /// adapter for Gtamp.Client.Core, Gtamp.Client.Shv and Gtamp.Shared. The
+        /// framework is not a mod of itself: an adapter for it would be an adapter for
+        /// the thing asking the question.
+        /// </para>
+        /// </summary>
+        private static readonly string[] OwnAssemblies =
+        {
+            "Gtamp.Client.Shv",
+            "Gtamp.Client.Core",
+            "Gtamp.Shared",
+            "Gtamp.RphBridge",
+        };
+
+        /// <summary>
+        /// True when the file is one of this framework's own assemblies.
+        /// <para>
+        /// The name is taken by hand rather than with <see cref="Path"/>, for the reason
+        /// <c>GameDirectory</c> records: every path here is a Windows path, and the tests
+        /// run on Linux where <see cref="Path"/> does not treat a backslash as a
+        /// separator and would agree with the wrong answer.
+        /// </para>
+        /// </summary>
+        public static bool IsOwnAssembly(string path)
+        {
+            string file = path ?? string.Empty;
+            int separator = file.LastIndexOfAny(new[] { '\\', '/' });
+            if (separator >= 0)
+            {
+                file = file.Substring(separator + 1);
+            }
+
+            int dot = file.LastIndexOf('.');
+            string name = dot > 0 ? file.Substring(0, dot) : file;
+            for (int i = 0; i < OwnAssemblies.Length; i++)
+            {
+                if (string.Equals(name, OwnAssemblies[i], StringComparison.OrdinalIgnoreCase))
+                {
+                    return true;
+                }
+            }
+
+            return false;
+        }
+
         /// <summary>Scans a GTA V installation directory. Never throws; unreadable paths are skipped.</summary>
         public static ModEnvironment Detect(string gameDirectory)
         {
@@ -151,6 +201,11 @@ namespace Gtamp.Client.Mods
 
             foreach (string path in Scripts)
             {
+                if (IsOwnAssembly(path))
+                {
+                    continue;
+                }
+
                 Add("script." + Path.GetFileNameWithoutExtension(path).ToLowerInvariant(),
                     Path.GetFileNameWithoutExtension(path),
                     FileVersion(path),

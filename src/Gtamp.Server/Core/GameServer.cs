@@ -1635,7 +1635,21 @@ namespace Gtamp.Server.Core
         {
             foreach (PlayerSession session in Players.Sessions)
             {
-                if (!session.PendingRemoval && session.Peer.IsTimedOut(_now))
+                if (session.PendingRemoval)
+                {
+                    continue;
+                }
+
+                // A broken ordered channel is not silence — the peer is still answering
+                // — but nothing reliable will ever be delivered on it again, so the
+                // session is over. Saying which of the two happened is the whole point:
+                // they are indistinguishable from the outside and have different causes.
+                if (session.Peer.Fault != null)
+                {
+                    Log.Warning(LogCategory.Network, $"{session} can no longer deliver: {session.Peer.Fault}.");
+                    session.PendingRemoval = true;
+                }
+                else if (session.Peer.IsTimedOut(_now))
                 {
                     Log.Warning(LogCategory.Network, $"{session} timed out after {ProtocolConstants.ConnectionTimeout:0} s of silence.");
                     session.PendingRemoval = true;

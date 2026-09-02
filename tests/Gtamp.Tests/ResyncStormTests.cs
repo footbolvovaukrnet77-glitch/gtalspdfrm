@@ -1,0 +1,208 @@
+using System;
+using System.Collections.Generic;
+using System.IO;
+using System.Net;
+using Gtamp.Client.Mods;
+using Gtamp.Shared.Mods;
+using Gtamp.Shared.Net;
+using Gtamp.Shared.Protocol;
+using Xunit;
+
+namespace Gtamp.Tests
+{
+    /// <summary>
+    /// What a client does when it cannot decode a delta, and what happens to a peer
+    /// whose ordered channel can no longer deliver.
+    /// <para>
+    /// Both come from one real session. The client hit a snapshot whose baseline it no
+    /// longer held, asked the server for a full one — and asked again for every snapshot
+    /// that had already arrived behind it, because the request cleared the very history
+    /// the rest of them needed. The log shows a hundred and eighty-four identical
+    /// warnings inside one millisecond, three times over, each burst followed by silence
+    /// and a connection timeout with nothing said about the cause.
+    /// </para>
+    /// </summary>
+    public class ResyncStormTests
+    {
+        private static readonly IPEndPoint Left = new IPEndPoint(IPAddress.Loopback, 40100);
+        private static readonly IPEndPoint Right = new IPEndPoint(IPAddress.Loopback, 40101);
+
+        /// <summary>
+        /// The storm itself. Clearing the client's history is exactly what happens when a
+        /// baseline goes missing, so it is done directly here: every delta that follows is
+        /// undecodable until the server's full snapshot lands.
+        /// </summary>
+        [Fact]
+        public void AMissingBaselineAsksOnceNotOncePerSnapshot()
+        {
+            using var harness = new TestHarness();
+
+            // A round trip long enough that several snapshots arrive before the answer
+            // does. On a zero-latency loopback the full snapshot comes back on the next
+            // tick and there is nothing queued to storm with — which is exactly why this
+            // was never found in the suite and was found in one session in a real game.
+            harness.Latency = 0.08;
+
+            TestClient client = harness.CreateClient("Resync");
+            client.Client.Connect("127.0.0.1", TestHarness.ServerEndPoint.Port);
+            Assert.True(harness.AdvanceUntil(() => client.Client.Connection.IsConnected));
+
+            harness.Advance(1d);
+            int before = client.Client.ResyncsRequested;
+
+            // The baseline the server is encoding against is now gone from this client.
+            client.Client.ReplicatedWorld.Reset();
+            harness.Advance(2d);
+
+            int asked = client.Client.ResyncsRequested - before;
+
+            // One request, or a second if the first was still in flight when the retry
+            // window elapsed. Never one per snapshot: at 20 Hz two seconds is forty.
+            Assert.InRange(asked, 1, 2);
+            Assert.True(
+                client.Client.ResyncsSuppressed > 0,
+                "the snapshots arriving behind the first failure should have been suppressed, not re-asked");
+        }
+
+        /// <summary>
+        /// And it has to recover, or suppressing the requests would only have replaced a
+        /// storm with a client frozen on a view it can never advance.
+        /// </summary>
+        [Fact]
+        public void AClientThatLostItsBaselineGetsAFullSnapshotAndCarriesOn()
+        {
+            using var harness = new TestHarness();
+            TestClient client = harness.CreateClient("Recover");
+            client.Client.Connect("127.0.0.1", TestHarness.ServerEndPoint.Port);
+            Assert.True(harness.AdvanceUntil(() => client.Client.Connection.IsConnected));
+
+            harness.Advance(1d);
+            client.Client.ReplicatedWorld.Reset();
+            int applied = client.Client.SnapshotsApplied;
+
+            Assert.True(
+                harness.AdvanceUntil(() => client.Client.SnapshotsApplied > applied, timeoutSeconds: 5d),
+                "the server never answered the resync with a full snapshot");
+            Assert.True(client.Client.Connection.IsConnected);
+        }
+
+        /// <summary>
+        /// The transport half. A gap in the ordered stream that never fills used to
+        /// overflow the pending buffer, drop a message silently, and wedge the channel
+        /// for the life of the connection — while the peer went on answering pings, so
+        /// from outside it looked like an ordinary timeout fifteen seconds later.
+        /// </summary>
+        [Fact]
+        public void AnOrderedChannelThatCanNoLongerDeliverSaysSo()
+        {
+            var network = new LoopbackNetwork(11);
+            IDatagramTransport senderTransport = network.CreateTransport(Left);
+            IDatagramTransport receiverTransport = network.CreateTransport(Right);
+
+            var sender = new NetPeer(senderTransport, Right, 1, 0);
+            var receiver = new NetPeer(receiverTransport, Left, 1, 0);
+
+            // Big enough that only a few fit in a datagram, so dropping the first
+            // datagram leaves a gap with far more than the buffer's worth behind it.
+            var payload = new byte[200];
+            for (int i = 0; i < 700; i++)
+            {
+                sender.Send(NetMessageType.ServerEvent, payload, DeliveryMethod.ReliableOrdered);
+            }
+
+            sender.Flush(network.Now);
+            network.Advance(0.001);
+
+            var datagrams = new List<byte[]>();
+            while (receiverTransport.TryReceive(out IPEndPoint _, out byte[] datagram))
+            {
+                datagrams.Add(datagram);
+            }
+
+            Assert.True(datagrams.Count > 2, "the burst should not have fitted in one datagram");
+            Assert.Null(receiver.Fault);
+
+            // Everything except the first datagram, and no retransmissions: the gap at
+            // the head of the stream is permanent, which is the condition being tested.
+            for (int i = 1; i < datagrams.Count; i++)
+            {
+                receiver.HandleDatagram(datagrams[i], network.Now);
+            }
+
+            Assert.NotNull(receiver.Fault);
+            Assert.Contains("ordered channel stalled", receiver.Fault!);
+        }
+
+        /// <summary>
+        /// The framework's own assemblies live in <c>scripts\</c> like any other SHVDN
+        /// script. Reporting them as mods made every connection warn three times that the
+        /// server had no adapter for Gtamp.Client.Core, Gtamp.Client.Shv and Gtamp.Shared.
+        /// </summary>
+        [Fact]
+        public void TheFrameworkIsNotAModOfItself()
+        {
+            using var directory = new TempDirectory();
+            directory.WriteScript("Gtamp.Client.Core.dll");
+            directory.WriteScript("Gtamp.Client.Shv.dll");
+            directory.WriteScript("Gtamp.Shared.dll");
+            directory.WriteScript("SomeoneElsesMod.dll");
+
+            ModEnvironment environment = ModEnvironment.Detect(directory.Path);
+            var ids = new List<string>();
+            foreach (ModDescriptor mod in environment.Mods)
+            {
+                ids.Add(mod.Id);
+            }
+
+            Assert.Contains("script.someoneelsesmod", ids);
+            Assert.DoesNotContain("script.gtamp.client.core", ids);
+            Assert.DoesNotContain("script.gtamp.client.shv", ids);
+            Assert.DoesNotContain("script.gtamp.shared", ids);
+        }
+
+        [Theory]
+        [InlineData("Gtamp.Shared.dll", true)]
+        [InlineData(@"C:\GTA V\scripts\GTAMP.CLIENT.CORE.DLL", true)]
+        [InlineData("Gtamp.RphBridge.dll", true)]
+        [InlineData("Gtamp.Adapters.Rph.dll", false)]
+        [InlineData("SomeoneElsesMod.dll", false)]
+        [InlineData("", false)]
+        public void OwnAssembliesAreRecognisedWhereverTheyLive(string path, bool expected)
+        {
+            Assert.Equal(expected, ModEnvironment.IsOwnAssembly(path));
+        }
+    }
+
+    /// <summary>
+    /// A throwaway GTA V directory with a <c>scripts</c> folder, owned by one test and
+    /// deleted with it. Named after its own GUID for the reason recorded in
+    /// ARCHITECTURE.md: xUnit runs classes in parallel and a shared path is a race.
+    /// </summary>
+    internal sealed class TempDirectory : IDisposable
+    {
+        public TempDirectory()
+        {
+            Path = System.IO.Path.Combine(
+                System.IO.Path.GetTempPath(), "gtamp-tests", Guid.NewGuid().ToString("N"));
+            Directory.CreateDirectory(System.IO.Path.Combine(Path, "scripts"));
+        }
+
+        public string Path { get; }
+
+        /// <summary>An empty file is enough: the scan reads names, not assemblies.</summary>
+        public void WriteScript(string fileName) =>
+            File.WriteAllBytes(System.IO.Path.Combine(Path, "scripts", fileName), new byte[0]);
+
+        public void Dispose()
+        {
+            try
+            {
+                Directory.Delete(Path, true);
+            }
+            catch (IOException)
+            {
+                // A leftover temp directory is not worth failing a test over.
+            }
+        }
+    }
+}

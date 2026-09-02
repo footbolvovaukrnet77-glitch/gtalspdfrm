@@ -437,7 +437,11 @@ namespace Gtamp.Client.Ui
             builder.AppendLine($"  retransmits     {stats.ReliableRetransmits}");
             builder.AppendLine($"  unacked         {client.Connection.Peer!.UnackedReliableCount} reliable message(s)");
             builder.AppendLine($"  snapshots       {client.ReplicatedWorld.SnapshotsApplied} applied / {client.ReplicatedWorld.SnapshotsDropped} dropped");
-            builder.AppendLine($"  resyncs         {client.ResyncsRequested}");
+            builder.AppendLine(
+                $"  resyncs         {client.ResyncsRequested} requested"
+                + (client.ResyncsSuppressed > 0
+                    ? $" / {client.ResyncsSuppressed} suppressed while one was outstanding"
+                    : string.Empty));
             builder.AppendLine($"  shots           {client.ShotsFired} fired / {client.ShotsSeen} seen");
             builder.AppendLine($"  hits            {client.HitsReported} reported");
             builder.AppendLine(

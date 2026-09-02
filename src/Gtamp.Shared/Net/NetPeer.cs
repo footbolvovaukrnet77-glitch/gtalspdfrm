@@ -109,6 +109,24 @@ namespace Gtamp.Shared.Net
         public int UnackedReliableCount => _outReliable.Count;
 
         /// <summary>
+        /// Non-null once this peer's ordered channel can no longer deliver, and why.
+        /// <para>
+        /// The reliable stream is ordered, so a message that is never delivered blocks
+        /// every message behind it for the life of the connection. The pending buffer
+        /// used to be capped with a silent drop — and because the packet carrying that
+        /// message was still acknowledged, the sender retired it and never sent it
+        /// again. The gap was permanent, the peer kept answering pings, and the session
+        /// simply stopped receiving anything reliable until it timed out fifteen seconds
+        /// later with no explanation anywhere.
+        /// </para>
+        /// <para>
+        /// A connection that cannot deliver is finished; the only useful thing left is
+        /// to say so. The caller drops the session and reports this string.
+        /// </para>
+        /// </summary>
+        public string? Fault { get; private set; }
+
+        /// <summary>
         /// Session encryption, or null for a plaintext session.
         /// <para>
         /// Attached after the handshake has agreed a key, which is why it is settable
@@ -549,7 +567,12 @@ namespace Gtamp.Shared.Net
 
             if (_pendingOrdered.Count >= ProtocolConstants.MaxPendingReliable)
             {
+                // Not recoverable: see Fault. Dropping it silently is what made this
+                // invisible, so it is recorded instead and the session ends saying why.
                 Stats.MessagesDropped++;
+                Fault ??=
+                    $"the ordered channel stalled with {_pendingOrdered.Count} message(s) waiting for "
+                    + $"sequence {_nextOrderedDelivery}, which never arrived";
                 return;
             }
 

@@ -123,7 +123,10 @@ namespace Gtamp.Adapters.Rph
                 _log?.Warning(
                     LogCategory.Mod,
                     "RAGE Plugin Hook is installed but Gtamp.RphBridge.dll never answered. " +
-                    "Either the game was not started through RPH, or the bridge is not in RPH's plugins folder. " +
+                    "One of three things: the game was not started through RPH; the bridge is not in " +
+                    "'<GTA V>\\Plugins\\'; or it is there without Gtamp.Shared.dll beside it, in which case " +
+                    "RagePluginHook.log has a GTAMP line saying so — RPH resolves a plugin's dependencies " +
+                    "from its own folder and never from '<GTA V>\\scripts\\', so both files must be copied. " +
                     "RPH state will not be replicated. See docs/RPH_INTEGRATION.md.");
             }
         }

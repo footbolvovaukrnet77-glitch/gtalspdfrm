@@ -197,6 +197,16 @@ namespace Gtamp.Client.Network
                 into.Add(message);
             }
 
+            // Before the timeout, because a broken ordered channel *looks* like a
+            // timeout: the peer keeps answering, delivers nothing reliable, and the
+            // session dies fifteen seconds later with nothing said about why.
+            if (State == ClientConnectionState.Connected && Peer.Fault != null)
+            {
+                _log.Error(LogCategory.Network, "The connection can no longer deliver: " + Peer.Fault);
+                SetDisconnected(DisconnectReason.Timeout, Peer.Fault);
+                return;
+            }
+
             if (State == ClientConnectionState.Connected && Peer.IsTimedOut(now))
             {
                 _log.Error(LogCategory.Network, "Connection timed out.");

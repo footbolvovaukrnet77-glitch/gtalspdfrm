@@ -211,6 +211,68 @@ honest answer, and it is the one place this failure can still be explained in wo
 
 ---
 
+## The game crashes on startup with an RPH crash report
+
+`RagePluginHook.log` and the `.rcrm` crash report name it:
+
+```
+GTAMP RPH Bridge: UNHANDLED EXCEPTION DURING GAME FIBER TICK
+System.IO.FileNotFoundException: Could not load file or assembly
+'Gtamp.Shared, Version=0.1.0.0' ...
+at Gtamp.RphBridge.EntryPoint.Main()
+```
+
+`Gtamp.RphBridge.dll` was copied into `<GTA V>\Plugins\` **without
+`Gtamp.Shared.dll`**. RAGE Plugin Hook resolves a plugin's dependencies from its own
+plugins folder and never from `<GTA V>\scripts\`, so the copy in `scripts\` does not
+count. Copy the whole contents of `dist/client/RagePluginHook-plugins/`, both files.
+
+Builds from before this was found took the game down with them: RPH treats an unhandled
+exception on a game fiber as fatal, and the plugin's own `try` could not catch it —
+the JIT resolves a method's type references on the way *into* the method, so the failure
+happened before the first instruction ran. The entry point is now a wrapper that names
+no other assembly, so the handler is always in place; a missing dependency now writes a
+line naming the file and the folder, and the game keeps running with RPH state
+unreplicated.
+
+---
+
+## Hundreds of "Requesting a resync" in one millisecond, then a timeout
+
+Fixed. If a build still does this, it predates the fix.
+
+One snapshot arrived whose baseline the client no longer held — normal, and a resync is
+the right answer. The request then **cleared the snapshot history**, which is what every
+snapshot already queued behind it needed, so each of those failed too and asked again.
+In one real session that was 184 identical requests inside a single millisecond, three
+bursts, each followed by silence and `Connection timed out` fifteen seconds later.
+
+The client now asks once and waits up to two seconds for the answer, and keeps its view
+instead of deleting every remote player while it waits. `net` reports both numbers:
+
+```
+resyncs         2 requested / 37 suppressed while one was outstanding
+```
+
+A large suppressed count is not a fault — it is snapshots that would each have asked
+again. A large *requested* count means the baseline keeps going missing, which is worth
+reporting.
+
+---
+
+## The session goes quiet and times out with nothing in the log
+
+A peer whose ordered channel has stalled keeps answering pings and delivers nothing
+reliable, so from outside it is indistinguishable from an ordinary timeout. The reliable
+stream is ordered: a message that never arrives blocks every message behind it for the
+life of the connection.
+
+Both ends now say so instead — `The connection can no longer deliver: the ordered
+channel stalled with N message(s) waiting for sequence S` — and drop the session at the
+moment it becomes undeliverable rather than fifteen seconds later with no reason given.
+
+---
+
 ## RPH or LSPDFR conflict
 
 **Symptom:** the game starts through RPH but the multiplayer console never opens.
