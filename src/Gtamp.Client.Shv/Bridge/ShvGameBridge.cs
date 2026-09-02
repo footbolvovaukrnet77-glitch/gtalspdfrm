@@ -1701,10 +1701,10 @@ namespace Gtamp.Client.Shv.Bridge
         /// <summary>Signed difference between two headings, taking the short way round.</summary>
         private static float AngleDifference(float a, float b) => ((a - b) % 360f + 540f) % 360f - 180f;
 
-        public void ShowNotification(string text) => GTA.UI.Notification.Show(text, false);
+        public void ShowNotification(string text) => Ui.NativeDraw.Notify(text);
 
         public void ShowSubtitle(string text, int durationMilliseconds) =>
-            GTA.UI.Screen.ShowSubtitle(text, durationMilliseconds);
+            Ui.NativeDraw.Subtitle(text, durationMilliseconds);
 
         /// <summary>Removes every replicated ped. Called when the session ends or the script aborts.</summary>
         public void CleanUp()

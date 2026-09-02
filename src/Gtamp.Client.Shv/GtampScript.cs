@@ -62,7 +62,7 @@ namespace Gtamp.Client.Shv
             catch (Exception exception)
             {
                 _failed = true;
-                GTA.UI.Notification.Show("~r~GTAMP failed to start~s~. See Gtamp/logs.", false);
+                Ui.NativeDraw.Notify("~r~GTAMP failed to start~s~. See Gtamp/logs.");
                 WriteFallbackCrashLog(_gameDirectory, exception);
             }
 
@@ -213,10 +213,9 @@ namespace Gtamp.Client.Shv
                 int wanted = _config?.ConsoleKey ?? ClientConfig.DefaultConsoleKey;
                 if ((int)e.KeyCode == wanted)
                 {
-                    GTA.UI.Notification.Show(
+                    Ui.NativeDraw.Notify(
                         "~r~GTAMP did not start~s~, so the console is not available. "
-                        + "See Gtamp/logs/startup-failure.log.",
-                        false);
+                        + "See Gtamp/logs/startup-failure.log.");
                 }
 
                 return;

@@ -2,8 +2,6 @@ using System;
 using System.Collections.Generic;
 using System.Drawing;
 using Gtamp.Client.Diagnostics;
-using GTA.UI;
-using GtaFont = GTA.UI.Font;
 
 namespace Gtamp.Client.Shv.Ui
 {
@@ -30,20 +28,17 @@ namespace Gtamp.Client.Shv.Ui
                 return;
             }
 
-            new ContainerElement(
-                new PointF(Left, Top),
-                new SizeF(Width, (LineHeight * lines.Count) + (Padding * 2)),
-                Color.FromArgb(170, 8, 10, 14)).ScaledDraw();
+            // Through the natives rather than SHVDN's managed elements, for the reason
+            // written up in NativeDraw: the managed path dies on a game build SHVDN
+            // does not know, and took the whole script with it on the first real run.
+            NativeDraw.Rect(
+                Left, Top, Width, (LineHeight * lines.Count) + (Padding * 2),
+                Color.FromArgb(170, 8, 10, 14));
 
             float y = Top + Padding;
             foreach (OverlayLine line in lines)
             {
-                new TextElement(
-                    line.Text,
-                    new PointF(Left + Padding, y),
-                    TextScale,
-                    ColourFor(line.Severity),
-                    GtaFont.ChaletLondon).ScaledDraw();
+                NativeDraw.Text(line.Text, Left + Padding, y, TextScale, ColourFor(line.Severity), font: 0);
 
                 y += LineHeight;
             }
