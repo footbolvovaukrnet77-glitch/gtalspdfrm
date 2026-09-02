@@ -116,6 +116,9 @@ namespace Gtamp.Client.Core
         private double _nextModelAttempt;
         private int _modelAttempts;
 
+        /// <summary>Said once per session, not once per snapshot that carries the model.</summary>
+        private bool _modelDeclinedForLspdfr;
+
         public MultiplayerClient(
             ClientConfig config,
             IGameBridge bridge,
@@ -1015,6 +1018,39 @@ namespace Gtamp.Client.Core
 
             if (authoritative.ModelHash == reported || authoritative.ModelHash == local.ModelHash)
             {
+                return;
+            }
+
+            // LSPDFR owns the player character: going on duty is a model change, and
+            // SET_PLAYER_MODEL does not dress the existing ped, it destroys it and builds
+            // another. Anything holding the old one -- LSPDFR's own character manager,
+            // mid-way through its duty menu -- is left with an invalid handle.
+            //
+            // That is not a hypothesis. In one real session the server's model was
+            // applied 0.4 s after LSPDFR started building its on-duty character, and
+            // LSPDFR died on `Rage.Ped.get_IsFemale` inside `Persona.FromExistingPed`,
+            // taking the game with it.
+            //
+            // So on an LSPDFR install the model is not applied at all. The compromise is
+            // stated rather than hidden: other players see the model the server holds,
+            // this screen keeps the one LSPDFR chose, and a saved appearance does not
+            // come back on connect. A co-op framework silently rebuilding the character
+            // another mod is in the middle of using is the worse of the two.
+            if (Environment.Lspdfr)
+            {
+                if (!_modelDeclinedForLspdfr)
+                {
+                    _modelDeclinedForLspdfr = true;
+                    Log.Warning(
+                        LogCategory.Client,
+                        $"The server set this player's model to 0x{authoritative.ModelHash:X8}, and it is "
+                        + "not being applied because LSPD First Response is installed. Changing the model "
+                        + "rebuilds the player's ped, which invalidates the one LSPDFR is holding and has "
+                        + "crashed it mid-callout. Other players see the server's model; this screen keeps "
+                        + "LSPDFR's. See TROUBLESHOOTING.md.");
+                }
+
+                ModelChangesRefused++;
                 return;
             }
 

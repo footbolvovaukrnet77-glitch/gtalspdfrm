@@ -112,11 +112,23 @@ namespace Gtamp.Client.Mods
                 environment.RagePluginHookVersion = FileVersion(rph);
             }
 
-            string lspdfr = Path.Combine(gameDirectory, "LSPD First Response.dll");
-            if (File.Exists(lspdfr))
+            // LSPDFR is a RAGE Plugin Hook plugin, so it lives in RPH's plugins folder.
+            // This looked in the game root for the life of the project and therefore
+            // reported LSPDFR=no on a machine that was running it -- the RPH log names
+            // the real path on every start: Plugins\LSPD First Response.dll. The root is
+            // still checked second, because an unusual install costs one File.Exists.
+            foreach (string lspdfr in new[]
             {
-                environment.Lspdfr = true;
-                environment.LspdfrVersion = FileVersion(lspdfr);
+                Path.Combine(gameDirectory, "Plugins", "LSPD First Response.dll"),
+                Path.Combine(gameDirectory, "LSPD First Response.dll"),
+            })
+            {
+                if (File.Exists(lspdfr))
+                {
+                    environment.Lspdfr = true;
+                    environment.LspdfrVersion = FileVersion(lspdfr);
+                    break;
+                }
             }
 
             CollectFiles(gameDirectory, "*.asi", environment.AsiPlugins);

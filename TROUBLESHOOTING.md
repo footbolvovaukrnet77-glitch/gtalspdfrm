@@ -273,6 +273,48 @@ moment it becomes undeliverable rather than fifteen seconds later with no reason
 
 ---
 
+## LSPDFR crashes when you go on duty
+
+Fixed, and the fix is a deliberate compromise rather than a repair.
+
+Going on duty is a model change, and so is a model the server holds for you. But
+`SET_PLAYER_MODEL` does not dress the existing ped — it **destroys it and builds
+another**. Anything still holding the old one has an invalid handle. In one real session
+the server's model was applied 0.4 seconds after LSPDFR began building its on-duty
+character, and LSPDFR died inside `Persona.FromExistingPed` on `Rage.Ped.get_IsFemale`,
+taking the game with it:
+
+```
+Rage.Exceptions.InvalidHandleableException: the specified Rage.Ped is invalid
+at Rage.Ped.get_IsFemale()
+at ...Engine\Scripting\Entities\CPedCache.cs:line 33
+at ...Mod\Character\CharacterManager.cs:line 169
+```
+
+**On an LSPDFR install the client no longer applies a server-set model at all.** LSPDFR
+owns the player character; a co-op framework rebuilding it underneath is the framework
+overstepping. The client says so once per session and counts it in `net` under
+`models ... given up on`.
+
+**What that costs you, stated plainly:** other players see the model the server holds for
+you, and this screen keeps the one LSPDFR chose. A saved appearance does not come back on
+connect. Everything else — position, health, vehicles, combat — is unaffected.
+
+This is only reachable when the server actually sets a model: a restored save, an admin
+`model` command, or a mod handing out a skin. An ordinary session never does.
+
+---
+
+## `diagnostics` says LSPDFR is not installed when it is
+
+Fixed. The scan looked for `LSPD First Response.dll` in the **game root**. LSPDFR is a
+RAGE Plugin Hook plugin and lives in `<GTA V>\Plugins\`, which is where
+`RagePluginHook.log` names it on every start. A machine demonstrably running LSPDFR was
+told it had none, and the `lspdfr` adapter never activated. Both locations are checked
+now, RPH's first.
+
+---
+
 ## RPH or LSPDFR conflict
 
 **Symptom:** the game starts through RPH but the multiplayer console never opens.

@@ -1,8 +1,10 @@
 using System;
 using System.Collections.Generic;
+using System.Linq;
 using System.IO;
 using System.Net;
 using Gtamp.Client.Mods;
+using Gtamp.Server.Players;
 using Gtamp.Shared.Mods;
 using Gtamp.Shared.Net;
 using Gtamp.Shared.Protocol;
@@ -160,6 +162,70 @@ namespace Gtamp.Tests
             Assert.DoesNotContain("script.gtamp.shared", ids);
         }
 
+        /// <summary>
+        /// LSPDFR is a RAGE Plugin Hook plugin and lives in RPH's plugins folder. This
+        /// looked in the game root instead, so a machine that was demonstrably running
+        /// LSPDFR — the RPH log names the path on every start — was told it was not
+        /// installed, and the LSPDFR adapter never activated.
+        /// </summary>
+        [Fact]
+        public void LspdfrIsFoundWhereRagePluginHookActuallyKeepsIt()
+        {
+            using var directory = new TempDirectory();
+            directory.WritePlugin("LSPD First Response.dll");
+
+            ModEnvironment environment = ModEnvironment.Detect(directory.Path);
+
+            Assert.True(environment.Lspdfr, "LSPDFR in Plugins\\ was not detected");
+        }
+
+        [Fact]
+        public void AnInstallWithoutLspdfrStillSaysSo()
+        {
+            using var directory = new TempDirectory();
+            directory.WriteScript("SomeoneElsesMod.dll");
+
+            Assert.False(ModEnvironment.Detect(directory.Path).Lspdfr);
+        }
+
+        /// <summary>
+        /// The interaction that crashed a real game: changing the player's model destroys
+        /// the ped and builds another, and LSPDFR was holding the old one. Driven through
+        /// the real seam — a directory with LSPDFR where RPH keeps it — so the detection
+        /// and the decision are tested together rather than one being assumed.
+        /// </summary>
+        [Fact]
+        public void AServerModelIsNotAppliedOverLspdfr()
+        {
+            using var directory = new TempDirectory();
+            directory.WritePlugin("LSPD First Response.dll");
+
+            using var harness = new TestHarness();
+            TestClient player = harness.CreateClient("Officer");
+            player.Client.InitializeMods(directory.Path, System.IO.Path.Combine(directory.Path, "Adapters"));
+            Assert.True(player.Client.Environment.Lspdfr);
+
+            player.Client.Connect("127.0.0.1", TestHarness.ServerEndPoint.Port);
+            Assert.True(harness.AdvanceUntil(() => player.Client.Connection.IsConnected));
+            Assert.True(harness.AdvanceUntil(() => player.Client.LocalEntityId.IsValid));
+            harness.Advance(1d);
+
+            uint before = player.Bridge.Sample.ModelHash;
+            const uint Skin = 0x9C9EFFD8u;
+            Assert.True(harness.Server.Players.TryGetByPlayerId(
+                player.Client.LocalPlayerId, out PlayerSession session));
+            Assert.True(harness.Server.SetPlayerModel(session, Skin));
+
+            harness.Advance(2d);
+
+            Assert.Equal(0, player.Client.ModelChangesApplied);
+            Assert.Equal(before, player.Bridge.Sample.ModelHash);
+            Assert.True(player.Client.ModelChangesRefused > 0);
+            Assert.Contains(
+                player.Console.VisibleLines(),
+                line => line.Text.Contains("LSPD First Response is installed"));
+        }
+
         [Theory]
         [InlineData("Gtamp.Shared.dll", true)]
         [InlineData(@"C:\GTA V\scripts\GTAMP.CLIENT.CORE.DLL", true)]
@@ -192,6 +258,14 @@ namespace Gtamp.Tests
         /// <summary>An empty file is enough: the scan reads names, not assemblies.</summary>
         public void WriteScript(string fileName) =>
             File.WriteAllBytes(System.IO.Path.Combine(Path, "scripts", fileName), new byte[0]);
+
+        /// <summary>The same, in RAGE Plugin Hook's own plugins folder.</summary>
+        public void WritePlugin(string fileName)
+        {
+            string plugins = System.IO.Path.Combine(Path, "Plugins");
+            Directory.CreateDirectory(plugins);
+            File.WriteAllBytes(System.IO.Path.Combine(plugins, fileName), new byte[0]);
+        }
 
         public void Dispose()
         {
