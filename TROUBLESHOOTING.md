@@ -125,6 +125,7 @@ Once the log exists:
 | Symptom | Cause | Fix |
 | --- | --- | --- |
 | No mention of the DLL | Wrong folder | It goes in `<GTA V>\scripts\`, not the root |
+| `Aborted script Gtamp.Client.Shv.GtampScript` with `SHVDN.NativeMemory..cctor()` in the trace | ScriptHookVDotNet does not support this build of GTA V | Not a defect in this framework. `NativeMemory` scans the game for byte patterns when it is first touched, and on an unsupported build the scan finds nothing and the type initialiser throws. It surfaces on the first text draw — for this client, the moment the console opens — so it reads as "the console does not open". Compare `ScriptHookV.log`'s `game version is VER_...` against the SHVDN release notes and install a build that supports it |
 | `Could not load file or assembly 'Gtamp.Client.Core'` | Only one DLL was copied | Copy all three: `Gtamp.Client.Shv.dll`, `Gtamp.Client.Core.dll`, `Gtamp.Shared.dll` |
 | Nothing loads at all after a game update | ScriptHookV lags GTA V updates | Wait for a ScriptHookV release matching the new build |
 | `Gtamp/logs/startup-failure.log` exists | The client threw before its logger existed | The file has the exception |

@@ -4,6 +4,7 @@ using System.IO;
 using System.Net;
 using System.Windows.Forms;
 using Gtamp.Client.Core;
+using Gtamp.Client.Mods;
 using Gtamp.Client.Diagnostics;
 using Gtamp.Client.Shv.Bridge;
 using Gtamp.Client.Shv.Ui;
@@ -58,7 +59,8 @@ namespace Gtamp.Client.Shv
 
         private void Initialize()
         {
-            string gameDirectory = AppDomain.CurrentDomain.BaseDirectory;
+            string baseDirectory = AppDomain.CurrentDomain.BaseDirectory;
+            string gameDirectory = GameDirectory.Resolve(baseDirectory, TryGetExecutablePath());
             string root = Path.Combine(gameDirectory, "Gtamp");
             _configPath = Path.Combine(root, "client.ini");
 
@@ -88,6 +90,24 @@ namespace Gtamp.Client.Shv
 
             _log.Success(LogCategory.Client, $"GTAMP client {_client.ClientVersion} loaded. Press F8 for the console.");
             _log.Info(LogCategory.Client, $"Config: {_configPath}");
+
+            // Both, always. The app domain base is not the game directory under
+            // ScriptHookVDotNet — it is the scripts folder — and believing otherwise put
+            // every file this client owns one directory below where the install guide
+            // says it is, and made the mod scan look for ScriptHookV.dll inside
+            // scripts\. Printing the two side by side is how the next surprise of this
+            // kind gets noticed in one line rather than in a bug report.
+            _log.Info(LogCategory.Client, $"Game directory: {gameDirectory} (app domain base: {baseDirectory})");
+
+            string? legacyRoot = GameDirectory.LegacyRoot(baseDirectory, gameDirectory);
+            if (legacyRoot != null && Directory.Exists(Path.Combine(legacyRoot, "Gtamp")))
+            {
+                _log.Warning(
+                    LogCategory.Client,
+                    $"An older build kept its files in '{Path.Combine(legacyRoot, "Gtamp")}'. This build uses " +
+                    $"'{root}'. Move client.ini across if you want to keep the identity key in it, or a new one " +
+                    "is generated and other servers will see you as a different player.");
+            }
 
             _client.InitializeMods(gameDirectory, Path.Combine(root, "Adapters"));
 
@@ -148,6 +168,24 @@ namespace Gtamp.Client.Shv
 
             return $"[{_client.Connection.State}] entities: {_client.ReplicatedWorld.EntityCount}  " +
                    $"players: {_client.RemotePlayers.Count + 1}  snapshot: {_client.ReplicatedWorld.LastAppliedSnapshotId}  {network}";
+        }
+
+        /// <summary>
+        /// Full path of the running executable, or null when the host will not say.
+        /// <c>MainModule</c> throws often enough — a partially initialised process, a
+        /// permission refusal — that this is worth a catch rather than a crash before
+        /// the logger exists.
+        /// </summary>
+        private static string? TryGetExecutablePath()
+        {
+            try
+            {
+                return System.Diagnostics.Process.GetCurrentProcess().MainModule?.FileName;
+            }
+            catch (Exception)
+            {
+                return null;
+            }
         }
 
         private void OnKeyDown(object sender, KeyEventArgs e)

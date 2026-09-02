@@ -127,6 +127,7 @@ Test-NetConnection -ComputerName <сервер> -Port 27015 -InformationLevel De
 | Симптом | Причина | Решение |
 | --- | --- | --- |
 | DLL вообще не упоминается | Не та папка | Он кладётся в `<GTA V>\scripts\`, а не в корень |
+| `Aborted script Gtamp.Client.Shv.GtampScript`, а в трассировке `SHVDN.NativeMemory..cctor()` | ScriptHookVDotNet не поддерживает эту сборку GTA V | Это не дефект фреймворка. `NativeMemory` при первом обращении сканирует игру по байтовым сигнатурам, и на неподдерживаемой сборке не находит их, а инициализатор типа падает. Всплывает на первой отрисовке текста — для этого клиента в момент открытия консоли, — поэтому выглядит как «консоль не открывается». Сверьте `game version is VER_...` из `ScriptHookV.log` с примечаниями к релизам SHVDN и поставьте поддерживающую сборку |
 | `Could not load file or assembly 'Gtamp.Client.Core'` | Скопирован только один DLL | Копируйте все три: `Gtamp.Client.Shv.dll`, `Gtamp.Client.Core.dll`, `Gtamp.Shared.dll` |
 | После обновления игры не грузится ничего | ScriptHookV отстаёт от обновлений GTA V | Дождитесь релиза ScriptHookV под новую сборку |
 | Существует `Gtamp/logs/startup-failure.log` | Клиент упал раньше, чем появился его логгер | В файле лежит исключение |
