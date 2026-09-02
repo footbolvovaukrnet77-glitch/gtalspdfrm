@@ -3,8 +3,13 @@ using System.Collections.Generic;
 using System.Linq;
 using System.IO;
 using System.Net;
+using Gtamp.Client.Entities;
 using Gtamp.Client.Mods;
+using Gtamp.Shared.Core;
 using Gtamp.Server.Players;
+using Gtamp.Shared.Entities;
+using Gtamp.Shared.World;
+using Gtamp.Shared.Diagnostics;
 using Gtamp.Shared.Mods;
 using Gtamp.Shared.Net;
 using Gtamp.Shared.Protocol;
@@ -220,10 +225,154 @@ namespace Gtamp.Tests
 
             Assert.Equal(0, player.Client.ModelChangesApplied);
             Assert.Equal(before, player.Bridge.Sample.ModelHash);
-            Assert.True(player.Client.ModelChangesRefused > 0);
+            // Declined, not refused: the model is installed and would have worked.
+            // Counting it as refused made selftest say "the model is probably not
+            // installed here" about six models that were nothing of the kind.
+            Assert.True(player.Client.ModelChangesDeclined > 0);
+            Assert.Equal(0, player.Client.ModelChangesRefused);
             Assert.Contains(
                 player.Console.VisibleLines(),
                 line => line.Text.Contains("LSPD First Response is installed"));
+        }
+
+        /// <summary>
+        /// One vehicle, adopted once.
+        /// <para>
+        /// Accepting a spawn used to stamp the entity as "last seen at time zero", and
+        /// <c>Stream</c> reads that as a timestamp: from the first frame onwards it is
+        /// older than the grace period. So the streamer forgot the vehicle the server had
+        /// just accepted, before the snapshot carrying it could arrive; the handle became
+        /// unknown again, and the client asked the server to adopt the same car a second
+        /// time. A real session turned about a dozen cars into twenty-four replicated
+        /// ones, in pairs thirty milliseconds apart.
+        /// </para>
+        /// <para>
+        /// Driven through <see cref="OwnedEntityStreamer"/> directly, with the snapshot
+        /// deliberately not yet carrying the entity, because that gap is the whole
+        /// condition and a live session closes it too fast to rely on.
+        /// </para>
+        /// </summary>
+        [Fact]
+        public void AnAcceptedVehicleIsNotForgottenBeforeItsFirstSnapshot()
+        {
+            var bridge = new FakeGameBridge();
+            bridge.PutLocalPlayerInVehicle(0x1B38E955, new NetVector3(10f, 20f, 30f));
+
+            var sent = new List<byte[]>();
+            var streamer = new OwnedEntityStreamer(bridge, EntityRegistry.CreateDefault(), new LogBus())
+            {
+                LocalPlayerId = 1,
+                Send = (type, payload, delivery) =>
+                {
+                    if (type == NetMessageType.EntitySpawnRequest)
+                    {
+                        sent.Add(payload);
+                    }
+                },
+            };
+
+            streamer.RegisterLocalVehicleIfNeeded(EntitySnapshotView.Empty, 100d);
+            Assert.Single(sent);
+
+            uint tag = EntitySpawnRequestMessage.Deserialize(sent[0]).RequestTag;
+            streamer.HandleEntityEvent(new EntityEventMessage
+            {
+                Kind = EntityEventKind.SpawnAccepted,
+                EntityId = new EntityId(7),
+                RequestTag = tag,
+            });
+            Assert.Equal(1, streamer.OwnedCount);
+
+            // The snapshot does not carry it yet — the acceptance is reliable and arrives
+            // first. This is the frame the old code threw the vehicle away on.
+            streamer.Stream(EntitySnapshotView.Empty, 100.1d, 0d);
+
+            Assert.Equal(1, streamer.OwnedCount);
+
+            streamer.RegisterLocalVehicleIfNeeded(EntitySnapshotView.Empty, 100.2d);
+            Assert.Single(sent);
+        }
+
+        /// <summary>
+        /// And it is still let go when the snapshot really never carries it, or a vehicle
+        /// the server has genuinely dropped would be streamed for the rest of the session.
+        /// </summary>
+        [Fact]
+        public void AVehicleTheSnapshotNeverCarriesIsStillLetGo()
+        {
+            var bridge = new FakeGameBridge();
+            bridge.PutLocalPlayerInVehicle(0x1B38E955, new NetVector3(10f, 20f, 30f));
+
+            var sent = new List<byte[]>();
+            var streamer = new OwnedEntityStreamer(bridge, EntityRegistry.CreateDefault(), new LogBus())
+            {
+                LocalPlayerId = 1,
+                Send = (type, payload, delivery) =>
+                {
+                    if (type == NetMessageType.EntitySpawnRequest)
+                    {
+                        sent.Add(payload);
+                    }
+                },
+            };
+
+            streamer.RegisterLocalVehicleIfNeeded(EntitySnapshotView.Empty, 100d);
+            streamer.HandleEntityEvent(new EntityEventMessage
+            {
+                Kind = EntityEventKind.SpawnAccepted,
+                EntityId = new EntityId(7),
+                RequestTag = EntitySpawnRequestMessage.Deserialize(sent[0]).RequestTag,
+            });
+
+            streamer.Stream(EntitySnapshotView.Empty, 100.1d, 0d);
+            streamer.Stream(EntitySnapshotView.Empty, 100.1d + OwnedEntityStreamer.MissingEntityGrace + 1d, 0d);
+
+            Assert.Equal(0, streamer.OwnedCount);
+        }
+
+        /// <summary>
+        /// A correction that lands makes the next disagreement smaller. One that does not
+        /// is a defect, and it looks exactly like a working correction in the log — a
+        /// line per snapshot, each reasonable on its own. The session that found this
+        /// logged the same distance to the centimetre a hundred times running.
+        /// </summary>
+        [Fact]
+        public void ACorrectionThatChangesNothingIsReported()
+        {
+            using var harness = new TestHarness();
+            TestClient player = harness.CreateClient("Stuck");
+            player.Client.Connect("127.0.0.1", TestHarness.ServerEndPoint.Port);
+            Assert.True(harness.AdvanceUntil(() => player.Client.Connection.IsConnected));
+            Assert.True(harness.AdvanceUntil(() => player.Client.LocalEntityId.IsValid));
+            harness.Advance(1d);
+
+            Assert.False(player.Client.CorrectionsAreStuck);
+
+            // A bridge that accepts the correction and does not move, which is what the
+            // game does when the player is in a vehicle and only the ped is placed.
+            player.Bridge.IgnoreLocalCorrections = true;
+
+            Assert.True(harness.Server.Players.TryGetByPlayerId(
+                player.Client.LocalPlayerId, out PlayerSession session));
+
+            // The server keeps asserting a position the game will not take. That is the
+            // shape of the real failure: the client applies the correction on every
+            // snapshot, the player does not move, and the disagreement is identical the
+            // next time. Re-asserting it here is what a stuck game does by itself.
+            var elsewhere = new NetVector3(1500f, 1500f, 40f);
+            Assert.True(
+                harness.AdvanceUntil(
+                    () =>
+                    {
+                        harness.Server.TeleportPlayer(session, elsewhere, 0f);
+                        return player.Client.CorrectionsAreStuck;
+                    },
+                    timeoutSeconds: 15d),
+                $"corrections that changed nothing were never reported "
+                    + $"({player.Client.CorrectionsApplied} applied)");
+            Assert.Contains(
+                player.Console.VisibleLines(),
+                line => line.Text.Contains("not reaching the game"));
         }
 
         [Theory]

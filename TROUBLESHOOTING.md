@@ -322,6 +322,43 @@ now, RPH's first.
 
 ---
 
+## The car falls through the map, or you stand inside a wall
+
+Fixed. Two things were happening at once, and both were ours.
+
+**A position correction applied to the ped, while the vehicle held the position.** The
+server decides where your character is; the client snaps to it when the two disagree.
+That snap moved the **ped** — and when you are driving, the vehicle carries the ped, so
+the ped went straight back into the seat on the same frame and nothing changed. One
+session logged `position off by 1042,04 m` a hundred times in a row, the same number to
+the centimetre. From inside the game: the car ends up somewhere it should not be and the
+camera is left in the air. The correction now moves the vehicle when you are its driver,
+and leaves a passenger's vehicle alone — moving somebody else's car from this client is
+the opposite of what server authority over *your* player means.
+
+**And nothing said the correction was not landing.** A hundred identical lines look
+exactly like a hundred honest corrections. The client now measures it: when the
+disagreement has not moved for fifteen corrections running it says so once, and
+`selftest` reports `server corrections` as broken rather than as something to keep an
+eye on.
+
+---
+
+## One car becomes two, and the world fills with vehicles
+
+Fixed. Accepting a spawn stamped the entity as "last seen at time zero", and the streamer
+reads that as a timestamp — older than the grace period from the first frame onwards. So
+a vehicle the server had just accepted was forgotten on the very next tick, before the
+snapshot carrying it arrived; its handle became unknown again, and the client asked the
+server to adopt the same car a second time. A real session turned about a dozen cars into
+twenty-four replicated ones, in pairs thirty milliseconds apart.
+
+If a session before the fix left ghost vehicles in the server's world, they are in the
+database: stop the server and delete `world.db` to start clean, or leave them — they are
+replicated correctly, there are simply more of them than you parked.
+
+---
+
 ## RPH or LSPDFR conflict
 
 **Symptom:** the game starts through RPH but the multiplayer console never opens.

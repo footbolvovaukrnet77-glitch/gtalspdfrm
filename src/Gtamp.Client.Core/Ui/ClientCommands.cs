@@ -453,7 +453,10 @@ namespace Gtamp.Client.Ui
             // here a player actually has to act on, so it is never folded away.
             builder.AppendLine(
                 $"  models          {client.ModelChangesApplied} applied / " +
-                $"{client.ModelChangesRefused} given up on");
+                $"{client.ModelChangesRefused} given up on"
+                + (client.ModelChangesDeclined > 0
+                    ? $" / {client.ModelChangesDeclined} declined (LSPDFR owns the character)"
+                    : string.Empty));
             builder.Append($"  explosions      {client.RemoteEntities.VehicleExplosionsDrawn} drawn for wrecked vehicles");
             return builder.ToString();
         }

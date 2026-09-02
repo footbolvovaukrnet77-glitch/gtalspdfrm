@@ -146,7 +146,18 @@ namespace Gtamp.Client.Entities
                         _pending.Remove(message.RequestTag);
                         _ownedHandles[message.EntityId] = accepted.GameHandle;
                         _handleToEntity[accepted.GameHandle] = message.EntityId;
-                        _lastSeenInView[message.EntityId] = 0d;
+
+                        // Deliberately NOT seeded here. This used to store 0, meaning
+                        // "not seen in a snapshot yet" — but Stream reads it as "last
+                        // seen at time zero", which is older than the grace period from
+                        // the first frame onwards. So every vehicle the server had just
+                        // accepted was forgotten on the very next stream tick, before
+                        // the snapshot carrying it could arrive; the handle went back to
+                        // being unknown, and the client asked the server to adopt the
+                        // same car again. One real session produced twenty-four
+                        // replicated vehicles from about a dozen, in pairs thirty
+                        // milliseconds apart. Leaving the entry absent is what Stream
+                        // already handles correctly: the first miss stamps it with now.
                         _log.Info(
                             LogCategory.Entity,
                             $"The server adopted our vehicle as {message.EntityId}.",

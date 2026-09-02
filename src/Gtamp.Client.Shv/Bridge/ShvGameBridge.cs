@@ -455,10 +455,36 @@ namespace Gtamp.Client.Shv.Bridge
                     position.X, position.Y, position.Z, heading, false, false);
             }
 
-            ped.PositionNoOffset = ToGame(position);
-            ped.Heading = heading;
+            // Health and armour are the ped's wherever they are sitting.
             ped.Health = health;
             ped.Armor = armor;
+
+            // Position is not. When the player is driving, the vehicle holds the
+            // position and the ped is carried by it: moving the ped puts it back in the
+            // seat on the same frame and nothing has changed. That is not a theory —
+            // one real session logged "position off by 1042,04 m" a hundred times in a
+            // row, the same number to the centimetre, because the correction was applied
+            // to the ped every snapshot and the car it was sitting in never moved. From
+            // the player's side the car falls somewhere and the camera is left in the
+            // air.
+            Vehicle current = ped.CurrentVehicle;
+            if (current != null && current.Exists())
+            {
+                // Only the driver. Teleporting the car a passenger happens to be in
+                // would move somebody else's vehicle from this client, which is the
+                // opposite of what server authority over *this* player means.
+                Ped driver = current.Driver;
+                if (driver != null && driver.Exists() && driver.Handle == ped.Handle)
+                {
+                    current.PositionNoOffset = ToGame(position);
+                    current.Heading = heading;
+                }
+
+                return;
+            }
+
+            ped.PositionNoOffset = ToGame(position);
+            ped.Heading = heading;
         }
 
         // ------------------------------------------------------------------

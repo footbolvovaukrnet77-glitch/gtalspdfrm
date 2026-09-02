@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.IO;
 using System.Reflection;
 using Rage;
@@ -105,20 +106,34 @@ namespace Gtamp.RphBridge
                 // AssemblyName parses the display name without loading anything, so this
                 // cannot re-enter the handler it is running inside.
                 string simpleName = new AssemblyName(args.Name).Name;
-                string? folder = PluginFolder();
-                if (string.IsNullOrEmpty(folder) || string.IsNullOrEmpty(simpleName))
+                if (string.IsNullOrEmpty(simpleName))
                 {
                     return null;
                 }
 
-                string candidate = Path.Combine(folder!, simpleName + ".dll");
-                if (!File.Exists(candidate))
+                string[] folders = SearchFolders();
+                if (folders.Length == 0)
                 {
+                    Game.LogTrivial($"[GTAMP] Could not resolve {simpleName}: no folder to look in.");
                     return null;
                 }
 
-                Game.LogTrivial($"[GTAMP] Resolved {simpleName} from {folder}.");
-                return Assembly.LoadFrom(candidate);
+                foreach (string folder in folders)
+                {
+                    string candidate = Path.Combine(folder, simpleName + ".dll");
+                    if (File.Exists(candidate))
+                    {
+                        Game.LogTrivial($"[GTAMP] Resolved {simpleName} from {folder}.");
+                        return Assembly.LoadFrom(candidate);
+                    }
+                }
+
+                // Saying nothing here is what made the first attempt at this useless:
+                // the bridge failed exactly as before and the log could not tell whether
+                // the handler had never run, or had run and looked in the wrong place.
+                Game.LogTrivial(
+                    $"[GTAMP] Could not resolve {simpleName}. Looked in: {string.Join(" ; ", folders)}");
+                return null;
             }
             catch (Exception)
             {
@@ -128,25 +143,74 @@ namespace Gtamp.RphBridge
         }
 
         /// <summary>
-        /// Where this assembly was loaded from. <c>Location</c> is empty when a host loads
-        /// an assembly from bytes rather than a path, so <c>CodeBase</c> is the fallback.
+        /// Every folder worth looking in, most specific first, without duplicates.
+        /// <para>
+        /// One folder was not enough. <c>Location</c> is where the assembly was loaded
+        /// from — but a host that shadow-copies its plugins, or loads them from bytes,
+        /// makes that a temporary directory or nothing at all, and the dependency is
+        /// still beside the original. So the plugin's own folder, the AppDomain's base,
+        /// and a <c>Plugins</c> folder under that base are all tried, and whichever one
+        /// answers is named in the log.
+        /// </para>
         /// </summary>
-        private static string? PluginFolder()
+        private static string[] SearchFolders()
         {
+            var folders = new List<string>(4);
             Assembly self = typeof(EntryPoint).Assembly;
 
-            if (!string.IsNullOrEmpty(self.Location))
+            Add(folders, SafeDirectory(self.Location));
+
+            try
             {
-                return Path.GetDirectoryName(self.Location);
+                string codeBase = self.CodeBase ?? string.Empty;
+                if (codeBase.Length > 0)
+                {
+                    Add(folders, SafeDirectory(new Uri(codeBase).LocalPath));
+                }
+            }
+            catch (Exception)
+            {
+                // A CodeBase that is not a file URI tells us nothing; the others remain.
             }
 
-            string codeBase = self.CodeBase ?? string.Empty;
-            if (codeBase.Length == 0)
+            string baseDirectory = AppDomain.CurrentDomain.BaseDirectory ?? string.Empty;
+            if (baseDirectory.Length > 0)
+            {
+                Add(folders, baseDirectory);
+                Add(folders, Path.Combine(baseDirectory, "Plugins"));
+            }
+
+            return folders.ToArray();
+        }
+
+        private static string? SafeDirectory(string? path)
+        {
+            try
+            {
+                return string.IsNullOrEmpty(path) ? null : Path.GetDirectoryName(path);
+            }
+            catch (Exception)
             {
                 return null;
             }
+        }
 
-            return Path.GetDirectoryName(new Uri(codeBase).LocalPath);
+        private static void Add(List<string> folders, string? folder)
+        {
+            if (string.IsNullOrEmpty(folder))
+            {
+                return;
+            }
+
+            for (int i = 0; i < folders.Count; i++)
+            {
+                if (string.Equals(folders[i], folder, StringComparison.OrdinalIgnoreCase))
+                {
+                    return;
+                }
+            }
+
+            folders.Add(folder!);
         }
 
         /// <summary>

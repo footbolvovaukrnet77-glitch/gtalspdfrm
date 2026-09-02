@@ -119,6 +119,41 @@ namespace Gtamp.Client.Core
         /// <summary>Said once per session, not once per snapshot that carries the model.</summary>
         private bool _modelDeclinedForLspdfr;
 
+        /// <summary>
+        /// The last drift a correction was applied for, and how many times in a row it
+        /// has come back unchanged.
+        /// <para>
+        /// A correction that lands makes the next disagreement smaller. One that does
+        /// not is a loop, and it looks exactly like a working correction in the log: a
+        /// line per snapshot, each perfectly reasonable on its own. The session that
+        /// found this logged the same distance to the centimetre a hundred times and
+        /// nothing said that was different from a hundred honest corrections.
+        /// </para>
+        /// </summary>
+        private float _lastCorrectionDrift;
+
+        private int _unchangedCorrections;
+
+        private bool _stuckCorrectionReported;
+
+        /// <summary>
+        /// How many identical corrections in a row mean the correction is not reaching
+        /// the game. Three quarters of a second at the snapshot rate — long enough that
+        /// an honest player standing still cannot produce it by accident, short enough
+        /// to be in the log next to the cause.
+        /// </summary>
+        private const int StuckCorrectionThreshold = 15;
+
+        /// <summary>How close two drifts have to be to count as the same disagreement, in metres.</summary>
+        private const float StuckCorrectionTolerance = 0.05f;
+
+        /// <summary>
+        /// True when corrections are being applied and changing nothing. Reported by
+        /// <c>selftest</c> and <c>net</c>: rubber-banding a player can feel is one thing,
+        /// a correction the game is ignoring is a defect.
+        /// </summary>
+        public bool CorrectionsAreStuck { get; private set; }
+
         public MultiplayerClient(
             ClientConfig config,
             IGameBridge bridge,
@@ -300,6 +335,19 @@ namespace Gtamp.Client.Core
         /// </para>
         /// </summary>
         public int ResyncsSuppressed { get; private set; }
+
+        /// <summary>
+        /// Server models this client chose not to apply, as opposed to tried and failed.
+        /// <para>
+        /// Counted apart from <see cref="ModelChangesRefused"/> because the two mean
+        /// opposite things to whoever reads the report: refused means the model is
+        /// probably not installed here, declined means it is installed, would work, and
+        /// this client deliberately left LSPDFR's character alone. Folding them together
+        /// made <c>selftest</c> print "the model is probably not installed" about six
+        /// models that were nothing of the kind.
+        /// </para>
+        /// </summary>
+        public int ModelChangesDeclined { get; private set; }
 
         /// <summary>
         /// True between asking for a full snapshot and receiving one.
@@ -845,6 +893,29 @@ namespace Gtamp.Client.Core
                 LogCategory.Network,
                 $"Server correction: position off by {drift:0.##} m, health off by {healthGap}.");
 
+            if (Math.Abs(drift - _lastCorrectionDrift) <= StuckCorrectionTolerance)
+            {
+                _unchangedCorrections++;
+                if (_unchangedCorrections >= StuckCorrectionThreshold && !_stuckCorrectionReported)
+                {
+                    _stuckCorrectionReported = true;
+                    CorrectionsAreStuck = true;
+                    Log.Warning(
+                        LogCategory.Network,
+                        $"The server's position has been corrected {_unchangedCorrections} times running and "
+                        + $"the disagreement has not moved from {drift:0.##} m. The correction is being "
+                        + "applied and is not reaching the game — the player is somewhere this client "
+                        + "cannot place them from here. Please report this with the log.");
+                }
+            }
+            else
+            {
+                _unchangedCorrections = 0;
+                CorrectionsAreStuck = false;
+            }
+
+            _lastCorrectionDrift = drift;
+
             Bridge.ApplyLocalCorrection(
                 authoritative.Position, authoritative.Heading, authoritative.Health, authoritative.Armor);
 
@@ -1050,7 +1121,7 @@ namespace Gtamp.Client.Core
                         + "LSPDFR's. See TROUBLESHOOTING.md.");
                 }
 
-                ModelChangesRefused++;
+                ModelChangesDeclined++;
                 return;
             }
 

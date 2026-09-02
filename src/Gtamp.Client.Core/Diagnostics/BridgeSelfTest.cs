@@ -244,17 +244,43 @@ namespace Gtamp.Client.Diagnostics
                 ? new SelfTestResult("hits reported", SelfTestOutcome.Works, $"{client.HitsReported} claimed against other players")
                 : new SelfTestResult("hits reported", SelfTestOutcome.NotExercised, "you have not hit another player"));
 
-            results.Add(client.CorrectionsApplied == 0
-                ? new SelfTestResult("server corrections", SelfTestOutcome.Works, "none needed")
-                : new SelfTestResult(
+            // "Constant means rubber-banding" used to be left for a human to notice in a
+            // log full of identical numbers. The client now measures it: a correction
+            // that lands makes the next disagreement smaller, and one that does not is a
+            // defect rather than something to keep an eye on.
+            results.Add(client.CorrectionsAreStuck
+                ? new SelfTestResult(
                     "server corrections",
+                    SelfTestOutcome.Broken,
+                    $"{client.CorrectionsApplied} applied and the disagreement is not shrinking — "
+                        + "the correction is not reaching the game; the client log has the distance")
+                : client.CorrectionsApplied == 0
+                    ? new SelfTestResult("server corrections", SelfTestOutcome.Works, "none needed")
+                    : new SelfTestResult(
+                        "server corrections",
+                        SelfTestOutcome.NeedsEyes,
+                        $"{client.CorrectionsApplied} so far — occasional is normal, constant means rubber-banding"));
+
+            // Declined is not refused. Declined means the model is installed and would
+            // have worked, and this client left LSPDFR's character alone on purpose.
+            if (client.ModelChangesDeclined > 0)
+            {
+                results.Add(new SelfTestResult(
+                    "player model",
                     SelfTestOutcome.NeedsEyes,
-                    $"{client.CorrectionsApplied} so far — occasional is normal, constant means rubber-banding"));
+                    $"{client.ModelChangesDeclined} model(s) the server set were not applied because "
+                        + "LSPD First Response owns the player character — by design; see TROUBLESHOOTING.md"));
+            }
 
             // A model the server set and this client could not apply is the one thing
             // here the player has to act on: it means a mod is missing, and everyone
             // else is looking at a character this machine cannot draw.
-            results.Add(client.ModelChangesRefused > 0
+            results.Add(client.ModelChangesDeclined > 0
+                ? new SelfTestResult(
+                    "player model applied",
+                    SelfTestOutcome.NotExercised,
+                    "not attempted while LSPD First Response is installed")
+                : client.ModelChangesRefused > 0
                 ? new SelfTestResult(
                     "player model",
                     SelfTestOutcome.Broken,

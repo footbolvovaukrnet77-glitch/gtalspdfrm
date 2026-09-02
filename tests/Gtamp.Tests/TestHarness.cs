@@ -136,9 +136,21 @@ namespace Gtamp.Tests
             Sample.WantedLevel = (byte)(level < 0 ? 0 : (level > 5 ? 5 : level));
         }
 
+        /// <summary>
+        /// Set to make the bridge accept a correction and not move, which is what the
+        /// game does when only the ped is placed and the player is sitting in a vehicle
+        /// that stays where it is.
+        /// </summary>
+        public bool IgnoreLocalCorrections { get; set; }
+
         public void ApplyLocalCorrection(NetVector3 position, float heading, int health, int armor)
         {
             CorrectionsApplied++;
+            if (IgnoreLocalCorrections)
+            {
+                return;
+            }
+
             Sample.Position = position;
             Sample.Heading = heading;
             Sample.Health = health;
