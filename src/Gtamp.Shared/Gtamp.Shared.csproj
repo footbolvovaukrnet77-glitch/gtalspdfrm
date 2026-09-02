@@ -1,0 +1,20 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <!-- One source, three builds. netstandard2.0 is what any future host gets;
+         net48 and net8.0 exist because ECDiffieHellman — needed for the session key
+         agreement — is not in the netstandard2.0 surface, while both real hosts have
+         it. Multi-targeting keeps the client and the server on identical source
+         rather than letting a #if drift into two behaviours. -->
+    <TargetFrameworks>netstandard2.0;net48;net8.0</TargetFrameworks>
+    <RootNamespace>Gtamp.Shared</RootNamespace>
+    <AssemblyName>Gtamp.Shared</AssemblyName>
+  </PropertyGroup>
+  <ItemGroup>
+    <!-- The channel framing and the LSPDFR payload merge are internal on purpose:
+         they are a wire contract between two hosts, not an API for mods. The test
+         project checks them directly rather than only through their callers. -->
+    <AssemblyAttribute Include="System.Runtime.CompilerServices.InternalsVisibleToAttribute">
+      <_Parameter1>Gtamp.Tests</_Parameter1>
+    </AssemblyAttribute>
+  </ItemGroup>
+</Project>
