@@ -32,7 +32,7 @@ namespace Gtamp.Client.Diagnostics
             builder.AppendLine($"SEVERITY: {severity}");
             builder.AppendLine();
             builder.AppendLine($"SUBSYSTEM: {GuessSubsystem(client)}");
-            builder.AppendLine($"GTA V VERSION: {client.Bridge.GameVersion}");
+            builder.AppendLine($"GTA V VERSION: {client.Environment.DescribeGameBuild(client.Bridge.GameVersion)}");
             builder.AppendLine($"MULTIPLAYER VERSION: {client.ClientVersion}");
             builder.AppendLine($"RPH VERSION: {Describe(client.Environment.RagePluginHook, client.Environment.RagePluginHookVersion)}");
             builder.AppendLine($"LSPDFR VERSION: {Describe(client.Environment.Lspdfr, client.Environment.LspdfrVersion)}");

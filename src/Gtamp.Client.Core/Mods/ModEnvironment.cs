@@ -19,6 +19,22 @@ namespace Gtamp.Client.Mods
     {
         public string GameDirectory { get; private set; } = string.Empty;
 
+        /// <summary>
+        /// The game build, read from the executable itself, or empty if it could not
+        /// be read.
+        /// <para>
+        /// ScriptHookVDotNet also has an opinion, and on a game newer than the SHVDN
+        /// build it is wrong: <c>Game.Version</c> is an enum whose highest member is
+        /// whatever existed when that SHVDN was released, so a 3889 install is
+        /// reported as the newest build SHVDN knows. Diagnostics printed that with a
+        /// tick beside it, which is worse than printing nothing: the single field a
+        /// bug report exists to get right was confidently wrong, and it was wrong
+        /// precisely on the installs where it matters, since a game newer than SHVDN
+        /// is exactly when SHVDN's pattern scanning starts to fail.
+        /// </para>
+        /// </summary>
+        public string GameBuild { get; private set; } = string.Empty;
+
         public bool ScriptHookV { get; private set; }
 
         public bool ScriptHookVDotNet { get; private set; }
@@ -91,10 +107,80 @@ namespace Gtamp.Client.Mods
             return false;
         }
 
+        /// <summary>
+        /// How the game build should be reported, given what the script host thinks.
+        /// <para>
+        /// The executable is the authority; the script host's answer is only worth
+        /// printing when it disagrees, and then it is worth printing loudly, because
+        /// a host that has the build wrong is a host whose pattern scanning is about
+        /// to fail. When the executable cannot be read at all — an install layout this
+        /// does not know — the host's answer is all there is, and it is labelled as
+        /// coming from the host rather than passed off as the build.
+        /// </para>
+        /// </summary>
+        public string DescribeGameBuild(string? scriptHostVersion)
+        {
+            string host = (scriptHostVersion ?? string.Empty).Trim();
+
+            if (string.IsNullOrEmpty(GameBuild))
+            {
+                return host.Length == 0
+                    ? "unknown — neither the executable nor the script host could be read"
+                    : host + " (as ScriptHookVDotNet sees it; the executable could not be read)";
+            }
+
+            if (host.Length == 0 || BuildsAgree(GameBuild, host))
+            {
+                return GameBuild;
+            }
+
+            return $"{GameBuild} — ScriptHookVDotNet reports {host}, so it is older than this game build";
+        }
+
+        /// <summary>
+        /// Whether two build strings name the same build. SHVDN says
+        /// <c>v1_0_3889_0</c> where the executable says <c>1.0.3889.0</c>, and neither
+        /// spelling is wrong — so they are compared by their digits rather than as
+        /// text, and a mismatch reported only when the numbers really differ.
+        /// </summary>
+        private static bool BuildsAgree(string executable, string host)
+        {
+            return Digits(executable) == Digits(host);
+        }
+
+        private static string Digits(string value)
+        {
+            var digits = new System.Text.StringBuilder(value.Length);
+            foreach (char c in value)
+            {
+                if (c >= '0' && c <= '9')
+                {
+                    digits.Append(c);
+                }
+            }
+
+            return digits.ToString();
+        }
+
         /// <summary>Scans a GTA V installation directory. Never throws; unreadable paths are skipped.</summary>
         public static ModEnvironment Detect(string gameDirectory)
         {
             var environment = new ModEnvironment { GameDirectory = gameDirectory };
+
+            // Legacy and Enhanced ship different executables and only one is present.
+            foreach (string executable in new[] { "GTA5.exe", "GTA5_Enhanced.exe", "PlayGTAV.exe" })
+            {
+                string candidate = Path.Combine(gameDirectory, executable);
+                if (File.Exists(candidate))
+                {
+                    string version = FileVersion(candidate);
+                    if (version != "unknown")
+                    {
+                        environment.GameBuild = version;
+                        break;
+                    }
+                }
+            }
 
             environment.ScriptHookV = File.Exists(Path.Combine(gameDirectory, "ScriptHookV.dll"));
 

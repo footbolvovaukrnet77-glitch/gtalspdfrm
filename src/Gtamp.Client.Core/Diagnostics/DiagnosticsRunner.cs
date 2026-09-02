@@ -51,7 +51,13 @@ namespace Gtamp.Client.Diagnostics
             var checks = new List<DiagnosticCheck>();
             ModEnvironment environment = client.Environment;
 
-            checks.Add(new DiagnosticCheck("GTA V", CheckStatus.Pass, client.Bridge.GameVersion));
+            // The executable is the authority on the build; the bridge only relays what
+            // the script host thinks, which on a game newer than the host is wrong.
+            string build = environment.DescribeGameBuild(client.Bridge.GameVersion);
+            checks.Add(new DiagnosticCheck(
+                "GTA V",
+                build.Contains("older than this game build") ? CheckStatus.Warn : CheckStatus.Pass,
+                build));
             checks.Add(new DiagnosticCheck("Multiplayer", CheckStatus.Pass, $"client {client.ClientVersion}"));
 
             checks.Add(environment.ScriptHookV

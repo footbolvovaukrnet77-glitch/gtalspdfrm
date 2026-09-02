@@ -148,5 +148,68 @@ namespace Gtamp.Tests
             }
         }
 
-    }
+    
+        /// <summary>
+        /// The build a bug report names must come from the executable, not from the
+        /// script host's enum.
+        /// <para>
+        /// A real report said "GTA V VERSION: v1_0_3788_0" with a tick beside it while
+        /// ScriptHookV and RAGE Plugin Hook, independently, both said 3889. SHVDN's
+        /// `Game.Version` is an enum whose highest member is whatever existed when that
+        /// SHVDN was built, so on a newer game it reports the newest build it knows —
+        /// confidently, and wrongly, and precisely on the installs where a host that is
+        /// behind the game is the thing worth knowing about.
+        /// </para>
+        /// </summary>
+        [Fact]
+        public void TheGameBuildComesFromTheExecutableAndAScriptHostThatDisagreesIsNamed()
+        {
+            var environment = ModEnvironment.Detect(Path.Combine(Path.GetTempPath(), "gtamp-no-such-install"));
+            Assert.Equal(string.Empty, environment.GameBuild);
+
+            // Nothing readable: the host's answer is all there is, and it is labelled.
+            string blind = environment.DescribeGameBuild("v1_0_3788_0");
+            Assert.Contains("v1_0_3788_0", blind);
+            Assert.Contains("ScriptHookVDotNet", blind);
+            Assert.Contains("executable could not be read", blind);
+
+            Assert.Contains("unknown", environment.DescribeGameBuild(null));
+        }
+
+        [Fact]
+        public void ABuildTheScriptHostSpellsDifferentlyIsNotReportedAsADisagreement()
+        {
+            string directory = Path.Combine(
+                Path.GetTempPath(), "gtamp-build-" + Guid.NewGuid().ToString("N").Substring(0, 8));
+            Directory.CreateDirectory(directory);
+            try
+            {
+                ModEnvironment environment = ModEnvironment.Detect(directory);
+
+                // SHVDN writes v1_0_3889_0 where the executable writes 1.0.3889.0.
+                // Same build, different spelling, and reporting that as a mismatch
+                // would cry wolf on every healthy install.
+                Assert.False(Disagrees(environment, "1.0.3889.0", "v1_0_3889_0"));
+                Assert.True(Disagrees(environment, "1.0.3889.0", "v1_0_3788_0"));
+            }
+            finally
+            {
+                Directory.Delete(directory, recursive: true);
+            }
+        }
+
+        /// <summary>
+        /// Drives DescribeGameBuild with a chosen executable build, which Detect can
+        /// only read from a real installation.
+        /// </summary>
+        private static bool Disagrees(ModEnvironment environment, string executableBuild, string hostBuild)
+        {
+            typeof(ModEnvironment)
+                .GetProperty(nameof(ModEnvironment.GameBuild))!
+                .SetValue(environment, executableBuild);
+
+            string described = environment.DescribeGameBuild(hostBuild);
+            return described.Contains("older than this game build");
+        }
+}
 }
