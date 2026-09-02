@@ -1,5 +1,6 @@
 using System.Collections.Generic;
 using Gtamp.Client.Entities;
+using Gtamp.Client.World;
 using Gtamp.Shared.Net;
 using Gtamp.Shared.Protocol;
 using Gtamp.Client.Mods;
@@ -290,6 +291,52 @@ namespace Gtamp.Tests
             streamer.Stream(whole, t + (OwnedEntityStreamer.MissingEntityGrace * 2d), 0d);
 
             Assert.Equal(0, streamer.OwnedCount);
+        }
+
+        /// <summary>
+        /// The client's own history evicted the baseline the server was still writing
+        /// against, and then could not decode anything.
+        /// <para>
+        /// It happens whenever the client falls behind: the server keeps encoding
+        /// against the last snapshot it heard acknowledged, the client comes back and
+        /// applies the backlog, and every applied snapshot stores a view. After
+        /// `SnapshotHistory` of them the baseline every one of those snapshots names
+        /// falls out of the ring, and the rest of the backlog is undecodable — one
+        /// resync, and a run of dropped snapshots exactly as long as the overrun.
+        /// </para>
+        /// </summary>
+        [Fact]
+        public void TheBaselineTheServerIsStillWritingAgainstSurvivesACatchUpBurst()
+        {
+            var world = new WorldState { Tick = 1, ServerTime = 1d };
+            world.Add(Vehicle(1, 10f));
+            world.Add(Vehicle(2, 20f));
+
+            var client = new ReplicatedWorld(Registry);
+
+            SnapshotWriteResult full = SnapshotCodec.Write(
+                world, EntitySnapshotView.Empty, Registry, AllOf(world), 1, 64 * 1024);
+            Assert.True(client.TryApply(full.Payload, out _, out string firstError), firstError);
+
+            // The client's acknowledgement never reaches the server, so every snapshot
+            // in the burst is written against snapshot 1. More of them arrive than the
+            // history is deep.
+            int burst = ProtocolConstants.SnapshotHistory + 8;
+            for (uint i = 0; i < burst; i++)
+            {
+                world.Tick++;
+                world.ServerTime += 0.05d;
+                world.Get<VehicleEntity>(new EntityId(1))!.Position = new NetVector3(10f + i, 0f, 30f);
+
+                SnapshotWriteResult delta = SnapshotCodec.Write(
+                    world, full.ResultingView, Registry, AllOf(world), 2 + i, 64 * 1024);
+
+                Assert.True(
+                    client.TryApply(delta.Payload, out _, out string error),
+                    $"snapshot {2 + i} of {burst} was rejected: {error}");
+            }
+
+            Assert.Equal(0, client.SnapshotsDropped);
         }
 
         /// <summary>

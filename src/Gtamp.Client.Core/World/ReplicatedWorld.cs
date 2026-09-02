@@ -75,6 +75,13 @@ namespace Gtamp.Client.World
                 return false;
             }
 
+            // Every snapshot names the baseline the server is writing against, so the
+            // client always knows which view it must not lose. Pinning it here, before
+            // the lookup, is what keeps a catch-up burst decodable: the backlog stores
+            // a view per applied snapshot and would otherwise evict the very baseline
+            // the rest of the backlog is written against.
+            _history.PinnedId = baselineId;
+
             if (!_history.TryGet(baselineId, out EntitySnapshotView baseline))
             {
                 error = $"baseline snapshot {baselineId} is no longer in history";

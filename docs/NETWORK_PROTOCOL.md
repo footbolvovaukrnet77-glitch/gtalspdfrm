@@ -366,6 +366,18 @@ Views share entity references for everything that did not change, so a 64-deep
 history costs one dictionary per snapshot rather than 64 deep copies
 (`SnapshotTests.BaselineViewsShareUnchangedEntityInstances`).
 
+The ring is oldest-first except for one slot: `SnapshotHistory.PinnedId` holds
+the baseline the other side is currently encoding against, and eviction steps
+over it. Without that, a client that falls behind destroys its own ability to
+catch up — the server keeps writing against the last baseline it heard
+acknowledged, the client comes back to a backlog written against that baseline,
+and applying the backlog stores a view per snapshot, so after 64 of them the
+baseline every remaining snapshot names has been evicted by the snapshots that
+name it. What follows is one resync and a run of dropped snapshots exactly as
+long as the overrun. The client knows which view to keep because every snapshot
+names its baseline, so it pins it before looking it up
+(`PartialSnapshotTests.TheBaselineTheServerIsStillWritingAgainstSurvivesACatchUpBurst`).
+
 ### Byte budget
 
 Each snapshot has a hard byte budget (`snapshotByteBudget`, default 1024). The
