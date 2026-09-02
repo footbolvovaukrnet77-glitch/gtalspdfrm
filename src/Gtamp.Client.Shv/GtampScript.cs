@@ -290,58 +290,12 @@ namespace Gtamp.Client.Shv
         /// would mean calling into the Win32 keyboard layout API. Console input is
         /// ASCII commands, so this is good enough and has no dependencies.
         /// </summary>
-        private static char TranslateKey(KeyEventArgs e)
-        {
-            bool shift = e.Shift;
-
-            if (e.KeyCode >= Keys.A && e.KeyCode <= Keys.Z)
-            {
-                char letter = (char)('a' + (e.KeyCode - Keys.A));
-                return shift ? char.ToUpperInvariant(letter) : letter;
-            }
-
-            if (e.KeyCode >= Keys.D0 && e.KeyCode <= Keys.D9)
-            {
-                if (!shift)
-                {
-                    return (char)('0' + (e.KeyCode - Keys.D0));
-                }
-
-                return e.KeyCode switch
-                {
-                    Keys.D1 => '!',
-                    Keys.D2 => '@',
-                    Keys.D3 => '#',
-                    Keys.D4 => '$',
-                    Keys.D5 => '%',
-                    Keys.D6 => '^',
-                    Keys.D7 => '&',
-                    Keys.D8 => '*',
-                    Keys.D9 => '(',
-                    Keys.D0 => ')',
-                    _ => '\0',
-                };
-            }
-
-            if (e.KeyCode >= Keys.NumPad0 && e.KeyCode <= Keys.NumPad9)
-            {
-                return (char)('0' + (e.KeyCode - Keys.NumPad0));
-            }
-
-            return e.KeyCode switch
-            {
-                Keys.Space => ' ',
-                Keys.OemPeriod or Keys.Decimal => '.',
-                Keys.Oemcomma => ',',
-                Keys.OemMinus or Keys.Subtract => shift ? '_' : '-',
-                Keys.Oemplus or Keys.Add => shift ? '+' : '=',
-                Keys.OemQuestion or Keys.Divide => shift ? '?' : '/',
-                Keys.Oem1 => shift ? ':' : ';',
-                Keys.Oem7 => shift ? '"' : '\'',
-                Keys.Oem5 => shift ? '|' : '\\',
-                _ => '\0',
-            };
-        }
+        /// <summary>
+        /// Hands the key to <see cref="ConsoleKeyMap"/>, which is where the decision
+        /// lives so that it can be tested. Nothing about this mapping needs a game.
+        /// </summary>
+        private static char TranslateKey(KeyEventArgs e) =>
+            ConsoleKeyMap.Translate((int)e.KeyCode, e.Shift);
 
         private void OnAborted(object sender, EventArgs e)
         {
