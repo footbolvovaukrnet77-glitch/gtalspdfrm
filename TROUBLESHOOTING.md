@@ -379,6 +379,30 @@ checks.
 
 ---
 
+## You get yanked backwards while driving
+
+Fixed. The anti-cheat's teleport gate was a flat 75 metres regardless of how long it had
+been since your last update. At the vehicle limit a player covers about 71 metres a
+second, so any frame the game spent streaming for a second and a bit — which GTA V does
+routinely — looked like a teleport and the update was rejected.
+
+That is not a one-off rejection. The server's position stops advancing when it rejects,
+so the **next** report is further away still and is rejected for the same reason. Once a
+player got more than 75 m ahead they could never report a position again; only a
+correction dragging them backwards broke the loop, and then it started over. A real
+session shows it as a steady `position off by 141 m` while driving, and 1042 m after a
+longer stall.
+
+A jump now has to beat both the fixed floor **and** the movement budget, which already
+accumulates with elapsed time at the speed limit. Waiting does not buy distance: the
+budget is capped at `MovementBurstSeconds` worth, so a client claiming to have crossed
+the map is caught however long it waited.
+
+If you raised `CorrectionThreshold` in `client.ini` to work around this, put it back to
+`3`.
+
+---
+
 ## RPH or LSPDFR conflict
 
 **Symptom:** the game starts through RPH but the multiplayer console never opens.

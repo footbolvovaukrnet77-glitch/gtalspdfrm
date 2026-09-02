@@ -18,6 +18,10 @@ namespace Gtamp.Tests
         private static PlayerStateProposal Proposal(NetVector3 position, int health = 150, int armor = 0) =>
             new PlayerStateProposal { Position = position, Health = health, Armor = armor };
 
+        /// <summary>The same, reported from a vehicle, where the speed limit is the higher one.</summary>
+        private static PlayerStateProposal InVehicle(NetVector3 position) =>
+            new PlayerStateProposal { Position = position, Health = 150, Armor = 0, InVehicle = true };
+
         [Fact]
         public void NormalMovementIsAccepted()
         {
@@ -95,6 +99,70 @@ namespace Gtamp.Tests
             var state = new PlayerValidationState();
             ValidationOutcome outcome = engine.ValidatePlayerState(
                 Player(), Proposal(new NetVector3(5000f, 5000f, 30f)), state, 1.0);
+
+            Assert.False(outcome.Accepted);
+            Assert.Equal(ViolationKind.Teleport, outcome.Violations[0].Kind);
+        }
+
+        /// <summary>
+        /// A frame the game spends streaming is not a teleport.
+        /// <para>
+        /// The gate was a flat 75 m regardless of how long it had been. At the vehicle
+        /// limit a player covers about 71 m per second, so a hitch of a second and a bit
+        /// — which GTA V does routinely — was called a teleport and the update rejected.
+        /// The server's position then stopped advancing, so the next report was further
+        /// still and was rejected too: once a player got ahead they could never report
+        /// again. A real session shows it as a steady 141 m disagreement while driving.
+        /// </para>
+        /// </summary>
+        [Fact]
+        public void AHitchWhileDrivingIsNotATeleport()
+        {
+            var engine = new AntiCheatEngine();
+            PlayerEntity player = Player();
+            var state = new PlayerValidationState();
+
+            // Settle in, in a vehicle, so the movement budget is the vehicle one.
+            double now = 0d;
+            for (int i = 0; i < 10; i++)
+            {
+                now += 1d / 30d;
+                var step = new NetVector3(player.Position.X + 2f, 0f, 30f);
+                Assert.True(engine.ValidatePlayerState(
+                    player, InVehicle(step), state, now).Accepted);
+                player.Position = step;
+            }
+
+            // A second and a half of silence, then a report from where honest driving
+            // would have put them.
+            now += 1.5d;
+            var afterHitch = new NetVector3(player.Position.X + 100f, 0f, 30f);
+            ValidationOutcome outcome = engine.ValidatePlayerState(
+                player, InVehicle(afterHitch), state, now);
+
+            Assert.True(
+                outcome.Accepted,
+                outcome.Violations.Count > 0 ? outcome.Violations[0].ToString() : "rejected");
+        }
+
+        /// <summary>
+        /// And a real teleport is still a teleport, however long the client waits: the
+        /// movement budget is capped, so patience does not buy distance.
+        /// </summary>
+        [Fact]
+        public void WaitingDoesNotBuyATeleport()
+        {
+            var engine = new AntiCheatEngine();
+            var state = new PlayerValidationState();
+            PlayerEntity player = Player();
+
+            double now = 1d;
+            Assert.True(engine.ValidatePlayerState(player, InVehicle(new NetVector3(1f, 0f, 30f)), state, now).Accepted);
+
+            // A full minute of waiting, then a jump across the map.
+            now += 60d;
+            ValidationOutcome outcome = engine.ValidatePlayerState(
+                player, InVehicle(new NetVector3(5000f, 5000f, 30f)), state, now);
 
             Assert.False(outcome.Accepted);
             Assert.Equal(ViolationKind.Teleport, outcome.Violations[0].Kind);

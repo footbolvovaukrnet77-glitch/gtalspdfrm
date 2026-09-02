@@ -244,13 +244,32 @@ namespace Gtamp.Shared.Security
             }
 
             float distance = NetVector3.Distance(current.Position, proposal.Position);
-            if (distance > Settings.TeleportDistance)
+
+            // A jump is a teleport only if it beats BOTH the fixed floor and what honest
+            // movement could have covered in the time available.
+            //
+            // The floor alone was wrong, and wrong in the direction that punishes honest
+            // players. At the vehicle limit a player covers about 71 m per second, so any
+            // frame the game spends streaming for a second and a bit -- which GTA V does
+            // routinely -- produced a "teleport" and the update was rejected. The server's
+            // position then stopped advancing, so the *next* report was further still and
+            // was rejected too: once a player got more than 75 m ahead they could never
+            // report again, and only a correction dragging them backwards broke the loop.
+            // A real session shows the result as a steady 141 m disagreement while
+            // driving, and 1042 m after a longer stall.
+            //
+            // The budget is the honest measure and it is already capped at
+            // speedLimit * MovementBurstSeconds, so this does not open the door: a client
+            // claiming to have crossed the map is still caught, because no amount of
+            // waiting lets the budget exceed that cap.
+            double teleportAllowance = Math.Max(Settings.TeleportDistance, state.MovementBudget);
+            if (distance > teleportAllowance)
             {
                 Reject(
                     outcome,
                     state,
                     ViolationKind.Teleport,
-                    $"jumped {distance:0.#} m in one update (limit {Settings.TeleportDistance:0} m)",
+                    $"jumped {distance:0.#} m in one update (limit {teleportAllowance:0} m)",
                     Settings.ActionFor(ViolationKind.Teleport));
             }
             else if (distance > state.MovementBudget)
