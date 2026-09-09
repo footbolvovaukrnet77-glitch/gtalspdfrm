@@ -1,0 +1,108 @@
+{
+  "GAME_REGION": {
+    "left": 100,
+    "top": 100,
+    "width": 800,
+    "height": 600
+  },
+  "TARGET_FPS": 30,
+  "DEBUG_FPS": 15,
+  "PROCESS_SCALE": 1.0,
+  "BLUR_KERNEL": 3,
+  "DEBUG_MODE": true,
+  "DEBUG_SHOW_MASKS": false,
+  "PLAYER_HSV_LOWER": [
+    0,
+    0,
+    170
+  ],
+  "PLAYER_HSV_UPPER": [
+    179,
+    60,
+    255
+  ],
+  "PLAYER_HSV_EXTRA_RANGES": [],
+  "OBSTACLE_HSV_LOWER": [
+    140,
+    90,
+    120
+  ],
+  "OBSTACLE_HSV_UPPER": [
+    175,
+    255,
+    255
+  ],
+  "OBSTACLE_HSV_EXTRA_RANGES": [
+    {
+      "lower": [
+        85,
+        90,
+        120
+      ],
+      "upper": [
+        105,
+        255,
+        255
+      ]
+    }
+  ],
+  "TRACK_HSV_LOWER": [
+    40,
+    60,
+    60
+  ],
+  "TRACK_HSV_UPPER": [
+    85,
+    255,
+    255
+  ],
+  "USE_TRACK_MASK": true,
+  "PLAYER_MIN_AREA_RATIO": 0.00015,
+  "PLAYER_MAX_AREA_RATIO": 0.08,
+  "PLAYER_SEARCH_TOP_RATIO": 0.55,
+  "PLAYER_MAX_ASPECT": 4.0,
+  "OBSTACLE_MIN_AREA_RATIO": 0.0003,
+  "OBSTACLE_MAX_AREA_RATIO": 0.35,
+  "OBSTACLE_MIN_WIDTH_RATIO": 0.02,
+  "OBSTACLE_MIN_HEIGHT_RATIO": 0.008,
+  "OBSTACLE_SEARCH_BOTTOM_RATIO": 0.98,
+  "OBSTACLE_MERGE_DISTANCE_RATIO": 0.03,
+  "MORPH_KERNEL": 5,
+  "PLAYER_MEMORY_FRAMES": 45,
+  "PLAYER_WIDTH": 60,
+  "OBSTACLE_MARGIN": 18,
+  "SAFE_DISTANCE": 90,
+  "REACTION_DISTANCE": 300,
+  "JUMP_DISTANCE": 190,
+  "JUMP_TIME_AHEAD": 0.35,
+  "LANE_TOLERANCE": 25,
+  "CENTER_X_RATIO": 0.5,
+  "SIDE_SCAN_WIDTH_RATIO": 0.45,
+  "EDGE_MARGIN_RATIO": 0.06,
+  "JUMPABLE_HEIGHT_RATIO": 0.16,
+  "UNAVOIDABLE_WIDTH_RATIO": 0.55,
+  "TRACK_MATCH_DISTANCE_RATIO": 0.18,
+  "TRACK_MAX_MISSES": 6,
+  "TRACK_SPEED_SMOOTHING": 0.6,
+  "PREDICTION_TIME": 0.35,
+  "MIN_SPEED_FOR_PREDICTION": 5.0,
+  "KEY_LEFT": "a",
+  "KEY_RIGHT": "d",
+  "KEY_UP": "w",
+  "KEY_DOWN": "s",
+  "KEY_JUMP": "space",
+  "USE_ARROW_KEYS": false,
+  "JUMP_COOLDOWN": 0.55,
+  "JUMP_SAME_OBSTACLE_COOLDOWN": 1.2,
+  "MOVE_MIN_HOLD": 0.06,
+  "MOVE_MAX_HOLD": 0.85,
+  "KEY_REPRESS_INTERVAL": 0.0,
+  "DRY_RUN": false,
+  "GAME_OVER_LOST_FRAMES": 60,
+  "GAME_OVER_STATIC_FRAMES": 90,
+  "GAME_OVER_DIFF_THRESHOLD": 2.0,
+  "GAME_OVER_DARK_V_MEAN": 18,
+  "RESTART_KEY": "r",
+  "AUTO_RESTART": false,
+  "START_DELAY": 5
+}
