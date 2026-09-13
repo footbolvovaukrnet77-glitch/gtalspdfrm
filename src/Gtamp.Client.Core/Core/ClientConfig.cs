@@ -93,6 +93,17 @@ namespace Gtamp.Client.Core
         /// </summary>
         public int HealthCorrectionThreshold { get; set; } = 20;
 
+        /// <summary>
+        /// Whether remote players are given jump, climb and parachute tasks.
+        /// <para>
+        /// On by default and worth a switch, because these are native calls no test
+        /// here can run: if a remote player hops on the spot or hangs under a canopy
+        /// that is not there, turning this off restores the previous behaviour without
+        /// waiting for a build.
+        /// </para>
+        /// </summary>
+        public bool ApplyRemotePosture { get; set; } = true;
+
         public bool ShowNetworkOverlay { get; set; }
 
         /// <summary>
@@ -217,6 +228,8 @@ namespace Gtamp.Client.Core
                 $"InterpolationDelay={InterpolationDelay.ToString("0.###", CultureInfo.InvariantCulture)}",
                 $"CorrectionThreshold={CorrectionThreshold.ToString("0.###", CultureInfo.InvariantCulture)}",
                 $"HealthCorrectionThreshold={HealthCorrectionThreshold.ToString(CultureInfo.InvariantCulture)}",
+                "; Jump, climb and parachute on remote players. Off restores the pre-13.09 behaviour.",
+                $"ApplyRemotePosture={ApplyRemotePosture}",
                 $"ShowNetworkOverlay={ShowNetworkOverlay}",
                 $"ShowPlayerBlips={ShowPlayerBlips}",
                 $"ShowPlayerNames={ShowPlayerNames}",
@@ -290,6 +303,9 @@ namespace Gtamp.Client.Core
                     break;
                 case "botpath":
                     BotPath = value;
+                    break;
+                case "applyremoteposture":
+                    ApplyRemotePosture = ParseBool(value);
                     break;
                 case "interpolationdelay":
                     if (double.TryParse(value, NumberStyles.Float, CultureInfo.InvariantCulture, out double delay))

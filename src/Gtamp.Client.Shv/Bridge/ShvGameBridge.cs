@@ -95,6 +95,13 @@ namespace Gtamp.Client.Shv.Bridge
         }
 
         /// <summary>
+        /// Whether remote players get jump, climb and parachute tasks. Set from
+        /// client.ini by the host; see <see cref="ApplyPostureTask"/> for why it has a
+        /// switch at all.
+        /// </summary>
+        public bool ApplyRemotePosture { get; set; } = true;
+
+        /// <summary>
         /// The game build as ScriptHookVDotNet sees it — which on a build it does not
         /// support is an exception rather than a number. <c>diagnostics</c> and
         /// <c>bugreport</c> are exactly what a player runs when things are broken, so
@@ -1103,7 +1110,7 @@ namespace Gtamp.Client.Shv.Bridge
             return true;
         }
 
-        private static void ApplyPosture(Ped ped, in RemotePedCommand command, PedDriveState state)
+        private void ApplyPosture(Ped ped, in RemotePedCommand command, PedDriveState state)
         {
             bool crouching = (command.Flags & PlayerFlags.Crouching) != 0;
             if (state.Crouching != crouching)
@@ -1137,6 +1144,74 @@ namespace Gtamp.Client.Shv.Bridge
             }
 
             state.Reloading = reloading;
+
+            ApplyPostureTask(ped, in command, state);
+        }
+
+        /// <summary>
+        /// Issues the one-shot posture task <see cref="PostureDirector"/> asks for.
+        /// <para>
+        /// Jump, climb and parachute have travelled on the wire since the first commit
+        /// and were applied by nothing. The decision about *when* to issue one is in
+        /// <see cref="PostureDirector"/> where it is unit-tested; what is here is three
+        /// native calls and the fact that they can throw on a script host that does not
+        /// know one of them.
+        /// </para>
+        /// <para>
+        /// <b>Not verified against a running game.</b> No test here can run GTA V, so
+        /// these are the natives the tasks are documented to use and nothing more. If a
+        /// remote player starts hopping or hanging in mid-air, this is the block to
+        /// turn off — see ApplyRemotePosture in client.ini — and the flag table in
+        /// docs/ENTITY_SYSTEM.md records which flags are applied and which are not.
+        /// </para>
+        /// </summary>
+        private void ApplyPostureTask(Ped ped, in RemotePedCommand command, PedDriveState state)
+        {
+            if (!ApplyRemotePosture)
+            {
+                return;
+            }
+
+            PostureTask task = PostureDirector.Decide(
+                state.PostureFlags, command.Flags, settled: !command.HardCorrect);
+
+            state.PostureFlags = command.Flags;
+
+            if (task == PostureTask.None)
+            {
+                return;
+            }
+
+            try
+            {
+                switch (task)
+                {
+                    case PostureTask.Jump:
+                        Function.Call(Hash.TASK_JUMP, ped.Handle, true, false, false);
+                        break;
+
+                    case PostureTask.Climb:
+                        Function.Call(Hash.TASK_CLIMB, ped.Handle, true);
+                        break;
+
+                    case PostureTask.OpenParachute:
+                        Function.Call(Hash.TASK_PARACHUTE, ped.Handle, true, false);
+                        break;
+
+                    case PostureTask.EndParachute:
+                        // The canopy is a task, so ending it is clearing the task. The
+                        // locomotion task is re-issued on the next frame by the normal
+                        // path, which is why this does not have to restore anything.
+                        Function.Call(Hash.CLEAR_PED_TASKS, ped.Handle);
+                        state.Reset();
+                        break;
+                }
+            }
+            catch (Exception)
+            {
+                // A script host that does not know this native. The posture is then not
+                // applied, which is the behaviour that existed before this.
+            }
         }
 
         /// <summary>
@@ -2060,6 +2135,14 @@ namespace Gtamp.Client.Shv.Bridge
 
             /// <summary>Whether the reload task has already been issued for the reload in progress.</summary>
             public bool Reloading;
+
+            /// <summary>
+            /// The posture flags this ped was last driven with, so a jump, a climb or
+            /// a parachute is issued on the transition into it and not every frame
+            /// while it lasts. Re-issuing a one-shot task every frame restarts it, and
+            /// a task that restarts sixty times a second never plays.
+            /// </summary>
+            public PlayerFlags PostureFlags;
 
             /// <summary>The vehicle and seat this ped was last put into, so it is not re-seated every frame.</summary>
             public int SeatedVehicle;

@@ -104,7 +104,7 @@ namespace Gtamp.Client.Shv
             var console = new DeveloperConsole(new WindowsClipboard(_log));
             _log.AddSink(console);
 
-            _bridge = new ShvGameBridge(_log);
+            _bridge = new ShvGameBridge(_log) { ApplyRemotePosture = _config.ApplyRemotePosture };
 
             // Port 0 lets the OS pick a free source port, so two GTA V instances on
             // one machine can both connect to the same server.

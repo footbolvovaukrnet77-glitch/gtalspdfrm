@@ -49,7 +49,7 @@ Expected output: `Build succeeded. 0 Warning(s) 0 Error(s)`.
 ./tools/test.sh          # or tools\test.bat
 ```
 
-Expected: `Passed! - Failed: 0, Passed: 707`.
+Expected: `Passed! - Failed: 0, Passed: 718`.
 
 ### Check the documentation
 
@@ -267,6 +267,7 @@ BotPath=
 InterpolationDelay=0.12
 CorrectionThreshold=3
 HealthCorrectionThreshold=20
+ApplyRemotePosture=True
 ShowNetworkOverlay=False
 ShowPlayerBlips=True
 ShowPlayerNames=True

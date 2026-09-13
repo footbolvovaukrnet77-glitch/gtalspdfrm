@@ -248,7 +248,7 @@ machine and real clients, and is not claimed here.
 | Step | What it guards |
 | --- | --- |
 | `dotnet build -c Release -warnaserror` | The zero-warning claim. Without `-warnaserror` it decays the first time a warning lands that nobody scrolls up far enough to see |
-| `dotnet test -c Release` | All 707 tests, with the `.trx` uploaded as an artifact so a failure is readable without re-running anything |
+| `dotnet test -c Release` | All 718 tests, with the `.trx` uploaded as an artifact so a failure is readable without re-running anything |
 | `python3 tools/check-docs.py` | Dead relative links, `#anchors` naming headings that no longer exist, any document that lost its counterpart in the other language, and the three things the documentation asserts about the code: the protocol version, the test count, and the `client.ini` example. All three had drifted before the checks existed |
 
 The whole solution compiles on `ubuntu-latest`, the `net48` client included,
@@ -379,8 +379,19 @@ positions), health, armour, death, respawn, model, clothes, components, props,
 appearance, aiming, shooting, reloading, current weapon and its attachments, ammo,
 wanted level, vehicle, passengers, custom state.
 
-⏸ jumping, falling, swimming, climbing, melee, animations, tasks, scenarios —
-each with its reason in `PlayerFlags` and in ENTITY_SYSTEM.md.
+✅ jumping, climbing, parachuting — applied as one-shot tasks on the transition into
+the flag. They travelled from the first commit and were applied by nothing; the
+reason recorded for not applying them was that they arrive too late to matter, and
+the arithmetic does not support it (120 ms of interpolation against a jump close to
+a second). What was actually wrong was issuing the task every frame the flag was
+set, which restarts a one-shot task so it never plays.
+
+⏸ falling, swimming, diving, melee, cover, animations, tasks, scenarios — each with
+its reason in `PlayerFlags` and in ENTITY_SYSTEM.md. Falling stays unapplied
+permanently: a ped with nothing under it falls by itself. Melee and cover each need
+a field that does not exist on the wire — the entity being struck, and the cover
+point — and inventing the missing half locally is how a replicated state ends up
+looking worse than an unreplicated one.
 
 ❌ **stamina, injuries, gestures, interactions, police state, room.** Six named
 fields with nothing behind them. Stamina and injuries are readable from the engine

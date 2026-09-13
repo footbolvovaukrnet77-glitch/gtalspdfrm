@@ -50,7 +50,7 @@ tools\build.bat Release
 ./tools/test.sh          # или tools\test.bat
 ```
 
-Ожидается: `Passed! - Failed: 0, Passed: 707`.
+Ожидается: `Passed! - Failed: 0, Passed: 718`.
 
 ### Проверка документации
 
@@ -270,6 +270,7 @@ BotPath=
 InterpolationDelay=0.12
 CorrectionThreshold=3
 HealthCorrectionThreshold=20
+ApplyRemotePosture=True
 ShowNetworkOverlay=False
 ShowPlayerBlips=True
 ShowPlayerNames=True
