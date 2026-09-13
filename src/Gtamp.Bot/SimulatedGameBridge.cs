@@ -1,0 +1,361 @@
+using System;
+using System.Collections.Generic;
+using Gtamp.Client.Core;
+using Gtamp.Client.Entities;
+using Gtamp.Client.Players;
+using Gtamp.Shared.Core;
+using Gtamp.Shared.Entities;
+
+namespace Gtamp.Bot
+{
+    /// <summary>What the bot has seen the client try to draw.</summary>
+    public sealed class BotObservations
+    {
+        public Dictionary<int, NetVector3> RemotePeds { get; } = new Dictionary<int, NetVector3>();
+
+        public Dictionary<int, NetVector3> RemoteVehicles { get; } = new Dictionary<int, NetVector3>();
+
+        public int RemotePedsEverSeen { get; set; }
+
+        public int RemoteVehiclesEverSeen { get; set; }
+
+        public int ShotsDrawn { get; set; }
+
+        public int ExplosionsDrawn { get; set; }
+
+        public int CorrectionsApplied { get; set; }
+
+        public double LastCorrectionDistance { get; set; }
+
+        public int ModelChanges { get; set; }
+
+        /// <summary>Frames on which the client told us to swing one body at another.</summary>
+        public int MeleeTargetsSeen { get; set; }
+
+        /// <summary>The ped handle of the last melee target, so a bot can say whether it was itself.</summary>
+        public int LastMeleeTarget { get; set; }
+
+        public int JumpsSeen { get; set; }
+
+        public int CoverEntriesSeen { get; set; }
+
+        public List<string> Notifications { get; } = new List<string>();
+
+        public bool AnyRemotePedNow => RemotePeds.Count > 0;
+    }
+
+    /// <summary>
+    /// The bot's half of <see cref="IGameBridge"/>: an actuator on the way down and
+    /// a sensor on the way up.
+    /// <para>
+    /// Downwards it answers every question the client asks about "the game" from
+    /// <see cref="BotBody"/>. Upwards, every call the client makes to draw somebody
+    /// else — create a ped, apply a frame, play a shot, explode a car — is recorded
+    /// instead of drawn. That recording is the only way a headless bot can report
+    /// what the server told it, and it is what makes the bot a test instrument
+    /// rather than just a second connection.
+    /// </para>
+    /// </summary>
+    public sealed class SimulatedGameBridge : IGameBridge
+    {
+        private readonly BotBody _body;
+        private int _nextHandle = 1;
+
+        public SimulatedGameBridge(BotBody body)
+        {
+            _body = body ?? throw new ArgumentNullException(nameof(body));
+        }
+
+        public BotObservations Seen { get; } = new BotObservations();
+
+        public string GameVersion => "simulated (no GTA V in this process)";
+
+        public bool IsPlayerReady => true;
+
+        /// <summary>
+        /// Every model is available. A real client answers this from the streamer, and
+        /// answering "Loading" here would make the bot silently skip drawing peds it
+        /// is supposed to be reporting — the bot's job is to see everything the server
+        /// sends, not to simulate an install with missing content.
+        /// </summary>
+        public ModelAvailability GetModelAvailability(uint modelHash) =>
+            modelHash == 0 ? ModelAvailability.Unavailable : ModelAvailability.Available;
+
+        public LocalPlayerSample SampleLocalPlayer() => new LocalPlayerSample
+        {
+            Position = _body.Position,
+            Velocity = _body.Velocity,
+            Heading = _body.Heading,
+            Health = _body.Health,
+            MaxHealth = _body.MaxHealth,
+            Armor = _body.Armor,
+            ModelHash = _body.ModelHash,
+            Flags = _body.Flags,
+            Movement = _body.Movement,
+            CurrentWeaponHash = _body.WeaponHash,
+            Ammo = _body.Ammo,
+            WeaponTint = 0,
+            WeaponComponents = null,
+            AimPosition = _body.AimPosition,
+            MeleeTargetPedHandle = _body.MeleeTargetPedHandle,
+            InteriorId = 0,
+            WantedLevel = _body.WantedLevel,
+            AnimationHash = 0,
+            Ragdoll = default,
+            Appearance = null,
+        };
+
+        public LocalShotSample SampleLocalShots()
+        {
+            if (_body.PendingRounds == 0)
+            {
+                return default;
+            }
+
+            var sample = new LocalShotSample
+            {
+                Rounds = _body.PendingRounds,
+                WeaponHash = _body.WeaponHash,
+                Origin = _body.ShotOrigin,
+                Impact = _body.ShotImpact,
+            };
+
+            _body.PendingRounds = 0;
+            return sample;
+        }
+
+        public void SampleLocalHits(List<LocalHitSample> into)
+        {
+            into.AddRange(_body.PendingHits);
+            _body.PendingHits.Clear();
+        }
+
+        /// <summary>
+        /// The server moving us. A real bridge places the ped; here it is applied to
+        /// the body, so the bot obeys the server exactly as a player's game would and
+        /// a correction loop shows up as a growing distance rather than as nothing.
+        /// </summary>
+        public void ApplyLocalCorrection(NetVector3 position, float heading, int health, int armor)
+        {
+            Seen.CorrectionsApplied++;
+            Seen.LastCorrectionDistance = Distance(_body.Position, position);
+            _body.Position = position;
+            _body.Heading = heading;
+            _body.Health = health;
+            _body.Armor = armor;
+        }
+
+        public void SetLocalWantedLevel(int level) => _body.WantedLevel = (byte)Math.Max(0, level);
+
+        public bool TrySetLocalPlayerModel(uint modelHash)
+        {
+            Seen.ModelChanges++;
+            _body.ModelHash = modelHash;
+            return true;
+        }
+
+        public void SetLocalMaxHealth(int maxHealth) => _body.MaxHealth = maxHealth;
+
+        public int CreateRemotePed(uint modelHash, NetVector3 position, float heading)
+        {
+            int handle = _nextHandle++;
+            Seen.RemotePeds[handle] = position;
+            Seen.RemotePedsEverSeen++;
+            return handle;
+        }
+
+        public void ApplyRemotePedCommand(int handle, in RemotePedCommand command)
+        {
+            if (Seen.RemotePeds.ContainsKey(handle))
+            {
+                Seen.RemotePeds[handle] = command.TargetPosition;
+            }
+
+            // What the client asked us to do to somebody else's body, rather than what
+            // it asked us to draw. It is how a headless bot can report that a punch,
+            // a jump or a cover entry arrived at all — the three of which reach a ped
+            // as a task and leave no trace in a position.
+            if (command.MeleeTargetHandle != 0)
+            {
+                Seen.MeleeTargetsSeen++;
+                Seen.LastMeleeTarget = command.MeleeTargetHandle;
+            }
+
+            if ((command.Flags & PlayerFlags.Jumping) != 0)
+            {
+                Seen.JumpsSeen++;
+            }
+
+            if ((command.Flags & PlayerFlags.InCover) != 0)
+            {
+                Seen.CoverEntriesSeen++;
+            }
+        }
+
+        public void ApplyRemotePedAppearance(int handle, PedAppearance appearance)
+        {
+        }
+
+        /// <summary>Room keys the client has assigned, by handle. A simulated game has no walls to cull.</summary>
+        public System.Collections.Generic.Dictionary<int, uint> Rooms { get; }
+            = new System.Collections.Generic.Dictionary<int, uint>();
+
+        /// <summary>Map files this simulated game has been told to switch on.</summary>
+        public System.Collections.Generic.List<string> ActiveMapFiles { get; }
+            = new System.Collections.Generic.List<string>();
+
+        public void SetActiveMapFiles(System.Collections.Generic.IReadOnlyList<string> ipls)
+        {
+            ActiveMapFiles.Clear();
+            ActiveMapFiles.AddRange(ipls);
+        }
+
+        public void SetRemotePedRoom(int handle, uint roomKey, NetVector3 position) => Rooms[handle] = roomKey;
+
+        public void SetRemotePedRelationshipGroup(int handle, uint relationshipGroupHash)
+        {
+        }
+
+        /// <summary>What the client last told each NPC to do, so a bot can report it arrived.</summary>
+        public System.Collections.Generic.Dictionary<int, Gtamp.Client.Entities.NpcIntent> NpcIntents { get; }
+            = new System.Collections.Generic.Dictionary<int, Gtamp.Client.Entities.NpcIntent>();
+
+        public void ApplyNpcIntent(
+            int handle, Gtamp.Client.Entities.NpcIntent intent, int targetHandle, uint scenarioHash) =>
+            NpcIntents[handle] = intent;
+
+        public void PlayRemoteShot(int pedHandle, uint weaponHash, NetVector3 origin, NetVector3 impact) =>
+            Seen.ShotsDrawn++;
+
+        public bool TryGetRemotePedPosition(int handle, out NetVector3 position) =>
+            Seen.RemotePeds.TryGetValue(handle, out position);
+
+        public void ApplyPlayerMarker(int pedHandle, in PlayerMarker marker)
+        {
+        }
+
+        public void DestroyRemotePed(int handle) => Seen.RemotePeds.Remove(handle);
+
+        public bool IsRemotePedValid(int handle) => Seen.RemotePeds.ContainsKey(handle);
+
+        public int CreateRemoteVehicle(uint modelHash, NetVector3 position, float heading)
+        {
+            int handle = _nextHandle++;
+            Seen.RemoteVehicles[handle] = position;
+            Seen.RemoteVehiclesEverSeen++;
+            return handle;
+        }
+
+        public void ApplyRemoteVehicle(int handle, in RemoteVehicleFrame frame, int trailerHandle, int attachedToHandle)
+        {
+            if (Seen.RemoteVehicles.ContainsKey(handle))
+            {
+                Seen.RemoteVehicles[handle] = frame.Position;
+            }
+        }
+
+        public void ApplyRemoteVehicleAppearance(int handle, VehicleEntity state)
+        {
+        }
+
+        public bool TryReadVehicle(int handle, VehicleEntity into)
+        {
+            if (handle == 0 || handle != _body.VehicleHandle || into == null)
+            {
+                return false;
+            }
+
+            into.ModelHash = _body.VehicleModel;
+            into.Position = _body.Position;
+            into.Heading = _body.Heading;
+            into.Velocity = _body.Velocity;
+            into.EngineHealth = 1000f;
+            into.BodyHealth = 1000f;
+            into.PetrolTankHealth = 1000f;
+            into.FuelLevel = 65f;
+            return true;
+        }
+
+        public void DestroyRemoteVehicle(int handle) => Seen.RemoteVehicles.Remove(handle);
+
+        public bool IsRemoteVehicleValid(int handle) => Seen.RemoteVehicles.ContainsKey(handle);
+
+        public int GetLocalPlayerVehicleHandle() => _body.VehicleHandle;
+
+        /// <summary>A simulated body still needs a handle of its own: it is what anybody punching it aims at.</summary>
+        public int GetLocalPlayerPedHandle() => BotBody.LocalPedHandle;
+
+        /// <summary>A simulated body never tows anything, so nothing is ever hanging off it.</summary>
+        public int GetVehicleAttachedTo(int handle) => 0;
+
+        /// <summary>Counted rather than done: a simulated game has no ambient traffic to suppress.</summary>
+        public int TrafficSuppressedFrames { get; private set; }
+
+        public void SuppressAmbientTrafficThisFrame() => TrafficSuppressedFrames++;
+
+        /// <summary>A simulated game spawns no cars of its own, so there is never anything to hand over.</summary>
+        public void SampleAmbientVehicles(System.Collections.Generic.List<int> into, float radius) => into.Clear();
+
+        /// <summary>Counted rather than done: a simulated game has no pavement to empty.</summary>
+        public int PedsSuppressedFrames { get; private set; }
+
+        /// <summary>Impulses the client has asked this simulated game to apply, by handle.</summary>
+        public System.Collections.Generic.Dictionary<int, NetVector3> Impulses { get; }
+            = new System.Collections.Generic.Dictionary<int, NetVector3>();
+
+        public void ApplyEntityImpulse(int handle, NetVector3 impulse, bool isExplosion) =>
+            Impulses[handle] = impulse;
+
+        public void SuppressAmbientPedsThisFrame() => PedsSuppressedFrames++;
+
+        public void SampleAmbientPeds(System.Collections.Generic.List<int> into, float radius) => into.Clear();
+
+        /// <summary>A simulated body is the only ped here, and it is not an ambient one.</summary>
+        public bool TryReadPed(int handle, PedEntity into) => false;
+
+        public uint GetVehicleModel(int handle) =>
+            handle != 0 && handle == _body.VehicleHandle ? _body.VehicleModel : 0u;
+
+        public void PlayVehicleExplosion(int vehicleHandle) => Seen.ExplosionsDrawn++;
+
+        public int CreateRemoteObject(uint modelHash, NetVector3 position, float heading) => _nextHandle++;
+
+        public void ApplyRemoteObject(int handle, ObjectEntity state, int attachParentHandle)
+        {
+        }
+
+        public void DestroyRemoteObject(int handle)
+        {
+        }
+
+        public bool IsRemoteObjectValid(int handle) => true;
+
+        public void SetWeather(uint weatherHash, uint nextWeatherHash, float transition)
+        {
+        }
+
+        public void SetClock(int hours, int minutes, int seconds)
+        {
+        }
+
+        public void SetWind(float speed, float directionDegrees)
+        {
+        }
+
+        public void SetBlackout(bool blackout)
+        {
+        }
+
+        public void ShowNotification(string text) => Seen.Notifications.Add(text);
+
+        public void ShowSubtitle(string text, int durationMilliseconds) => Seen.Notifications.Add(text);
+
+        internal static double Distance(NetVector3 a, NetVector3 b)
+        {
+            double dx = a.X - b.X;
+            double dy = a.Y - b.Y;
+            double dz = a.Z - b.Z;
+            return Math.Sqrt((dx * dx) + (dy * dy) + (dz * dz));
+        }
+    }
+}

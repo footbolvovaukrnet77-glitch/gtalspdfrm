@@ -1,0 +1,29 @@
+# Build output
+bin/
+obj/
+dist/
+artifacts/
+
+# Server runtime state
+server.json
+data/
+logs/
+crash-report/
+
+# Client runtime state
+Gtamp/client.ini
+
+# IDE
+.vs/
+.idea/
+*.user
+*.suo
+
+# OS
+.DS_Store
+Thumbs.db
+diagnostics/
+
+# Bot identities. Each holds an IdentitySecret, which is the private half of a
+# key and must never be published. They are generated on first run.
+bot-identities/

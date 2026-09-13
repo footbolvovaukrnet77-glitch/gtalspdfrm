@@ -1,0 +1,14 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net8.0</TargetFramework>
+    <RootNamespace>Gtamp.Bot</RootNamespace>
+    <AssemblyName>Gtamp.Bot</AssemblyName>
+    <InvariantGlobalization>true</InvariantGlobalization>
+    <Nullable>enable</Nullable>
+  </PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="..\Gtamp.Shared\Gtamp.Shared.csproj" />
+    <ProjectReference Include="..\Gtamp.Client.Core\Gtamp.Client.Core.csproj" />
+  </ItemGroup>
+</Project>

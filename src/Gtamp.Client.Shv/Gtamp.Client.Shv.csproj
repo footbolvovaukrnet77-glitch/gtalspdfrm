@@ -1,0 +1,22 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>net48</TargetFramework>
+    <RootNamespace>Gtamp.Client.Shv</RootNamespace>
+    <!-- ScriptHookVDotNet loads this file by name from GTA V\scripts\. -->
+    <AssemblyName>Gtamp.Client.Shv</AssemblyName>
+    <Platforms>AnyCPU</Platforms>
+    <PlatformTarget>x64</PlatformTarget>
+  </PropertyGroup>
+  <ItemGroup>
+    <PackageReference Include="ScriptHookVDotNet3" Version="3.6.0" />
+  </ItemGroup>
+  <ItemGroup>
+    <!-- ScriptHookVDotNet delivers key input as System.Windows.Forms.KeyEventArgs. -->
+    <Reference Include="System.Windows.Forms" />
+    <Reference Include="System.Drawing" />
+  </ItemGroup>
+  <ItemGroup>
+    <ProjectReference Include="..\Gtamp.Shared\Gtamp.Shared.csproj" />
+    <ProjectReference Include="..\Gtamp.Client.Core\Gtamp.Client.Core.csproj" />
+  </ItemGroup>
+</Project>

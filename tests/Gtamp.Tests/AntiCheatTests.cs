@@ -1,0 +1,465 @@
+using Gtamp.Shared.Core;
+using Gtamp.Shared.Entities;
+using Gtamp.Shared.Security;
+using Xunit;
+
+namespace Gtamp.Tests
+{
+    public class AntiCheatTests
+    {
+        private static PlayerEntity Player() => new PlayerEntity(new EntityId(1))
+        {
+            Position = new NetVector3(0f, 0f, 30f),
+            Health = 150,
+            MaxHealth = 200,
+            Armor = 0,
+        };
+
+        private static PlayerStateProposal Proposal(NetVector3 position, int health = 150, int armor = 0) =>
+            new PlayerStateProposal { Position = position, Health = health, Armor = armor };
+
+        /// <summary>The same, reported from a vehicle, where the speed limit is the higher one.</summary>
+        private static PlayerStateProposal InVehicle(NetVector3 position) =>
+            new PlayerStateProposal { Position = position, Health = 150, Armor = 0, InVehicle = true };
+
+
+        /// <summary>
+        /// GTA V does not hand health back a point at a time. It regenerates in steps,
+        /// and a real session shows twelve points arriving in one frame, over and over.
+        ///
+        /// Checked per update against rate * deltaTime that is always a violation: at
+        /// 30 Hz the budget is under two points and the step is twelve. One real
+        /// session logged this several times a second for minutes, against a player who
+        /// was doing nothing but standing still and healing.
+        ///
+        /// It is the same mistake the movement check already made and already fixed, in
+        /// the same file: a rate sampled per frame cannot measure a quantity that
+        /// arrives in chunks. Health needs the same replenishing budget.
+        /// </summary>
+        [Fact]
+        public void RegeneratingInStepsTheWayTheGameActuallyDoesIsNotAHealthHack()
+        {
+            var engine = new AntiCheatEngine();
+            PlayerEntity player = Player();
+            player.Health = 100;
+            var state = new PlayerValidationState();
+
+            double now = 1.0;
+            engine.ValidatePlayerState(player, Proposal(player.Position, player.Health), state, now);
+
+            // Twelve points every half second: twenty-four a second on average, inside
+            // the sustained limit, but delivered in one frame out of fifteen. The
+            // average is legitimate and the step is what the per-frame check saw.
+            for (int step = 0; step < 8; step++)
+            {
+                for (int frame = 0; frame < 15; frame++)
+                {
+                    now += 1d / 30d;
+                    int health = frame == 14 ? player.Health + 12 : player.Health;
+                    ValidationOutcome outcome =
+                        engine.ValidatePlayerState(player, Proposal(player.Position, health), state, now);
+
+                    Assert.True(
+                        outcome.Accepted,
+                        outcome.Violations.Count > 0 ? outcome.Violations[0].ToString() : "rejected");
+                    player.Health = health;
+                }
+            }
+        }
+
+        /// <summary>
+        /// The budget is not a loophole: it is capped, so no amount of waiting buys a
+        /// jump from nearly dead to full.
+        /// </summary>
+        [Fact]
+        public void BankingTimeDoesNotBuyAFullHeal()
+        {
+            var engine = new AntiCheatEngine();
+            PlayerEntity player = Player();
+            player.Health = 5;
+            var state = new PlayerValidationState();
+
+            engine.ValidatePlayerState(player, Proposal(player.Position, 5), state, 1.0);
+
+            // A minute of standing still, then a claim to be at full health.
+            ValidationOutcome outcome =
+                engine.ValidatePlayerState(player, Proposal(player.Position, 200), state, 61.0);
+
+            Assert.False(outcome.Accepted);
+            Assert.Equal(ViolationKind.HealthHack, outcome.Violations[0].Kind);
+        }
+
+        /// <summary>
+        /// A dead player's game heals them before the server's respawn timer has run
+        /// out -- GTA V resurrects on its own and the client reports what it sees.
+        ///
+        /// That report must still be refused, because the server owns the respawn. What
+        /// it must not be is a <em>violation</em>: violations escalate, twenty of them
+        /// warn or kick, and a player who died is not a cheater. A real session logged
+        /// "gained 200 health" against a player being shot at by a bot.
+        /// </summary>
+        [Fact]
+        public void ComingBackFromDeadIsRefusedWithoutBeingCalledCheating()
+        {
+            var engine = new AntiCheatEngine();
+            PlayerEntity player = Player();
+            player.Health = 0;
+            player.SetFlag(PlayerFlags.Dead, true);
+            var state = new PlayerValidationState();
+
+            engine.ValidatePlayerState(player, Proposal(player.Position, 0), state, 1.0);
+
+            ValidationOutcome outcome =
+                engine.ValidatePlayerState(player, Proposal(player.Position, 200), state, 1.1);
+
+            Assert.False(outcome.Accepted);
+            Assert.DoesNotContain(outcome.Violations, v => v.Kind == ViolationKind.HealthHack);
+        }
+
+
+        /// <summary>
+        /// A disagreement the correction cannot fix must not last forever.
+        /// <para>
+        /// A real session spent minutes like this: the client reported a position
+        /// 234.8 m from where the server had the player, the server refused it as a
+        /// teleport, kept its own, and sent it back as a correction the client applied
+        /// to a game that did not move. Next update: the same 234.8 m, refused again.
+        /// 1,494 corrections, the same number to the centimetre, and the player stood
+        /// somewhere nobody else could see them for the whole session.
+        /// </para>
+        /// <para>
+        /// The budget cannot close it -- on foot it caps at about 34 m -- so no amount
+        /// of waiting resolves a gap of 235 m, and nothing else was ever going to. A
+        /// teleport that repeats, unchanged, for two seconds is not a teleport being
+        /// attempted; it is where the player actually is, and the server is the one
+        /// that is wrong. Believing them once is strictly better than a permanent,
+        /// total desync, and it is logged.
+        /// </para>
+        /// </summary>
+        [Fact]
+        public void APositionTheServerCannotTalkTheClientOutOfIsEventuallyBelieved()
+        {
+            var engine = new AntiCheatEngine();
+            PlayerEntity player = Player();
+            var state = new PlayerValidationState();
+
+            double now = 1.0;
+            engine.ValidatePlayerState(player, Proposal(player.Position), state, now);
+
+            var stuck = new NetVector3(234.8f, 0f, 30f);
+            bool believed = false;
+
+            for (int i = 0; i < 200 && !believed; i++)
+            {
+                now += 1d / 20d;
+                ValidationOutcome outcome = engine.ValidatePlayerState(player, Proposal(stuck), state, now);
+                believed = outcome.Accepted;
+            }
+
+            Assert.True(believed, "the server never stopped arguing with a client it could not move");
+        }
+
+        /// <summary>
+        /// And it is not a way to teleport at will: a client that keeps moving is not
+        /// repeating itself, so it never earns the resync.
+        /// </summary>
+        [Fact]
+        public void AClientTeleportingSomewhereNewEachTimeIsStillRefused()
+        {
+            var engine = new AntiCheatEngine();
+            PlayerEntity player = Player();
+            var state = new PlayerValidationState();
+
+            double now = 1.0;
+            engine.ValidatePlayerState(player, Proposal(player.Position), state, now);
+
+            for (int i = 0; i < 200; i++)
+            {
+                now += 1d / 20d;
+                var somewhereElse = new NetVector3(300f + (i * 50f), 0f, 30f);
+                ValidationOutcome outcome = engine.ValidatePlayerState(player, Proposal(somewhereElse), state, now);
+                Assert.False(outcome.Accepted, $"accepted a fresh teleport on update {i}");
+            }
+        }
+
+        [Fact]
+        public void NormalMovementIsAccepted()
+        {
+            var engine = new AntiCheatEngine();
+            PlayerEntity player = Player();
+            var state = new PlayerValidationState();
+
+            double now = 0;
+            for (int i = 0; i < 100; i++)
+            {
+                now += 1d / 30d;
+                var next = new NetVector3(player.Position.X + 0.2f, 0f, 30f);
+                ValidationOutcome outcome = engine.ValidatePlayerState(player, Proposal(next), state, now);
+
+                Assert.True(outcome.Accepted, outcome.Violations.Count > 0 ? outcome.Violations[0].ToString() : "rejected");
+                player.Position = next;
+            }
+        }
+
+        [Fact]
+        public void BunchedUpdatesAfterJitterAreNotMistakenForSpeedHacking()
+        {
+            // Two updates arriving in the same millisecond is normal on a jittery
+            // link. The movement budget must absorb it.
+            var engine = new AntiCheatEngine();
+            PlayerEntity player = Player();
+            var state = new PlayerValidationState();
+
+            engine.ValidatePlayerState(player, Proposal(player.Position), state, 1.0);
+
+            // A quiet second banks budget, then four updates land at once.
+            double now = 2.0;
+            for (int i = 0; i < 4; i++)
+            {
+                var next = new NetVector3(player.Position.X + 0.4f, 0f, 30f);
+                ValidationOutcome outcome = engine.ValidatePlayerState(player, Proposal(next), state, now);
+                Assert.True(outcome.Accepted);
+                player.Position = next;
+            }
+        }
+
+        [Fact]
+        public void SustainedImpossibleSpeedIsRejected()
+        {
+            var engine = new AntiCheatEngine();
+            PlayerEntity player = Player();
+            var state = new PlayerValidationState();
+
+            bool rejected = false;
+            double now = 0;
+            for (int i = 0; i < 60; i++)
+            {
+                now += 1d / 30d;
+
+                // 60 m/s on foot: four times the sustained limit.
+                var next = new NetVector3(player.Position.X + 2f, 0f, 30f);
+                ValidationOutcome outcome = engine.ValidatePlayerState(player, Proposal(next), state, now);
+                if (!outcome.Accepted)
+                {
+                    rejected = true;
+                    Assert.Equal(ViolationKind.SpeedHack, outcome.Violations[0].Kind);
+                    break;
+                }
+
+                player.Position = next;
+            }
+
+            Assert.True(rejected, "sustained 60 m/s on foot should have been rejected");
+        }
+
+        [Fact]
+        public void TeleportIsRejected()
+        {
+            var engine = new AntiCheatEngine();
+            var state = new PlayerValidationState();
+            ValidationOutcome outcome = engine.ValidatePlayerState(
+                Player(), Proposal(new NetVector3(5000f, 5000f, 30f)), state, 1.0);
+
+            Assert.False(outcome.Accepted);
+            Assert.Equal(ViolationKind.Teleport, outcome.Violations[0].Kind);
+        }
+
+        /// <summary>
+        /// A frame the game spends streaming is not a teleport.
+        /// <para>
+        /// The gate was a flat 75 m regardless of how long it had been. At the vehicle
+        /// limit a player covers about 71 m per second, so a hitch of a second and a bit
+        /// — which GTA V does routinely — was called a teleport and the update rejected.
+        /// The server's position then stopped advancing, so the next report was further
+        /// still and was rejected too: once a player got ahead they could never report
+        /// again. A real session shows it as a steady 141 m disagreement while driving.
+        /// </para>
+        /// </summary>
+        [Fact]
+        public void AHitchWhileDrivingIsNotATeleport()
+        {
+            var engine = new AntiCheatEngine();
+            PlayerEntity player = Player();
+            var state = new PlayerValidationState();
+
+            // Settle in, in a vehicle, so the movement budget is the vehicle one.
+            double now = 0d;
+            for (int i = 0; i < 10; i++)
+            {
+                now += 1d / 30d;
+                var step = new NetVector3(player.Position.X + 2f, 0f, 30f);
+                Assert.True(engine.ValidatePlayerState(
+                    player, InVehicle(step), state, now).Accepted);
+                player.Position = step;
+            }
+
+            // A second and a half of silence, then a report from where honest driving
+            // would have put them.
+            now += 1.5d;
+            var afterHitch = new NetVector3(player.Position.X + 100f, 0f, 30f);
+            ValidationOutcome outcome = engine.ValidatePlayerState(
+                player, InVehicle(afterHitch), state, now);
+
+            Assert.True(
+                outcome.Accepted,
+                outcome.Violations.Count > 0 ? outcome.Violations[0].ToString() : "rejected");
+        }
+
+        /// <summary>
+        /// And a real teleport is still a teleport, however long the client waits: the
+        /// movement budget is capped, so patience does not buy distance.
+        /// </summary>
+        [Fact]
+        public void WaitingDoesNotBuyATeleport()
+        {
+            var engine = new AntiCheatEngine();
+            var state = new PlayerValidationState();
+            PlayerEntity player = Player();
+
+            double now = 1d;
+            Assert.True(engine.ValidatePlayerState(player, InVehicle(new NetVector3(1f, 0f, 30f)), state, now).Accepted);
+
+            // A full minute of waiting, then a jump across the map.
+            now += 60d;
+            ValidationOutcome outcome = engine.ValidatePlayerState(
+                player, InVehicle(new NetVector3(5000f, 5000f, 30f)), state, now);
+
+            Assert.False(outcome.Accepted);
+            Assert.Equal(ViolationKind.Teleport, outcome.Violations[0].Kind);
+        }
+
+        [Fact]
+        public void HealthAboveTheMaximumIsRejected()
+        {
+            var engine = new AntiCheatEngine();
+            var state = new PlayerValidationState();
+            ValidationOutcome outcome = engine.ValidatePlayerState(
+                Player(), Proposal(new NetVector3(0f, 0f, 30f), health: 5000), state, 1.0);
+
+            Assert.False(outcome.Accepted);
+            Assert.Equal(ViolationKind.HealthHack, outcome.Violations[0].Kind);
+        }
+
+        [Fact]
+        public void ImplausibleHealthRegenerationIsRejectedAtStandardAndAbove()
+        {
+            var engine = new AntiCheatEngine(new AntiCheatSettings { Level = AntiCheatLevel.Standard });
+            PlayerEntity player = Player();
+            var state = new PlayerValidationState();
+
+            engine.ValidatePlayerState(player, Proposal(player.Position), state, 1.0);
+            ValidationOutcome outcome = engine.ValidatePlayerState(
+                player, Proposal(player.Position, health: 200), state, 1.02);
+
+            Assert.False(outcome.Accepted);
+            Assert.Equal(ViolationKind.HealthHack, outcome.Violations[0].Kind);
+        }
+
+        [Fact]
+        public void ArmorAboveTheCapIsRejected()
+        {
+            var engine = new AntiCheatEngine();
+            var state = new PlayerValidationState();
+            ValidationOutcome outcome = engine.ValidatePlayerState(
+                Player(), Proposal(new NetVector3(0f, 0f, 30f), armor: 500), state, 1.0);
+
+            Assert.False(outcome.Accepted);
+            Assert.Equal(ViolationKind.ArmorHack, outcome.Violations[0].Kind);
+        }
+
+        [Fact]
+        public void GodModeIsOnlyFlaggedAtStrict()
+        {
+            var proposal = new PlayerStateProposal
+            {
+                Position = new NetVector3(0f, 0f, 30f),
+                Health = 150,
+                Invincible = true,
+            };
+
+            var standard = new AntiCheatEngine(new AntiCheatSettings { Level = AntiCheatLevel.Standard });
+            Assert.True(standard.ValidatePlayerState(Player(), proposal, new PlayerValidationState(), 1.0).Accepted);
+
+            var strict = new AntiCheatEngine(new AntiCheatSettings { Level = AntiCheatLevel.Strict });
+            ValidationOutcome outcome = strict.ValidatePlayerState(Player(), proposal, new PlayerValidationState(), 1.0);
+            Assert.False(outcome.Accepted);
+            Assert.Equal(ViolationKind.GodMode, outcome.Violations[0].Kind);
+        }
+
+        [Fact]
+        public void ProtocolGuardsStayOnEvenWithAntiCheatOff()
+        {
+            var engine = new AntiCheatEngine(new AntiCheatSettings { Level = AntiCheatLevel.Off });
+            var state = new PlayerValidationState();
+
+            ValidationOutcome nan = engine.ValidatePlayerState(
+                Player(), Proposal(new NetVector3(float.NaN, 0f, 0f)), state, 1.0);
+            Assert.False(nan.Accepted);
+            Assert.Equal(ViolationKind.InvalidPosition, nan.Violations[0].Kind);
+
+            ValidationOutcome outOfBounds = engine.ValidatePlayerState(
+                Player(), Proposal(new NetVector3(1e9f, 0f, 0f)), state, 1.0);
+            Assert.False(outOfBounds.Accepted);
+            Assert.Equal(ViolationKind.InvalidPosition, outOfBounds.Violations[0].Kind);
+        }
+
+        [Fact]
+        public void TeleportingIsAllowedWithAntiCheatOff()
+        {
+            var engine = new AntiCheatEngine(new AntiCheatSettings { Level = AntiCheatLevel.Off });
+            ValidationOutcome outcome = engine.ValidatePlayerState(
+                Player(), Proposal(new NetVector3(3000f, 3000f, 30f)), new PlayerValidationState(), 1.0);
+
+            Assert.True(outcome.Accepted);
+        }
+
+        [Fact]
+        public void PacketFloodingIsThrottledAtEveryLevel()
+        {
+            var engine = new AntiCheatEngine(new AntiCheatSettings { Level = AntiCheatLevel.Off });
+            var state = new PlayerValidationState();
+            PlayerEntity player = Player();
+
+            bool throttled = false;
+            for (int i = 0; i < 500; i++)
+            {
+                ValidationOutcome outcome = engine.ValidatePlayerState(player, Proposal(player.Position), state, 1.0);
+                if (!outcome.Accepted && outcome.Violations[0].Kind == ViolationKind.PacketRate)
+                {
+                    throttled = true;
+                    break;
+                }
+            }
+
+            Assert.True(throttled, "500 updates in the same second should have been throttled");
+        }
+
+        [Fact]
+        public void ActionsEscalateWithTheConfiguredLevel()
+        {
+            Assert.Equal(ViolationAction.Ignore, new AntiCheatSettings { Level = AntiCheatLevel.Off }.ActionFor(ViolationKind.SpeedHack));
+            Assert.Equal(ViolationAction.Log, new AntiCheatSettings { Level = AntiCheatLevel.Basic }.ActionFor(ViolationKind.SpeedHack));
+            Assert.Equal(ViolationAction.Warn, new AntiCheatSettings { Level = AntiCheatLevel.Standard }.ActionFor(ViolationKind.SpeedHack));
+            Assert.Equal(ViolationAction.Kick, new AntiCheatSettings { Level = AntiCheatLevel.Strict }.ActionFor(ViolationKind.SpeedHack));
+
+            var custom = new AntiCheatSettings { Level = AntiCheatLevel.Custom };
+            custom.Actions[ViolationKind.SpeedHack] = ViolationAction.Ban;
+            Assert.Equal(ViolationAction.Ban, custom.ActionFor(ViolationKind.SpeedHack));
+        }
+
+        [Fact]
+        public void EscalationTriggersOnlyAfterTheViolationBudgetIsSpent()
+        {
+            var engine = new AntiCheatEngine(new AntiCheatSettings { Level = AntiCheatLevel.Strict, ViolationsBeforeEscalation = 3 });
+            var state = new PlayerValidationState();
+
+            Assert.False(engine.ShouldEscalate(state));
+            for (int i = 0; i < 3; i++)
+            {
+                state.Count(ViolationKind.SpeedHack);
+            }
+
+            Assert.True(engine.ShouldEscalate(state));
+        }
+    }
+}
