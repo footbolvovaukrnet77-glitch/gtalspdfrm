@@ -53,6 +53,18 @@ namespace Gtamp.Client.Shv.Bridge
         /// </summary>
         private const int LocalPedHealthHeadroom = 2500;
 
+        /// <summary>Length of the fade used to give a black screen back to the player.</summary>
+        private const int ScreenFadeMilliseconds = 500;
+
+        /// <summary>How long a living player may look at black before it counts as stuck.</summary>
+        private const double ScreenStuckSeconds = 2d;
+
+        /// <summary>Remote peds rebuilt per second before the client stops trying and reports instead.</summary>
+        private const int MaxPedRebuildsPerSecond = 4;
+
+        /// <summary>How often the rebuild report is allowed to say anything, in seconds.</summary>
+        private const double PedRebuildReportSeconds = 10d;
+
         /// <summary>How long one shooting task runs. Short, because it is re-issued while the flag is set.</summary>
         private const int ShootBurstMilliseconds = 250;
 
@@ -69,6 +81,12 @@ namespace Gtamp.Client.Shv.Bridge
         private const int AppearanceSampleIntervalMilliseconds = 1000;
 
         private readonly LogBus _log;
+
+        private double _screenDarkSince;
+        private double _pedRebuildSecondStart;
+        private int _pedRebuildsThisSecond;
+        private int _pedRebuildsSkipped;
+        private double _pedRebuildReportedAt;
         private readonly ShvVehicleBridge _vehicles;
         private readonly Dictionary<int, Ped> _remotePeds = new Dictionary<int, Ped>();
 
@@ -480,6 +498,90 @@ namespace Gtamp.Client.Shv.Bridge
         }
 
         /// <summary>
+        /// Fades the screen back in if anything has left it dark.
+        /// <para>
+        /// Guarded rather than unconditional: calling <c>DO_SCREEN_FADE_IN</c> on a
+        /// screen that is already visible restarts a fade the player can see, and a
+        /// correction arrives twenty times a second.
+        /// </para>
+        /// </summary>
+        private void RestoreTheScreen()
+        {
+            try
+            {
+                bool dark = Function.Call<bool>(Hash.IS_SCREEN_FADED_OUT)
+                            || Function.Call<bool>(Hash.IS_SCREEN_FADING_OUT);
+
+                if (dark)
+                {
+                    Function.Call(Hash.DO_SCREEN_FADE_IN, ScreenFadeMilliseconds);
+                }
+            }
+            catch (Exception)
+            {
+                // A script host too old to know these. The screen is then the game's
+                // problem, which is where it was before this.
+            }
+        }
+
+        /// <summary>
+        /// A living player must not be looking at a black screen. Called every frame.
+        /// <para>
+        /// The fade-in on resurrect closes the case this client caused. It does not
+        /// close every case: a fade can be started by the game, by a mission script,
+        /// or by another mod, and with GTA V's death-and-restart sequence paused there
+        /// is nothing left that reliably undoes one. A player stuck looking at black
+        /// cannot report what they are seeing, cannot open the console, and cannot tell
+        /// a hung game from a dark one -- so this is worth a native call a frame.
+        /// </para>
+        /// <para>
+        /// The delay is what keeps it out of the way of fades that are supposed to
+        /// happen: a cutscene, a mission fade, a legitimate transition. Those are over
+        /// in well under two seconds. One that is not is not a transition.
+        /// </para>
+        /// </summary>
+        public void KeepTheScreenAlive(double now)
+        {
+            try
+            {
+                Ped ped = Game.Player.Character;
+                if (ped == null || !ped.Exists() || ped.IsDead)
+                {
+                    _screenDarkSince = 0d;
+                    return;
+                }
+
+                if (!Function.Call<bool>(Hash.IS_SCREEN_FADED_OUT))
+                {
+                    _screenDarkSince = 0d;
+                    return;
+                }
+
+                if (_screenDarkSince <= 0d)
+                {
+                    _screenDarkSince = now;
+                    return;
+                }
+
+                if (now - _screenDarkSince < ScreenStuckSeconds)
+                {
+                    return;
+                }
+
+                _screenDarkSince = 0d;
+                Function.Call(Hash.DO_SCREEN_FADE_IN, ScreenFadeMilliseconds);
+                _log.Warning(
+                    LogCategory.Client,
+                    $"The screen had been black for {ScreenStuckSeconds:0.#} s with the player alive; "
+                    + "faded it back in. If this repeats, something is starting a fade that nothing ends.");
+            }
+            catch (Exception)
+            {
+                _screenDarkSince = 0d;
+            }
+        }
+
+        /// <summary>
         /// Applies a wanted level the server decided.
         /// <para>
         /// <c>SET_PLAYER_WANTED_LEVEL</c> only stages the value; without
@@ -510,6 +612,21 @@ namespace Gtamp.Client.Shv.Bridge
                 Function.Call(
                     Hash.NETWORK_RESURRECT_LOCAL_PLAYER,
                     position.X, position.Y, position.Z, heading, false, false);
+
+                // And give the player their screen back.
+                //
+                // The client pauses GTA V's own death-and-restart sequence, because
+                // that sequence would otherwise respawn the player wherever single
+                // player felt like putting them, on its own schedule, ignoring the
+                // server. What it also does, when it is allowed to run, is fade the
+                // screen back in afterwards. Pausing it means nothing ever does.
+                //
+                // So a player who died with the screen faded out came back alive, in
+                // the right place, with full health, looking at black -- which is the
+                // "the game could not revive me, just a black screen" report, and it
+                // is not a revival failure at all. Resurrecting is half the job; the
+                // other half is undoing what the death sequence had already started.
+                RestoreTheScreen();
             }
 
             // Health and armour are the ped's wherever they are sitting.
@@ -1170,9 +1287,26 @@ namespace Gtamp.Client.Shv.Bridge
                 // cannot be revived in place — so it is discarded and the player
                 // manager builds a new one next frame, which is the same recovery a
                 // model change uses.
-                _log.Warning(
-                    LogCategory.Client,
-                    "A remote ped died locally while the server had it alive; rebuilding it.");
+                //
+                // Rate limited, because this is a recovery and a recovery that fires
+                // thirty times a second is not recovering from anything. A real
+                // session logged it 2,230 times in one sitting, two per snapshot,
+                // continuously: every one of those is a DELETE_PED, a model request
+                // and a CREATE_PED, which is the "everything starts lagging" report,
+                // and a ped that vanishes and reappears thirty times a second is the
+                // "the bots still jump" one. Whatever kills the ped kills the
+                // replacement just as fast, so rebuilding harder does not help — it
+                // only makes the symptom cost more than the cause.
+                //
+                // Above the budget the ped is left where it is. A motionless body is
+                // wrong, and it is visibly, reportably wrong, which a ped flickering
+                // faster than the eye can follow is not.
+                RecordPedRebuild(ped);
+                if (_pedRebuildsThisSecond > MaxPedRebuildsPerSecond)
+                {
+                    return;
+                }
+
                 DestroyRemotePed(ped.Handle);
                 return;
             }
@@ -1222,6 +1356,68 @@ namespace Gtamp.Client.Shv.Bridge
             // a report.
             state.AppliedHealth = health;
             state.AppliedArmor = 0;
+        }
+
+        /// <summary>
+        /// Counts a rebuild, and says something useful about it at most once every ten
+        /// seconds.
+        /// <para>
+        /// The old warning carried no numbers, so 2,230 identical lines established
+        /// that there was a loop and nothing whatever about its cause. These are the
+        /// two numbers that decide it: if <c>MaxHealth</c> is not the headroom figure
+        /// then <c>SET_PED_MAX_HEALTH</c> did not take and the ped is dying to a normal
+        /// amount of damage on a normal amount of health, which is a different bug in a
+        /// different place than a ped being killed by something the proofs do not
+        /// cover.
+        /// </para>
+        /// </summary>
+        private void RecordPedRebuild(Ped ped)
+        {
+            double now = Environment.TickCount / 1000d;
+
+            if (_pedRebuildSecondStart <= 0d || now - _pedRebuildSecondStart >= 1d)
+            {
+                _pedRebuildSecondStart = now;
+                _pedRebuildsThisSecond = 0;
+            }
+
+            _pedRebuildsThisSecond++;
+            if (_pedRebuildsThisSecond > MaxPedRebuildsPerSecond)
+            {
+                _pedRebuildsSkipped++;
+            }
+
+            if (_pedRebuildReportedAt > 0d && now - _pedRebuildReportedAt < PedRebuildReportSeconds)
+            {
+                return;
+            }
+
+            _pedRebuildReportedAt = now;
+
+            int health;
+            int maxHealth;
+            try
+            {
+                health = ped.Health;
+                maxHealth = ped.MaxHealth;
+            }
+            catch (Exception)
+            {
+                health = -1;
+                maxHealth = -1;
+            }
+
+            string skipped = _pedRebuildsSkipped > 0
+                ? $" {_pedRebuildsSkipped} rebuild(s) skipped since the last report to keep the frame rate."
+                : string.Empty;
+
+            _log.Warning(
+                LogCategory.Client,
+                $"A remote ped died locally while the server had it alive (health {health}, max {maxHealth}, "
+                + $"headroom {LocalPedHealthHeadroom}); rebuilding it.{skipped} "
+                + "A max below the headroom means SET_PED_MAX_HEALTH did not take on this build.");
+
+            _pedRebuildsSkipped = 0;
         }
 
         private void DriveDead(Ped ped, in RemotePedCommand command, PedDriveState state)

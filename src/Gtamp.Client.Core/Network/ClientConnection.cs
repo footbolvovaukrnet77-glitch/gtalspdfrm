@@ -102,6 +102,7 @@ namespace Gtamp.Client.Network
             string password,
             ModManifest manifest,
             string clientVersion,
+            bool simulates,
             double now)
         {
             _server = server;
@@ -124,6 +125,7 @@ namespace Gtamp.Client.Network
                 IdentityToken = identityToken,
                 Password = password,
                 ClientNonce = (uint)_random.Next(1, int.MaxValue),
+                Simulates = simulates,
                 Manifest = manifest,
             };
 

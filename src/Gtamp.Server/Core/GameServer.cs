@@ -632,6 +632,7 @@ namespace Gtamp.Server.Core
             {
                 ConnectedAt = _now,
                 Manifest = request.Manifest,
+                Simulates = request.Simulates,
                 Bandwidth = new BandwidthShaper(Config.SnapshotByteBudget, Config.MinimumSnapshotByteBudget),
             };
 
@@ -1275,8 +1276,12 @@ namespace Gtamp.Server.Core
             _populationCandidates.Clear();
             foreach (PlayerSession session in Players.Sessions)
             {
-                if (session.PendingRemoval || !session.EntityId.IsValid)
+                // A client with no game cannot be the source of a population it has no
+                // way to observe or simulate, and nominating it means the area it is
+                // standing in has no source at all.
+                if (session.PendingRemoval || !session.EntityId.IsValid || !session.Simulates)
                 {
+                    session.IsPopulationSource = false;
                     continue;
                 }
 

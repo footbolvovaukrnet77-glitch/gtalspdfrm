@@ -76,6 +76,11 @@ namespace Gtamp.Bot
                 ClientVersion = typeof(BotRunner).Assembly.GetName().Version?.ToString(3) ?? "0.1.0",
                 LogDirectory = options.IdentityDirectory,
                 ConfigPath = configPath,
+
+                // There is no GTA V here. The bot has a position and a body it moves
+                // by arithmetic, and nothing that can simulate a car. Saying so is
+                // what stops the server handing it the neighbourhood's traffic.
+                SimulatesTheWorld = false,
             };
 
             _context = new BotContext(name, _body, _bridge, _client)

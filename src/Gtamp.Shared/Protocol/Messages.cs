@@ -30,6 +30,25 @@ namespace Gtamp.Shared.Protocol
 
         public ModManifest Manifest { get; set; } = new ModManifest();
 
+        /// <summary>
+        /// False for a client with no game behind it, such as the headless bot.
+        /// <para>
+        /// The server hands out simulation of ambient traffic and pedestrians to
+        /// whichever client is nearest, and nominates one client per area to be the
+        /// source of that population. Both decisions assume the client has a GTA V to
+        /// do the simulating in. A bot does not: it is a network peer with a position.
+        /// </para>
+        /// <para>
+        /// Handing it thirty-nine vehicles means thirty-nine vehicles that nobody
+        /// updates any more. They stop where they are, which in a real session is the
+        /// report "when the bots appear, all the traffic and pedestrians sink into the
+        /// ground and get stuck" -- and it is exactly that, because a car whose owner
+        /// never sends another update is a car every other client holds at the last
+        /// position it heard, forever.
+        /// </para>
+        /// </summary>
+        public bool Simulates { get; set; } = true;
+
         public byte[] Serialize()
         {
             var writer = new NetWriter(512);
@@ -39,6 +58,7 @@ namespace Gtamp.Shared.Protocol
             writer.WriteString(IdentityToken);
             writer.WriteString(Password);
             writer.WriteUInt32(ClientNonce);
+            writer.WriteBool(Simulates);
             Manifest.Write(writer);
             return writer.ToArray();
         }
@@ -54,6 +74,7 @@ namespace Gtamp.Shared.Protocol
                 IdentityToken = reader.ReadString(128),
                 Password = reader.ReadString(128),
                 ClientNonce = reader.ReadUInt32(),
+                Simulates = reader.ReadBool(),
                 Manifest = ModManifest.Read(reader),
             };
         }

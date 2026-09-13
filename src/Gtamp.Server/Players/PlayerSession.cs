@@ -160,6 +160,18 @@ namespace Gtamp.Server.Players
         /// </summary>
         public bool IsPopulationSource { get; set; }
 
+        /// <summary>
+        /// Whether this client has a game behind it that can simulate entities.
+        /// <para>
+        /// Declared in the handshake and true for everything except the headless bot.
+        /// A client that cannot simulate is never handed ownership of an entity and is
+        /// never nominated as a population source, because an entity whose owner sends
+        /// no updates stops dead where it stands and every other client holds it at the
+        /// last position it heard.
+        /// </para>
+        /// </summary>
+        public bool Simulates { get; set; } = true;
+
         public bool IsAdmin => Role == PlayerRole.Admin;
 
         public override string ToString() => $"{Name}#{PlayerId} ({EndPoint})";

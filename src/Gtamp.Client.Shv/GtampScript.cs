@@ -210,6 +210,7 @@ namespace Gtamp.Client.Shv
             double now = _clock.Elapsed.TotalSeconds;
 
             HoldOffTheSinglePlayerDeathSequence();
+            _bridge?.KeepTheScreenAlive(now);
 
             try
             {

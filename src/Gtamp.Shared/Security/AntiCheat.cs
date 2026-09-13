@@ -85,6 +85,31 @@ namespace Gtamp.Shared.Security
         /// <summary>Health a player may legitimately regain per second.</summary>
         public float MaxHealthRegenPerSecond { get; set; } = 25f;
 
+        /// <summary>
+        /// How many seconds of regeneration allowance may be banked.
+        /// <para>
+        /// Health is checked against a replenishing budget for exactly the reason
+        /// movement is, and the mistake was made twice: GTA V does not hand health
+        /// back a point at a time, it hands back a step -- twelve points in one frame
+        /// is what a real session shows -- and a rate sampled per frame cannot measure
+        /// a quantity that arrives in chunks. At 30 Hz the per-frame allowance is under
+        /// two points, so every single step was a violation, several times a second,
+        /// against a player who was standing still and healing.
+        /// </para>
+        /// <para>
+        /// It is not a loophole: the budget is capped at
+        /// <c>MaxHealthRegenPerSecond * HealthRegenBurstSeconds</c>, so no amount of
+        /// waiting buys a jump from nearly dead to full.
+        /// </para>
+        /// </summary>
+        /// <remarks>
+        /// One second, deliberately small. It has to cover a regeneration step and two
+        /// bunched updates, and it must not cover a heal from nearly dead to full --
+        /// which is the difference between absorbing how the game delivers health and
+        /// handing a cheater a free top-up every few seconds.
+        /// </remarks>
+        public float HealthRegenBurstSeconds { get; set; } = 1f;
+
         public int MaxArmor { get; set; } = 100;
 
         /// <summary>Client state updates accepted per second before the peer is throttled.</summary>
@@ -121,6 +146,9 @@ namespace Gtamp.Shared.Security
         /// <summary>Metres of movement currently banked. Negative means the budget has never been primed.</summary>
         public double MovementBudget { get; set; } = -1d;
 
+        /// <summary>Health points of regeneration currently banked. Negative means never primed.</summary>
+        public double HealthBudget { get; set; } = -1d;
+
         /// <summary>
         /// Behavioural checks are skipped until this time.
         /// <para>
@@ -137,6 +165,7 @@ namespace Gtamp.Shared.Security
         {
             GraceUntil = now + seconds;
             MovementBudget = -1d;
+            HealthBudget = -1d;
             LastUpdateTime = 0d;
         }
 
@@ -297,18 +326,57 @@ namespace Gtamp.Shared.Security
                     $"health {proposal.Health} exceeds maximum {current.MaxHealth}",
                     Settings.ActionFor(ViolationKind.HealthHack));
             }
+            else if (current.Health <= 0 || current.HasFlag(PlayerFlags.Dead))
+            {
+                // The client's game resurrected them before the server's respawn timer
+                // ran out. GTA V does that on its own and the client reports what it
+                // sees; the server owns the respawn, so the report is refused.
+                //
+                // Refused, and not called cheating. Violations escalate -- twenty of
+                // them warn or kick -- and a player who has just been shot is not a
+                // cheater. A real session logged "gained 200 health" against a player
+                // a bot had killed, four times, while the client and the server took
+                // turns overwriting each other: the server's health of zero went back
+                // to the client as a correction, the client's game applied it, and the
+                // player died again on the spot. The respawn is the only thing that
+                // ends that, so nothing here may delay or punish it.
+                if (proposal.Health > current.Health)
+                {
+                    outcome.Accepted = false;
+                }
+            }
             else if (Settings.Level >= AntiCheatLevel.Standard && deltaTime > 0.0001d)
             {
+                double healthCapacity = Settings.MaxHealthRegenPerSecond
+                                        * Math.Max(0.1f, Settings.HealthRegenBurstSeconds);
+
+                if (state.HealthBudget < 0)
+                {
+                    state.HealthBudget = healthCapacity;
+                }
+                else
+                {
+                    state.HealthBudget += Settings.MaxHealthRegenPerSecond * deltaTime;
+                    if (state.HealthBudget > healthCapacity)
+                    {
+                        state.HealthBudget = healthCapacity;
+                    }
+                }
+
                 int gained = proposal.Health - current.Health;
-                double allowedGain = (Settings.MaxHealthRegenPerSecond * deltaTime) + 1d;
-                if (gained > allowedGain)
+                if (gained > state.HealthBudget)
                 {
                     Reject(
                         outcome,
                         state,
                         ViolationKind.HealthHack,
-                        $"gained {gained} health in {deltaTime * 1000:0} ms (budget {allowedGain:0.#})",
+                        $"gained {gained} health with {state.HealthBudget:0.#} banked "
+                        + $"(sustained limit {Settings.MaxHealthRegenPerSecond:0.#}/s)",
                         Settings.ActionFor(ViolationKind.HealthHack));
+                }
+                else if (gained > 0)
+                {
+                    state.HealthBudget -= gained;
                 }
             }
 

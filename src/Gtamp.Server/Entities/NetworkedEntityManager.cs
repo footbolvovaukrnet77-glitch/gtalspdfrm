@@ -423,7 +423,12 @@ namespace Gtamp.Server.Entities
 
             foreach (PlayerSession session in players.Sessions)
             {
-                if (session.PendingRemoval || session.PlayerId == excludePlayerId)
+                // A client with no GTA V behind it is not a candidate. Ownership is a
+                // job -- send this entity's position every tick -- and handing it to a
+                // peer that cannot do it is worse than leaving the entity with the
+                // server: it stops moving for everybody, which is what "the traffic
+                // sinks into the ground and gets stuck when the bots turn up" was.
+                if (session.PendingRemoval || session.PlayerId == excludePlayerId || !session.Simulates)
                 {
                     continue;
                 }

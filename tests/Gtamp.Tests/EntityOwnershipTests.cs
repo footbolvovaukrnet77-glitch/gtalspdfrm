@@ -1,4 +1,5 @@
 using System.Linq;
+using Gtamp.Server.Players;
 using Gtamp.Server.Core;
 using Gtamp.Shared.Core;
 using Gtamp.Shared.Entities;
@@ -33,6 +34,90 @@ namespace Gtamp.Tests
 
         private static VehicleEntity? ServerVehicle(TestHarness harness) =>
             harness.Server.World.State.OfType<VehicleEntity>().FirstOrDefault();
+
+
+        /// <summary>
+        /// A headless bot standing next to a car must not be handed the car.
+        /// <para>
+        /// Ownership is a job: send this entity's position every tick. A bot has no
+        /// GTA V to read a position out of, so an entity it owns stops where it is and
+        /// every other client holds it at the last figure it heard. A real session
+        /// handed one bot thirty-nine vehicles the moment it connected, and the report
+        /// that came back was that all the traffic and the pedestrians sank into the
+        /// ground and got stuck as soon as the bots appeared.
+        /// </para>
+        /// </summary>
+        [Fact]
+        public void AClientWithNoGameBehindItIsNeverHandedAnEntityToSimulate()
+        {
+            using var harness = new TestHarness(Config());
+            TestClient alice = Connected(harness, "alice");
+
+            int handle = alice.Bridge.PutLocalPlayerInVehicle(Adder, new NetVector3(220f, -810f, 30f));
+            Assert.True(harness.AdvanceUntil(() => alice.Client.OwnedEntities.OwnedCount == 1, timeoutSeconds: 5));
+            Assert.Equal(alice.Client.LocalPlayerId, ServerVehicle(harness)!.OwnerId);
+
+            // A bot arrives and parks itself right on top of the car, then alice walks
+            // away: every reason the server has to migrate ownership now points at the
+            // bot, and none of them are reasons the bot can act on.
+            TestClient bot = harness.CreateHeadlessClient("Bot1");
+            bot.Client.Connect("127.0.0.1", TestHarness.ServerEndPoint.Port);
+            Assert.True(harness.AdvanceUntil(() => bot.PlayerCount >= 2));
+
+            bot.Bridge.Sample.Position = new NetVector3(220f, -810f, 30f);
+            alice.Bridge.LocalVehicleHandle = 0;
+            alice.Bridge.Sample.Position = new NetVector3(3000f, 3000f, 30f);
+
+            harness.Advance(3.0);
+
+            VehicleEntity vehicle = ServerVehicle(harness)!;
+            Assert.NotEqual(bot.Client.LocalPlayerId, vehicle.OwnerId);
+        }
+
+        /// <summary>
+        /// And the same client is never nominated to spawn the area's traffic, for the
+        /// same reason in the other direction: it cannot see any.
+        /// </summary>
+        [Fact]
+        public void AClientWithNoGameBehindItIsNeverThePopulationSource()
+        {
+            using var harness = new TestHarness(new ServerConfig
+            {
+                PersistenceEnabled = false,
+                SaveIntervalSeconds = 0,
+                SharedTraffic = true,
+            });
+
+            TestClient bot = harness.CreateHeadlessClient("Bot1");
+            bot.Client.Connect("127.0.0.1", TestHarness.ServerEndPoint.Port);
+            Assert.True(harness.AdvanceUntil(() => bot.PlayerCount >= 1));
+
+            harness.Advance(2.0);
+
+            PlayerSession session = harness.Server.Players.Sessions.Single(s => s.Name == "Bot1");
+            Assert.False(session.Simulates);
+            Assert.False(session.IsPopulationSource);
+        }
+
+        /// <summary>
+        /// A real client is still nominated when it is the only one there, which is the
+        /// check that the guard above excludes bots rather than everybody.
+        /// </summary>
+        [Fact]
+        public void APlayerAloneOnTheServerIsStillThePopulationSource()
+        {
+            using var harness = new TestHarness(new ServerConfig
+            {
+                PersistenceEnabled = false,
+                SaveIntervalSeconds = 0,
+                SharedTraffic = true,
+            });
+
+            TestClient alice = Connected(harness, "alice");
+            harness.Advance(2.0);
+
+            Assert.True(harness.Server.Players.Sessions.Single(s => s.Name == "alice").IsPopulationSource);
+        }
 
         [Fact]
         public void AVehicleAClientGetsIntoIsAdoptedByTheServer()

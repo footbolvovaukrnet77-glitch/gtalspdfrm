@@ -22,6 +22,100 @@ namespace Gtamp.Tests
         private static PlayerStateProposal InVehicle(NetVector3 position) =>
             new PlayerStateProposal { Position = position, Health = 150, Armor = 0, InVehicle = true };
 
+
+        /// <summary>
+        /// GTA V does not hand health back a point at a time. It regenerates in steps,
+        /// and a real session shows twelve points arriving in one frame, over and over.
+        ///
+        /// Checked per update against rate * deltaTime that is always a violation: at
+        /// 30 Hz the budget is under two points and the step is twelve. One real
+        /// session logged this several times a second for minutes, against a player who
+        /// was doing nothing but standing still and healing.
+        ///
+        /// It is the same mistake the movement check already made and already fixed, in
+        /// the same file: a rate sampled per frame cannot measure a quantity that
+        /// arrives in chunks. Health needs the same replenishing budget.
+        /// </summary>
+        [Fact]
+        public void RegeneratingInStepsTheWayTheGameActuallyDoesIsNotAHealthHack()
+        {
+            var engine = new AntiCheatEngine();
+            PlayerEntity player = Player();
+            player.Health = 100;
+            var state = new PlayerValidationState();
+
+            double now = 1.0;
+            engine.ValidatePlayerState(player, Proposal(player.Position, player.Health), state, now);
+
+            // Twelve points every half second: twenty-four a second on average, inside
+            // the sustained limit, but delivered in one frame out of fifteen. The
+            // average is legitimate and the step is what the per-frame check saw.
+            for (int step = 0; step < 8; step++)
+            {
+                for (int frame = 0; frame < 15; frame++)
+                {
+                    now += 1d / 30d;
+                    int health = frame == 14 ? player.Health + 12 : player.Health;
+                    ValidationOutcome outcome =
+                        engine.ValidatePlayerState(player, Proposal(player.Position, health), state, now);
+
+                    Assert.True(
+                        outcome.Accepted,
+                        outcome.Violations.Count > 0 ? outcome.Violations[0].ToString() : "rejected");
+                    player.Health = health;
+                }
+            }
+        }
+
+        /// <summary>
+        /// The budget is not a loophole: it is capped, so no amount of waiting buys a
+        /// jump from nearly dead to full.
+        /// </summary>
+        [Fact]
+        public void BankingTimeDoesNotBuyAFullHeal()
+        {
+            var engine = new AntiCheatEngine();
+            PlayerEntity player = Player();
+            player.Health = 5;
+            var state = new PlayerValidationState();
+
+            engine.ValidatePlayerState(player, Proposal(player.Position, 5), state, 1.0);
+
+            // A minute of standing still, then a claim to be at full health.
+            ValidationOutcome outcome =
+                engine.ValidatePlayerState(player, Proposal(player.Position, 200), state, 61.0);
+
+            Assert.False(outcome.Accepted);
+            Assert.Equal(ViolationKind.HealthHack, outcome.Violations[0].Kind);
+        }
+
+        /// <summary>
+        /// A dead player's game heals them before the server's respawn timer has run
+        /// out -- GTA V resurrects on its own and the client reports what it sees.
+        ///
+        /// That report must still be refused, because the server owns the respawn. What
+        /// it must not be is a <em>violation</em>: violations escalate, twenty of them
+        /// warn or kick, and a player who died is not a cheater. A real session logged
+        /// "gained 200 health" against a player being shot at by a bot.
+        /// </summary>
+        [Fact]
+        public void ComingBackFromDeadIsRefusedWithoutBeingCalledCheating()
+        {
+            var engine = new AntiCheatEngine();
+            PlayerEntity player = Player();
+            player.Health = 0;
+            player.SetFlag(PlayerFlags.Dead, true);
+            var state = new PlayerValidationState();
+
+            engine.ValidatePlayerState(player, Proposal(player.Position, 0), state, 1.0);
+
+            ValidationOutcome outcome =
+                engine.ValidatePlayerState(player, Proposal(player.Position, 200), state, 1.1);
+
+            Assert.False(outcome.Accepted);
+            Assert.DoesNotContain(outcome.Violations, v => v.Kind == ViolationKind.HealthHack);
+        }
+
         [Fact]
         public void NormalMovementIsAccepted()
         {

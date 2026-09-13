@@ -429,6 +429,23 @@ namespace Gtamp.Client.Core
 
         public bool IsConnected => Connection.IsConnected;
 
+        /// <summary>
+        /// Whether there is a GTA V behind this client that can simulate things.
+        /// <para>
+        /// True for a player, false for the headless bot, and set before connecting.
+        /// The server uses it to decide who may be handed ambient traffic and who may
+        /// be nominated as a population source: a client with no game does neither,
+        /// because an entity whose owner never simulates it never moves again.
+        /// </para>
+        /// <para>
+        /// Not a config key on purpose. It describes what this program is, which a
+        /// player cannot change about themselves and should not be able to claim --
+        /// and a client that lied here would be opting out of its share of the
+        /// simulation while everybody else carried it.
+        /// </para>
+        /// </summary>
+        public bool SimulatesTheWorld { get; set; } = true;
+
         /// <summary>Scans for installed mods and starts any adapters that apply.</summary>
         public void InitializeMods(string gameDirectory, string adapterDirectory)
         {
@@ -588,7 +605,14 @@ namespace Gtamp.Client.Core
             Registry.Lock();
 
             Connection.Connect(
-                endPoint, Config.PlayerName, Config.IdentityToken, Config.ServerPassword, manifest, ClientVersion, _now);
+                endPoint,
+                Config.PlayerName,
+                Config.IdentityToken,
+                Config.ServerPassword,
+                manifest,
+                ClientVersion,
+                SimulatesTheWorld,
+                _now);
         }
 
         public void Disconnect(string reason = "player left")

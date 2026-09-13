@@ -614,6 +614,16 @@ namespace Gtamp.Tests
         /// same player; otherwise a fresh keypair is generated, exactly as a first run
         /// on a new machine would.
         /// </summary>
+        /// <summary>
+        /// A client with no game behind it, the way the headless bot connects.
+        /// </summary>
+        public TestClient CreateHeadlessClient(string name, string? identitySecret = null)
+        {
+            TestClient client = CreateClient(name, identitySecret);
+            client.Client.SimulatesTheWorld = false;
+            return client;
+        }
+
         public TestClient CreateClient(string name, string? identitySecret = null)
         {
             var config = new ClientConfig

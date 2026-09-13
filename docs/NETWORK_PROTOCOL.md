@@ -2,7 +2,7 @@
 
 > English. Русский: [ru/NETWORK_PROTOCOL.md](ru/NETWORK_PROTOCOL.md).
 
-Transport: UDP. Byte order: little-endian. Protocol version: **13**
+Transport: UDP. Byte order: little-endian. Protocol version: **14**
 (`ProtocolConstants.ProtocolVersion`); a mismatch is rejected during the
 handshake with a readable message.
 
@@ -299,6 +299,12 @@ practice.
 | `0x50` | AdminCommand | reliable | C → S |
 | `0x51` | SecurityNotice | reliable | S → C |
 | `0xF0`–`0xFF` | reserved for the Mod SDK | either | both |
+
+`ConnectRequest` carries a `Simulates` flag: false for a client with no GTA V
+behind it, which today means the headless bot. The server never hands such a
+client ownership of an entity and never nominates it as a population source,
+because ownership is a job — send this entity's position every tick — and a peer
+that cannot do it leaves the entity frozen for everybody.
 
 **Two ids in that table are reserved and neither is ever sent.** Mod negotiation
 happens inside the handshake, because it has to be settled before a client is
