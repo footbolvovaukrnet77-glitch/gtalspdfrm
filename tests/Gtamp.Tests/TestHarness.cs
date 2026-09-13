@@ -183,6 +183,20 @@ namespace Gtamp.Tests
             int handle, Gtamp.Client.Entities.NpcIntent intent, int targetHandle, uint scenarioHash) =>
             NpcIntents[handle] = (intent, targetHandle);
 
+        /// <summary>Room keys this client has been told to put peds in, by handle.</summary>
+        public Dictionary<int, uint> Rooms { get; } = new Dictionary<int, uint>();
+
+        /// <summary>Map files this client has been told to switch on.</summary>
+        public List<string> ActiveMapFiles { get; } = new List<string>();
+
+        public void SetActiveMapFiles(IReadOnlyList<string> ipls)
+        {
+            ActiveMapFiles.Clear();
+            ActiveMapFiles.AddRange(ipls);
+        }
+
+        public void SetRemotePedRoom(int handle, uint roomKey, NetVector3 position) => Rooms[handle] = roomKey;
+
         public void SetRemotePedRelationshipGroup(int handle, uint relationshipGroupHash)
         {
             RelationshipGroups[handle] = relationshipGroupHash;

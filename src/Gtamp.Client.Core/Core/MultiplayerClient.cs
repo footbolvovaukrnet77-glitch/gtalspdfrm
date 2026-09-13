@@ -1406,6 +1406,7 @@ namespace Gtamp.Client.Core
                 WeaponTint = sample.WeaponTint,
                 AimPosition = sample.AimPosition,
                 InteriorId = sample.InteriorId,
+                RoomKey = sample.RoomKey,
                 WantedLevel = sample.WantedLevel,
                 AnimationHash = sample.AnimationHash,
                 MeleeTargetId = ResolveMeleeTarget(sample),
@@ -1572,6 +1573,7 @@ namespace Gtamp.Client.Core
             Bridge.SetWeather(environment.WeatherHash, environment.NextWeatherHash, environment.WeatherTransition);
             Bridge.SetWind(environment.WindSpeed, environment.WindDirection);
             Bridge.SetBlackout(environment.Blackout);
+            Bridge.SetActiveMapFiles(environment.ActiveIpls);
         }
 
         /// <summary>

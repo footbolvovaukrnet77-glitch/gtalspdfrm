@@ -164,6 +164,7 @@ namespace Gtamp.Client.Players
             VehicleId = to.VehicleId,
             VehicleSeat = to.VehicleSeat,
             MeleeTargetId = to.MeleeTargetId,
+            RoomKey = to.RoomKey,
         };
 
         /// <summary>Interpolates headings the short way round, so 359° -&gt; 1° does not spin the ped.</summary>

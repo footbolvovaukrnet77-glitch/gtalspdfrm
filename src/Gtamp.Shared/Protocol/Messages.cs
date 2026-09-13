@@ -212,6 +212,13 @@ namespace Gtamp.Shared.Protocol
 
         public int InteriorId { get; set; }
 
+        /// <summary>
+        /// GTA V's room key for wherever this player is standing, 0 outdoors. See
+        /// <see cref="CharacterEntity.RoomKey"/> for why the room travels and the
+        /// interior handle does not.
+        /// </summary>
+        public uint RoomKey { get; set; }
+
         /// <summary>How wanted this player is, 0 to 5.</summary>
         public byte WantedLevel { get; set; }
 
@@ -271,6 +278,7 @@ namespace Gtamp.Shared.Protocol
 
             writer.WriteQuantizedPosition(AimPosition);
             writer.WriteVarInt(InteriorId);
+            writer.WriteUInt32(RoomKey);
             writer.WriteByte(WantedLevel);
             writer.WriteUInt32(AnimationHash);
 
@@ -334,6 +342,7 @@ namespace Gtamp.Shared.Protocol
                 WeaponTint = ReadWeaponAttachments(reader, out List<uint> components),
                 AimPosition = reader.ReadQuantizedPosition(),
                 InteriorId = reader.ReadVarInt(),
+                RoomKey = reader.ReadUInt32(),
                 WantedLevel = reader.ReadByte(),
                 AnimationHash = reader.ReadUInt32(),
             };

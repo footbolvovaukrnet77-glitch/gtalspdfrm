@@ -200,6 +200,7 @@ namespace Gtamp.Client.Shv.Bridge
                 Movement = SampleMovement(ped),
                 Flags = SampleFlags(ped),
                 InteriorId = Function.Call<int>(Hash.GET_INTERIOR_FROM_ENTITY, ped.Handle),
+                RoomKey = unchecked((uint)Function.Call<int>(Hash.GET_ROOM_KEY_FROM_ENTITY, ped.Handle)),
                 WantedLevel = (byte)Clamp(Game.Player.WantedLevel, 0, 5),
                 AnimationHash = 0,
                 AimPosition = SampleAimPosition(ped),
@@ -815,6 +816,90 @@ namespace Gtamp.Client.Shv.Bridge
             "WORLD_HUMAN_DRINKING",
             "WORLD_HUMAN_AA_SMOKE",
         };
+
+        /// <summary>Map files this client has switched on, so the difference is applied rather than the whole set.</summary>
+        private readonly HashSet<string> _activeIpls = new HashSet<string>(StringComparer.Ordinal);
+
+        public void SetActiveMapFiles(IReadOnlyList<string> ipls)
+        {
+            try
+            {
+                // The difference, not the set. REQUEST_IPL on something already loaded
+                // is not free and REMOVE_IPL on something already gone is not either,
+                // and this runs whenever the environment changes — which is whenever
+                // the weather does.
+                foreach (string ipl in ipls)
+                {
+                    if (_activeIpls.Add(ipl))
+                    {
+                        Function.Call(Hash.REQUEST_IPL, ipl);
+                    }
+                }
+
+                if (_activeIpls.Count == ipls.Count)
+                {
+                    return;
+                }
+
+                var wanted = new HashSet<string>(ipls, StringComparer.Ordinal);
+                var gone = new List<string>();
+                foreach (string ipl in _activeIpls)
+                {
+                    if (!wanted.Contains(ipl))
+                    {
+                        gone.Add(ipl);
+                    }
+                }
+
+                foreach (string ipl in gone)
+                {
+                    Function.Call(Hash.REMOVE_IPL, ipl);
+                    _activeIpls.Remove(ipl);
+                }
+            }
+            catch (Exception exception)
+            {
+                _log.Error(LogCategory.Client, "Could not switch the world's map files.", exception);
+            }
+        }
+
+        public void SetRemotePedRoom(int handle, uint roomKey, NetVector3 position)
+        {
+            if (!_remotePeds.TryGetValue(handle, out Ped ped) || !ped.Exists())
+            {
+                return;
+            }
+
+            try
+            {
+                if (roomKey == 0)
+                {
+                    Function.Call(Hash.CLEAR_ROOM_FOR_ENTITY, ped.Handle);
+                    return;
+                }
+
+                // Derived here, not replicated. An interior handle is whatever this
+                // machine's loaded map gave that building; the room key is a hash of a
+                // name and is the same everywhere.
+                int interior = Function.Call<int>(
+                    Hash.GET_INTERIOR_AT_COORDS, position.X, position.Y, position.Z);
+
+                if (interior == 0)
+                {
+                    // The world says this character is in a room and this machine has
+                    // no interior at that coordinate — usually because it has not
+                    // streamed in yet. Left alone rather than forced into nothing, and
+                    // retried whenever the room changes.
+                    return;
+                }
+
+                Function.Call(Hash.FORCE_ROOM_FOR_ENTITY, ped.Handle, interior, roomKey);
+            }
+            catch (Exception exception)
+            {
+                _log.Error(LogCategory.Client, "Could not set a remote ped's room.", exception);
+            }
+        }
 
         public void ApplyEntityImpulse(int handle, NetVector3 impulse, bool isExplosion)
         {

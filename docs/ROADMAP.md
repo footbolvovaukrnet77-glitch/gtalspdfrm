@@ -248,7 +248,7 @@ machine and real clients, and is not claimed here.
 | Step | What it guards |
 | --- | --- |
 | `dotnet build -c Release -warnaserror` | The zero-warning claim. Without `-warnaserror` it decays the first time a warning lands that nobody scrolls up far enough to see |
-| `dotnet test -c Release` | All 767 tests, with the `.trx` uploaded as an artifact so a failure is readable without re-running anything |
+| `dotnet test -c Release` | All 774 tests, with the `.trx` uploaded as an artifact so a failure is readable without re-running anything |
 | `python3 tools/check-docs.py` | Dead relative links, `#anchors` naming headings that no longer exist, any document that lost its counterpart in the other language, and the three things the documentation asserts about the code: the protocol version, the test count, and the `client.ini` example. All three had drifted before the checks existed |
 
 The whole solution compiles on `ubuntu-latest`, the `net48` client included,
@@ -582,11 +582,31 @@ rather than reading the world.
 
 ### Section 16 — Interiors
 
-Only `InteriorId`, and it is sampled and **not applied** — one more of the family
-this branch spent its length on, left in place because applying it needs the rest.
+✅ **rooms**, and with them the culling that depends on them. `InteriorId` was sampled
+from Phase 1 and applied to nothing, so every replicated ped was outdoors as far as the
+engine was concerned — drawn through the wall of whatever building it was standing in.
+The fix is not to apply `InteriorId`: an interior handle is whatever number a
+particular machine's loaded map gave that building and need not match between
+machines. A room key is a hash of a name and does, so the room travels, the interior is
+derived on the receiving client from the position it already has, and
+`FORCE_ROOM_FOR_ENTITY` does the rest. Leaving a room travels too — a ped left assigned
+to a room it has left is culled with that room and vanishes in the street outside.
 
-❌ **MLO, IPL, custom interiors, transitions, rooms, portals, custom doors,
-interior objects, interior NPCs, interior missions, interior events.**
+✅ **IPL and map add-ons**, in the half of them that is state. Whether a player *has* a
+map file is mod negotiation's problem; whether the world has it switched *on* is a
+property of the world, and it was carried by nothing — a mod that opened an interior
+opened it on the machine running the mod and everybody else walked into a wall where
+the door was. The active set rides in the environment, bounded at 64 names so a hostile
+server cannot make a client allocate without limit, and the difference is applied
+rather than the whole set.
+
+❌ **MLO, custom interiors, transitions, portals, custom doors, interior objects,
+interior NPCs, interior missions, interior events.** An MLO is content rather than
+state: it reaches a player through mod negotiation or not at all, and there is nothing
+for replication to do about a building somebody has not installed. Interior objects and
+NPCs are entities and replicate as entities already; what is missing is anything that
+makes them *interior* ones. Portals and custom doors fail the same test as world doors
+— the natives set them and nothing reports what somebody else set.
 
 ### What this list is for
 

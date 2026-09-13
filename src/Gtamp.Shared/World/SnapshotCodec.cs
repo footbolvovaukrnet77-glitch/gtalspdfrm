@@ -421,6 +421,12 @@ namespace Gtamp.Shared.World
             writer.WriteSingle(environment.WindSpeed);
             writer.WriteAngleDegrees(environment.WindDirection);
             writer.WriteBool(environment.Blackout);
+
+            writer.WriteVarUInt((uint)environment.ActiveIpls.Count);
+            foreach (string ipl in environment.ActiveIpls)
+            {
+                writer.WriteString(ipl);
+            }
         }
 
         private static void ReadEnvironment(NetReader reader, WorldEnvironment environment)
@@ -433,6 +439,23 @@ namespace Gtamp.Shared.World
             environment.WindSpeed = reader.ReadSingle();
             environment.WindDirection = reader.ReadAngleDegrees();
             environment.Blackout = reader.ReadBool();
+
+            uint iplCount = reader.ReadVarUInt();
+            if (iplCount > WorldEnvironment.MaxIpls)
+            {
+                throw new NetSerializationException(
+                    $"The world claims {iplCount} active map files; the limit is {WorldEnvironment.MaxIpls}.");
+            }
+
+            environment.ActiveIpls.Clear();
+            for (uint i = 0; i < iplCount; i++)
+            {
+                string name = reader.ReadString(WorldEnvironment.MaxIplNameLength);
+                if (name.Length > 0)
+                {
+                    environment.ActiveIpls.Add(name);
+                }
+            }
         }
     }
 }

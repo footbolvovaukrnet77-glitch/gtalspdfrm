@@ -189,6 +189,7 @@ namespace Gtamp.Client.Players
                 RemotePedCommand command = RemotePedController.Decide(
                     in frame, pedPosition, VehicleHandleFor(in frame), PedHandleFor(frame.MeleeTargetId));
                 _bridge.ApplyRemotePedCommand(player.PedHandle, in command);
+                ApplyRoomIfChanged(player, in frame);
                 ApplyMarker(player);
             }
         }
@@ -223,6 +224,28 @@ namespace Gtamp.Client.Players
 
             return _players.TryGetValue(id, out RemotePlayer target) ? target.PedHandle : 0;
         }
+
+        /// <summary>
+        /// Puts a remote player in the room the world says they are in, on change.
+        /// <para>
+        /// GTA V culls by room, so a player the engine believes is outdoors while they
+        /// stand in a building is drawn through its wall, and one it believes is in the
+        /// wrong room vanishes where they should be visible. Every replicated ped was
+        /// outdoors as far as the engine was concerned until this existed.
+        /// </para>
+        /// </summary>
+        private void ApplyRoomIfChanged(RemotePlayer player, in RemotePedFrame frame)
+        {
+            if (_appliedRoom.TryGetValue(player.EntityId, out uint applied) && applied == frame.RoomKey)
+            {
+                return;
+            }
+
+            _appliedRoom[player.EntityId] = frame.RoomKey;
+            _bridge.SetRemotePedRoom(player.PedHandle, frame.RoomKey, frame.Position);
+        }
+
+        private readonly Dictionary<EntityId, uint> _appliedRoom = new Dictionary<EntityId, uint>();
 
         private int VehicleHandleFor(in RemotePedFrame frame)
         {

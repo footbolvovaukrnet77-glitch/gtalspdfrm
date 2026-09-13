@@ -115,6 +115,24 @@ namespace Gtamp.Client.Core
         void SetRemotePedRelationshipGroup(int handle, uint relationshipGroupHash);
 
         /// <summary>
+        /// Puts a replicated character in the room of the interior it is actually in,
+        /// or takes it out of one.
+        /// <para>
+        /// GTA V culls by room. A ped the engine believes is outdoors while it stands
+        /// inside a building is drawn through the wall; one it believes is in the wrong
+        /// room disappears where it should be visible. Until this existed every
+        /// replicated ped was outdoors as far as the engine was concerned, whatever the
+        /// world said, and <c>InteriorId</c> was sampled and applied to nothing.
+        /// </para>
+        /// <para>
+        /// The interior is derived here from <paramref name="position"/> rather than
+        /// replicated: an interior handle is a runtime number that need not match
+        /// between machines, and a room key is a hash of a name that does.
+        /// </para>
+        /// </summary>
+        void SetRemotePedRoom(int handle, uint roomKey, NetVector3 position);
+
+        /// <summary>
         /// Tells a networked NPC to do what the server says it is doing: fight, flee,
         /// surrender, be arrested, or play a scenario.
         /// <para>
@@ -334,6 +352,24 @@ namespace Gtamp.Client.Core
         /// </summary>
         void SetBlackout(bool blackout);
 
+        /// <summary>
+        /// Switches the world's map files on and off to match what the server says is
+        /// loaded.
+        /// <para>
+        /// Section 16 lists IPL and map add-ons. Whether a player <em>has</em> a map
+        /// file is mod negotiation's problem; whether it is switched <em>on</em> is a
+        /// property of the world, and it was the half nobody carried — a mod that
+        /// opened an interior opened it on the machine that ran the mod, and everybody
+        /// else walked into a wall where the door was.
+        /// </para>
+        /// <para>
+        /// A name this client does not have produces nothing, which is the same outcome
+        /// as the mod not being installed and is reported by the missing-content
+        /// tracker rather than here.
+        /// </para>
+        /// </summary>
+        void SetActiveMapFiles(IReadOnlyList<string> ipls);
+
         void ShowNotification(string text);
 
         void ShowSubtitle(string text, int durationMilliseconds);
@@ -368,6 +404,9 @@ namespace Gtamp.Client.Core
         /// </summary>
         public int MeleeTargetPedHandle;
         public int InteriorId;
+
+        /// <summary>GTA V's room key for where the player is standing, 0 outdoors.</summary>
+        public uint RoomKey;
 
         /// <summary>
         /// The local player's wanted level. Replicated so other players can see who
@@ -454,5 +493,8 @@ namespace Gtamp.Client.Core
 
         /// <summary>Who this character is swinging at, or <see cref="EntityId.None"/>.</summary>
         public EntityId MeleeTargetId;
+
+        /// <summary>Which room of an interior this character is in, 0 outdoors.</summary>
+        public uint RoomKey;
     }
 }

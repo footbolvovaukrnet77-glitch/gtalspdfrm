@@ -71,6 +71,27 @@ namespace Gtamp.Shared.Entities
         public uint AnimationHash { get; set; }
 
         /// <summary>
+        /// Which room of an interior this character is standing in, as GTA V's own room
+        /// key, or 0 outdoors.
+        /// <para>
+        /// <b>Why the room and not the interior.</b> <c>InteriorId</c> has been
+        /// replicated since Phase 1 and is a runtime handle: the number the game hands
+        /// out for a building on one machine need not be the number on another, because
+        /// it comes from what that machine has loaded. Replicating it is fine for a
+        /// diagnostic — it is printed by the inspector and nothing else — and is not a
+        /// thing to act on. The room key is a hash of a name and means the same
+        /// everywhere, so a receiving client derives the interior from the position it
+        /// already has and takes the room from here.
+        /// </para>
+        /// <para>
+        /// It matters because GTA V culls by room: a ped the engine thinks is outdoors
+        /// while it stands inside a building is drawn through the wall, and one the
+        /// engine thinks is in the wrong room vanishes when it should be visible.
+        /// </para>
+        /// </summary>
+        public uint RoomKey { get; set; }
+
+        /// <summary>
         /// The character this one is swinging at, or <see cref="EntityId.None"/> when
         /// it is not in melee.
         /// <para>
@@ -131,6 +152,7 @@ namespace Gtamp.Shared.Entities
             target.WeaponComponents.AddRange(WeaponComponents);
             target.AimPosition = AimPosition;
             target.MeleeTargetId = MeleeTargetId;
+            target.RoomKey = RoomKey;
             target.VehicleId = VehicleId;
             target.VehicleSeat = VehicleSeat;
             target.AnimationHash = AnimationHash;
@@ -263,6 +285,11 @@ namespace Gtamp.Shared.Entities
                     (a, b) => a.Ragdoll != b.Ragdoll,
                     (w, e) => e.Ragdoll.Write(w),
                     (r, e) => e.Ragdoll = RagdollPose.Read(r))
+                .Add(
+                    "RoomKey",
+                    (a, b) => a.RoomKey != b.RoomKey,
+                    (w, e) => w.WriteUInt32(e.RoomKey),
+                    (r, e) => e.RoomKey = r.ReadUInt32())
                 .Add(
                     "MeleeTargetId",
                     (a, b) => a.MeleeTargetId != b.MeleeTargetId,

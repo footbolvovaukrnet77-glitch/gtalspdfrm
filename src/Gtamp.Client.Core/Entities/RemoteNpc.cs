@@ -93,6 +93,7 @@ namespace Gtamp.Client.Entities
             frame.VehicleId = after.VehicleId;
             frame.VehicleSeat = after.VehicleSeat;
             frame.AnimationHash = after.AnimationHash;
+            frame.RoomKey = after.RoomKey;
             return true;
         }
     }

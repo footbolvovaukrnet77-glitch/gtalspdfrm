@@ -196,6 +196,22 @@ namespace Gtamp.Bot
         {
         }
 
+        /// <summary>Room keys the client has assigned, by handle. A simulated game has no walls to cull.</summary>
+        public System.Collections.Generic.Dictionary<int, uint> Rooms { get; }
+            = new System.Collections.Generic.Dictionary<int, uint>();
+
+        /// <summary>Map files this simulated game has been told to switch on.</summary>
+        public System.Collections.Generic.List<string> ActiveMapFiles { get; }
+            = new System.Collections.Generic.List<string>();
+
+        public void SetActiveMapFiles(System.Collections.Generic.IReadOnlyList<string> ipls)
+        {
+            ActiveMapFiles.Clear();
+            ActiveMapFiles.AddRange(ipls);
+        }
+
+        public void SetRemotePedRoom(int handle, uint roomKey, NetVector3 position) => Rooms[handle] = roomKey;
+
         public void SetRemotePedRelationshipGroup(int handle, uint relationshipGroupHash)
         {
         }

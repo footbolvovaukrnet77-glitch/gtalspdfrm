@@ -2,7 +2,7 @@
 
 > English. Русский: [ru/NETWORK_PROTOCOL.md](ru/NETWORK_PROTOCOL.md).
 
-Transport: UDP. Byte order: little-endian. Protocol version: **12**
+Transport: UDP. Byte order: little-endian. Protocol version: **13**
 (`ProtocolConstants.ProtocolVersion`); a mismatch is rejected during the
 handshake with a readable message.
 

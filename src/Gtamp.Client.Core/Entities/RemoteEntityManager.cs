@@ -342,8 +342,27 @@ namespace Gtamp.Client.Entities
                 ApplyNpcAppearanceIfChanged(npc);
                 ApplyNpcRelationshipGroupIfChanged(npc);
                 ApplyNpcIntentIfChanged(npc);
+                ApplyNpcRoomIfChanged(npc, in frame);
             }
         }
+
+        /// <summary>
+        /// Puts an NPC in the room the world says it is in. Same reason as a player:
+        /// GTA V culls by room, and a ped the engine thinks is outdoors while it stands
+        /// in a building is drawn through the wall.
+        /// </summary>
+        private void ApplyNpcRoomIfChanged(RemoteNpc npc, in RemotePedFrame frame)
+        {
+            if (_appliedNpcRoom.TryGetValue(npc.EntityId, out uint applied) && applied == frame.RoomKey)
+            {
+                return;
+            }
+
+            _appliedNpcRoom[npc.EntityId] = frame.RoomKey;
+            _bridge.SetRemotePedRoom(npc.PedHandle, frame.RoomKey, frame.Position);
+        }
+
+        private readonly Dictionary<EntityId, uint> _appliedNpcRoom = new Dictionary<EntityId, uint>();
 
         /// <summary>
         /// Tells an NPC to do what the server says it is doing, when that changes.

@@ -995,6 +995,7 @@ namespace Gtamp.Server.Core
                     : EntityId.None;
 
             entity.InteriorId = update.InteriorId;
+            entity.RoomKey = update.RoomKey;
 
             // Clamped, not trusted: the field is a byte on the wire and GTA V has six
             // levels, so a client claiming 200 would be replicated and printed as 200.
