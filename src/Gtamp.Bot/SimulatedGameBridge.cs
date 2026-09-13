@@ -272,6 +272,16 @@ namespace Gtamp.Bot
         /// <summary>A simulated game spawns no cars of its own, so there is never anything to hand over.</summary>
         public void SampleAmbientVehicles(System.Collections.Generic.List<int> into, float radius) => into.Clear();
 
+        /// <summary>Counted rather than done: a simulated game has no pavement to empty.</summary>
+        public int PedsSuppressedFrames { get; private set; }
+
+        public void SuppressAmbientPedsThisFrame() => PedsSuppressedFrames++;
+
+        public void SampleAmbientPeds(System.Collections.Generic.List<int> into, float radius) => into.Clear();
+
+        /// <summary>A simulated body is the only ped here, and it is not an ambient one.</summary>
+        public bool TryReadPed(int handle, PedEntity into) => false;
+
         public uint GetVehicleModel(int handle) =>
             handle != 0 && handle == _body.VehicleHandle ? _body.VehicleModel : 0u;
 

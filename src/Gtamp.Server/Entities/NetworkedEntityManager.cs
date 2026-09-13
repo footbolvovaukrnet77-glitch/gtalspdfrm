@@ -50,12 +50,23 @@ namespace Gtamp.Server.Entities
                 return Reject(request, $"{request.Type} cannot be spawned by a client");
             }
 
-            if (CountOwnedBy(session.PlayerId) >= _config.MaxEntitiesPerPlayer)
+            // A client the server has asked to spawn ambient traffic is holding a
+            // street on its behalf, which is not the same thing as a client conjuring
+            // entities of its own. The two are counted separately rather than summed:
+            // summing them handed every solo player — who is always the source, there
+            // being nobody else to be it — the ambient room on top of their anti-spam
+            // cap, and the cap stopped meaning anything.
+            bool ambient = request.Ambient && session.IsPopulationSource;
+            int allowance = ambient ? _config.MaxAmbientEntitiesPerSource : _config.MaxEntitiesPerPlayer;
+
+            if (CountOwnedBy(session.PlayerId, ambient) >= allowance)
             {
                 SpawnsRejected++;
                 return Reject(
                     request,
-                    $"you already own {_config.MaxEntitiesPerPlayer} entities, which is the per-player limit");
+                    ambient
+                        ? $"you already hold {allowance} ambient entities, which is the limit for a traffic source"
+                        : $"you already own {allowance} entities, which is the per-player limit");
             }
 
             if (!IsInsideWorld(request.Position))
@@ -96,6 +107,21 @@ namespace Gtamp.Server.Entities
             }
 
             _world.Spawn(entity);
+            if (ambient)
+            {
+                _ambient.Add(entity.Id);
+
+                // The set is a record of how an entity arrived and nothing removes from
+                // it, because nothing here is told when an entity is destroyed. A stale
+                // id cannot miscount — the count walks the world and asks the set, not
+                // the other way round — but it can grow without bound over a long
+                // session, so it is swept when it gets far larger than any real answer.
+                if (_ambient.Count > AmbientRecordSweepThreshold)
+                {
+                    PruneAmbient();
+                }
+            }
+
             SpawnsAccepted++;
 
             _log.Info(
@@ -252,6 +278,27 @@ namespace Gtamp.Server.Entities
         /// evaporate around the players who stayed.
         /// </para>
         /// </summary>
+        /// <summary>Well above any real number of ambient entities; only a leak reaches it.</summary>
+        private const int AmbientRecordSweepThreshold = 2048;
+
+        private void PruneAmbient()
+        {
+            var live = new HashSet<EntityId>();
+            foreach (NetEntity entity in _world.State.Entities)
+            {
+                if (_ambient.Contains(entity.Id))
+                {
+                    live.Add(entity.Id);
+                }
+            }
+
+            _ambient.Clear();
+            foreach (EntityId id in live)
+            {
+                _ambient.Add(id);
+            }
+        }
+
         public void ReleaseAllOwnedBy(uint playerId, PlayerRegistry players)
         {
             _scratch.Clear();
@@ -401,19 +448,46 @@ namespace Gtamp.Server.Entities
         /// <summary>Raised when a player is handed simulation of an entity, so the server can tell them.</summary>
         public event Action<PlayerSession, EntityId>? OwnershipGranted;
 
-        public int CountOwnedBy(uint playerId)
+        public int CountOwnedBy(uint playerId) => CountOwnedBy(playerId, ambient: null);
+
+        /// <summary>
+        /// Entities a player holds, optionally only the ambient ones or only the rest.
+        /// <para>
+        /// The split exists because the two limits protect against different things and
+        /// adding them together broke one of them. A player alone on a server is always
+        /// the ambient traffic source — there is nobody else to be it — so a single
+        /// combined allowance handed every solo player the ambient room on top of their
+        /// anti-spam cap, and the anti-spam cap stopped meaning anything at all. A test
+        /// that had passed since Phase 3 is what said so.
+        /// </para>
+        /// </summary>
+        public int CountOwnedBy(uint playerId, bool? ambient)
         {
             int count = 0;
             foreach (NetEntity entity in _world.State.Entities)
             {
-                if (entity.OwnerId == playerId && entity.Type != EntityType.Player)
+                if (entity.OwnerId != playerId || entity.Type == EntityType.Player)
                 {
-                    count++;
+                    continue;
                 }
+
+                if (ambient.HasValue && _ambient.Contains(entity.Id) != ambient.Value)
+                {
+                    continue;
+                }
+
+                count++;
             }
 
             return count;
         }
+
+        /// <summary>
+        /// Entities a client offered as ambient population rather than created itself.
+        /// Held here rather than on the entity, because it is a fact about how the
+        /// entity arrived and not about what it is.
+        /// </summary>
+        private readonly HashSet<EntityId> _ambient = new HashSet<EntityId>();
 
         private static bool IsSpawnableType(EntityType type) =>
             type == EntityType.Vehicle

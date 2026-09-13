@@ -50,7 +50,7 @@ tools\build.bat Release
 ./tools/test.sh          # или tools\test.bat
 ```
 
-Ожидается: `Passed! - Failed: 0, Passed: 742`.
+Ожидается: `Passed! - Failed: 0, Passed: 749`.
 
 ### Проверка документации
 
@@ -120,6 +120,7 @@ logs/server-*.log    ежедневный файл лога
   "snapshotRate": 20,          // снапшотов на клиента в секунду
   "snapshotByteBudget": 1024,  // байт на клиента на снапшот; это предел MTU, а не политика
   "sharedTraffic": true,       // один клиент на группу спавнит трафик, который видят все
+  "maxAmbientEntitiesPerSource": 96, // запас источнику трафика, считается отдельно от анти-спам лимита
   "saveIntervalSeconds": 60,
   "antiCheat": "Standard",     // Off | Basic | Standard | Strict | Custom
   "startTime": "12:00",
@@ -273,6 +274,7 @@ CorrectionThreshold=3
 HealthCorrectionThreshold=20
 ApplyRemotePosture=True
 SharedTraffic=True
+SharedPedestrians=True
 ShowNetworkOverlay=False
 ShowPlayerBlips=True
 ShowPlayerNames=True

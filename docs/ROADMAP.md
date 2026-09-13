@@ -248,7 +248,7 @@ machine and real clients, and is not claimed here.
 | Step | What it guards |
 | --- | --- |
 | `dotnet build -c Release -warnaserror` | The zero-warning claim. Without `-warnaserror` it decays the first time a warning lands that nobody scrolls up far enough to see |
-| `dotnet test -c Release` | All 742 tests, with the `.trx` uploaded as an artifact so a failure is readable without re-running anything |
+| `dotnet test -c Release` | All 749 tests, with the `.trx` uploaded as an artifact so a failure is readable without re-running anything |
 | `python3 tools/check-docs.py` | Dead relative links, `#anchors` naming headings that no longer exist, any document that lost its counterpart in the other language, and the three things the documentation asserts about the code: the protocol version, the test count, and the `client.ini` example. All three had drifted before the checks existed |
 
 The whole solution compiles on `ubuntu-latest`, the `net48` client included,
@@ -538,10 +538,17 @@ budget capped at the MTU, so cars update every second or third snapshot where pl
 update every one. That ordering is correct and the ceiling is real — see
 `SnapshotByteBudget` for why it cannot simply be raised.
 
-❌ **pedestrian state, police state, doors, world events, temporary world states.**
-Pedestrians are deliberately left local: suppressing them without replicating them
-would empty the pavements, which is further from one world rather than closer, and
-replicating them is the next slice of this work rather than a decision against it. Doors fail
+✅ **pedestrians**, the same way and under their own ceiling — twenty-four rather than
+sixty, because a person on a pavement costs what a player costs to replicate and is
+worth a great deal less: nobody has ever noticed the twelfth person on a pavement and
+everybody notices a car that updates twice a second. One switch covers suppressing and
+replicating together, because half of it is a city with nobody in it.
+
+❌ **police state, doors, world events, temporary world states.** Doors fail the same
+test as world explosions in the other direction: `SET_STATE_OF_CLOSEST_DOOR_OF_TYPE`
+will change one, and nothing will tell you which door somebody else changed, so
+replicating them means shipping a door registry or a mod-facing registration API
+rather than reading the world. Doors fail
 the same test as world explosions in the other direction: `SET_STATE_OF_CLOSEST_DOOR_OF_TYPE`
 will change one, and nothing will tell you which door somebody else changed, so
 replicating them means shipping a door registry or a mod-facing registration API

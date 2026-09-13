@@ -404,6 +404,37 @@ namespace Gtamp.Tests
             into.AddRange(AmbientVehicles);
         }
 
+        /// <summary>How many frames this client has been told to stop the game spawning pedestrians.</summary>
+        public int PedsSuppressedFrames { get; private set; }
+
+        public void SuppressAmbientPedsThisFrame() => PedsSuppressedFrames++;
+
+        /// <summary>Ambient pedestrians the fake game has "spawned", which the client may offer to the server.</summary>
+        public List<int> AmbientPeds { get; } = new List<int>();
+
+        public void SampleAmbientPeds(List<int> into, float radius)
+        {
+            into.Clear();
+            into.AddRange(AmbientPeds);
+        }
+
+        /// <summary>Ped state the fake game will report for a handle, so a test can have one to adopt.</summary>
+        public Dictionary<int, PedEntity> Peds2 { get; } = new Dictionary<int, PedEntity>();
+
+        public bool TryReadPed(int handle, PedEntity into)
+        {
+            if (!Peds2.TryGetValue(handle, out PedEntity? source))
+            {
+                return false;
+            }
+
+            into.ModelHash = source.ModelHash;
+            into.Position = source.Position;
+            into.Heading = source.Heading;
+            into.Health = source.Health;
+            return true;
+        }
+
         /// <summary>Vehicle handles this client has drawn an explosion for, in order.</summary>
         public List<int> VehicleExplosions { get; } = new List<int>();
 

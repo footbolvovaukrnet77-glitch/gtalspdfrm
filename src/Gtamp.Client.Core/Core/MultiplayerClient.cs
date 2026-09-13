@@ -212,6 +212,7 @@ namespace Gtamp.Client.Core
             AmbientTraffic = new AmbientTrafficController(Bridge, OwnedEntities)
             {
                 Enabled = Config.SharedTraffic,
+                SharePedestrians = Config.SharedPedestrians,
             };
             // A remote player's car may be a replicated vehicle or the one this client
             // owns and is driving — a passenger in your own car is the ordinary case,

@@ -532,6 +532,27 @@ namespace Gtamp.Shared.Protocol
         /// <summary>Full state written by the entity's own serializer, or empty.</summary>
         public byte[] State { get; set; } = Array.Empty<byte>();
 
+        /// <summary>
+        /// True when this is a car or a person the game spawned by itself and this
+        /// client is handing over because the server asked it to be the traffic source.
+        /// <para>
+        /// It exists so the two limits can stay separate. The per-player cap is
+        /// anti-spam and bounds what a modified client can conjure into somebody else's
+        /// world; the ambient allowance is the room a source needs to hold a street.
+        /// Counting them together meant a player alone on a server — who is always the
+        /// source, because there is nobody else to be it — got the ambient allowance
+        /// added to their spam cap and the spam cap stopped meaning anything. A test
+        /// that had been passing since Phase 3 caught it.
+        /// </para>
+        /// <para>
+        /// A modified client can of course set this on anything. That is bounded rather
+        /// than prevented: the flag only counts while the SERVER has made that client
+        /// the source, and what it buys is one bounded number rather than an unbounded
+        /// one.
+        /// </para>
+        /// </summary>
+        public bool Ambient { get; set; }
+
         public byte[] Serialize()
         {
             var writer = new NetWriter(256);
@@ -542,6 +563,7 @@ namespace Gtamp.Shared.Protocol
             writer.WriteVarUInt(Dimension);
             writer.WriteUInt32(RequestTag);
             writer.WriteByteArray(State);
+            writer.WriteBool(Ambient);
             return writer.ToArray();
         }
 
@@ -557,6 +579,7 @@ namespace Gtamp.Shared.Protocol
                 Dimension = reader.ReadVarUInt(),
                 RequestTag = reader.ReadUInt32(),
                 State = reader.ReadByteArray(ProtocolConstants.MaxPacketSize),
+                Ambient = reader.ReadBool(),
             };
         }
     }

@@ -126,6 +126,27 @@ namespace Gtamp.Server.Core
         public int MaxEntitiesPerPlayer { get; set; } = 32;
 
         /// <summary>
+        /// Extra entities a client is allowed while it is the ambient traffic source
+        /// for its area, on top of <see cref="MaxEntitiesPerPlayer"/>.
+        /// <para>
+        /// Two limits rather than one raised limit, because they are protecting against
+        /// different things. The per-player cap is anti-spam: it bounds what a modified
+        /// client can conjure into somebody else's world, and raising it for everybody
+        /// to make room for traffic would weaken that for everybody. This one applies
+        /// only while the server itself has asked that client to spawn traffic, and
+        /// stops applying the moment it stops asking.
+        /// </para>
+        /// <para>
+        /// It has to be at least <c>AmbientTrafficController.MaxAdopted</c>, or the
+        /// source offers cars the server refuses and re-offers them twice a second for
+        /// the rest of the session. A test asserts the two numbers agree, because
+        /// nothing else would: both sides are individually sensible and the failure is
+        /// a rejection loop in a log nobody reads.
+        /// </para>
+        /// </summary>
+        public int MaxAmbientEntitiesPerSource { get; set; } = 96;
+
+        /// <summary>
         /// Beyond this distance an entity's owner is considered too far to simulate it
         /// well, and it is handed to a closer player or back to the server.
         /// </summary>

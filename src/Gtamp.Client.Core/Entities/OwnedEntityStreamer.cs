@@ -104,7 +104,7 @@ namespace Gtamp.Client.Entities
         /// decides to offer them.
         /// </para>
         /// </summary>
-        public void RegisterVehicle(int handle, EntitySnapshotView view, double now)
+        public void RegisterVehicle(int handle, EntitySnapshotView view, double now, bool ambient = false)
         {
             if (handle == 0)
             {
@@ -136,26 +136,71 @@ namespace Gtamp.Client.Entities
                 return;
             }
 
+            Offer(EntityType.Vehicle, handle, model, state, now, "vehicle", ambient);
+        }
+
+        /// <summary>
+        /// Offers one pedestrian this client's game created to the server.
+        /// <para>
+        /// The same shape as a vehicle and deliberately so: a ped that the game spawned
+        /// on the pavement and one that a player is sitting in reach the server by the
+        /// same route, and the only thing that differs is what decided to offer them.
+        /// </para>
+        /// </summary>
+        public void RegisterPed(int handle, EntitySnapshotView view, double now, bool ambient = false)
+        {
+            if (handle == 0 || _handleToEntity.ContainsKey(handle))
+            {
+                return;
+            }
+
+            foreach (PendingSpawn pending in _pending.Values)
+            {
+                if (pending.GameHandle == handle && now - pending.SentAt < SpawnRequestTimeout)
+                {
+                    return;
+                }
+            }
+
+            var state = new PedEntity(EntityId.None);
+            if (!_bridge.TryReadPed(handle, state) || state.ModelHash == 0)
+            {
+                return;
+            }
+
+            Offer(EntityType.Ped, handle, state.ModelHash, state, now, "pedestrian", ambient);
+        }
+
+        /// <summary>
+        /// Describes a local entity to the server and asks it to take ownership of one
+        /// like it. A client cannot invent an id, so it sends a tag and waits.
+        /// </summary>
+        private void Offer(
+            EntityType type, int handle, uint model, NetEntity state, double now, string what, bool ambient)
+        {
             var writer = new NetWriter(256);
-            _registry.Get((byte)EntityType.Vehicle).WriteFull(writer, state);
+            _registry.Get((byte)type).WriteFull(writer, state);
 
             uint tag = _nextRequestTag++;
             var request = new EntitySpawnRequestMessage
             {
-                Type = EntityType.Vehicle,
+                Type = type,
                 ModelHash = model,
                 Position = state.Position,
                 Heading = state.Heading,
                 Dimension = state.Dimension,
                 RequestTag = tag,
                 State = writer.ToArray(),
+                Ambient = ambient,
             };
 
             _pending[tag] = new PendingSpawn(handle, now);
             SpawnsRequested++;
             Send?.Invoke(NetMessageType.EntitySpawnRequest, request.Serialize(), DeliveryMethod.ReliableOrdered);
 
-            _log.Debug(LogCategory.Entity, $"Asked the server to adopt local vehicle handle {handle} (model 0x{model:X8}).");
+            _log.Debug(
+                LogCategory.Entity,
+                $"Asked the server to adopt local {what} handle {handle} (model 0x{model:X8}).");
         }
 
         /// <summary>Applies the server's answer to a spawn request, or an ownership change.</summary>
@@ -264,39 +309,65 @@ namespace Gtamp.Client.Entities
                     continue;
                 }
 
-                if (entity is not VehicleEntity)
+                if (entity is not VehicleEntity && entity is not PedEntity)
                 {
                     continue;
                 }
 
-                if (!_bridge.IsRemoteVehicleValid(pair.Value) && _bridge.GetVehicleModel(pair.Value) == 0)
+                // Gone from the game: the model is unreadable and it is not one we are
+                // drawing on the server's behalf either. Forgotten rather than reported
+                // as frozen at its last position for ever.
+                if (entity is VehicleEntity
+                    && !_bridge.IsRemoteVehicleValid(pair.Value)
+                    && _bridge.GetVehicleModel(pair.Value) == 0)
                 {
                     _removalBuffer.Add(pair.Key);
                     continue;
                 }
 
-                var state = new VehicleEntity(pair.Key);
-                if (!_bridge.TryReadVehicle(pair.Value, state))
+                // Read as whatever the server says it is. Until ambient pedestrians
+                // were shared this was always a vehicle, and reading a ped as one would
+                // have produced an empty state reported twenty times a second as though
+                // it were true.
+                NetEntity state;
+                if (entity.Type == EntityType.Ped)
                 {
-                    continue;
+                    var ped = new PedEntity(pair.Key);
+                    if (!_bridge.TryReadPed(pair.Value, ped))
+                    {
+                        continue;
+                    }
+
+                    state = ped;
+                }
+                else
+                {
+                    var vehicle = new VehicleEntity(pair.Key);
+                    if (!_bridge.TryReadVehicle(pair.Value, vehicle))
+                    {
+                        continue;
+                    }
+
+                    // What this vehicle is hanging from, translated out of game handles.
+                    // The bridge cannot do it: it knows handles and this layer owns the
+                    // map from a handle back to a replicated id. A carrier that is not a
+                    // replicated entity — an ambient tow truck nobody has adopted —
+                    // resolves to nothing and is reported as unattached, which is true
+                    // as far as the world is concerned.
+                    int carrier = _bridge.GetVehicleAttachedTo(pair.Value);
+                    vehicle.AttachedToId =
+                        carrier != 0 && _handleToEntity.TryGetValue(carrier, out EntityId carrierId)
+                            ? carrierId
+                            : EntityId.None;
+
+                    state = vehicle;
                 }
 
                 // Preserve the fields the server owns; reporting our stale copy of them
                 // would fight the server's own decisions.
                 state.OwnerId = entity.OwnerId;
 
-                // What this vehicle is hanging from, translated out of game handles.
-                // The bridge cannot do it: it knows handles and this layer owns the map
-                // from a handle back to a replicated id. A carrier that is not a
-                // replicated entity — an ambient tow truck nobody has adopted — resolves
-                // to nothing and is reported as unattached, which is true as far as the
-                // world is concerned.
-                int carrier = _bridge.GetVehicleAttachedTo(pair.Value);
-                state.AttachedToId = carrier != 0 && _handleToEntity.TryGetValue(carrier, out EntityId carrierId)
-                    ? carrierId
-                    : EntityId.None;
-
-                INetEntitySerializer serializer = _registry.Get((byte)EntityType.Vehicle);
+                INetEntitySerializer serializer = _registry.Get((byte)entity.Type);
                 var writer = new NetWriter(256);
                 uint baselineId = 0;
 

@@ -237,6 +237,35 @@ namespace Gtamp.Client.Core
         /// </summary>
         void SampleAmbientVehicles(List<int> into, float radius);
 
+        /// <summary>
+        /// Stops GTA V spawning ambient pedestrians of its own, for this frame only.
+        /// <para>
+        /// Separate from the traffic call and separately switchable, because the two
+        /// were shipped a commit apart and because a server may reasonably want one and
+        /// not the other: a city with shared cars and local people is coherent, and one
+        /// with shared cars and NO people is not.
+        /// </para>
+        /// </summary>
+        void SuppressAmbientPedsThisFrame();
+
+        /// <summary>
+        /// Collects the ambient pedestrians near the local player: the ones the game
+        /// spawned by itself and this client may hand to the server. Never includes the
+        /// local player, and never a ped this client is already drawing on the server's
+        /// behalf.
+        /// </summary>
+        void SampleAmbientPeds(List<int> into, float radius);
+
+        /// <summary>
+        /// Reads one ped this client owns, so its state can be offered or streamed.
+        /// <para>
+        /// The counterpart of <see cref="TryReadVehicle"/>, and it did not exist
+        /// because until now every networked ped was created by the server and never
+        /// read back from a game.
+        /// </para>
+        /// </summary>
+        bool TryReadPed(int handle, PedEntity into);
+
         /// <summary>Model hash of a local vehicle handle, or 0 when the handle is not valid.</summary>
         uint GetVehicleModel(int handle);
 

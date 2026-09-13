@@ -706,6 +706,114 @@ namespace Gtamp.Client.Shv.Bridge
             }
         }
 
+        public void SuppressAmbientPedsThisFrame()
+        {
+            try
+            {
+                Function.Call(Hash.SET_PED_DENSITY_MULTIPLIER_THIS_FRAME, 0f);
+                Function.Call(Hash.SET_SCENARIO_PED_DENSITY_MULTIPLIER_THIS_FRAME, 0f, 0f);
+            }
+            catch (Exception)
+            {
+                // A script host without one of them. Pedestrians stay local, which is
+                // the behaviour that existed before this.
+            }
+        }
+
+        public void SampleAmbientPeds(List<int> into, float radius)
+        {
+            into.Clear();
+
+            try
+            {
+                Ped player = Game.Player.Character;
+                if (!player.Exists())
+                {
+                    return;
+                }
+
+                Vector3 origin = player.Position;
+                float squared = radius * radius;
+
+                foreach (Ped ped in GtaWorld.GetAllPeds())
+                {
+                    if (ped == null || !ped.Exists() || ped.Handle == player.Handle)
+                    {
+                        continue;
+                    }
+
+                    // Anything this client is already showing on the server's behalf.
+                    // Offering a replicated ped back would have the server adopt its own
+                    // reflection and the pavement would double every few seconds.
+                    if (_remotePeds.ContainsKey(ped.Handle))
+                    {
+                        continue;
+                    }
+
+                    // A ped in a vehicle belongs to that vehicle's replication, not to
+                    // the pavement: adopting it separately would have two owners moving
+                    // the same body.
+                    if (ped.IsInVehicle())
+                    {
+                        continue;
+                    }
+
+                    if (ped.Position.DistanceToSquared(origin) > squared)
+                    {
+                        continue;
+                    }
+
+                    into.Add(ped.Handle);
+                }
+            }
+            catch (Exception exception)
+            {
+                _log.Error(LogCategory.Client, "Could not read the ambient pedestrians.", exception);
+            }
+        }
+
+        public bool TryReadPed(int handle, PedEntity into)
+        {
+            try
+            {
+                Ped? ped = null;
+                foreach (Ped candidate in GtaWorld.GetAllPeds())
+                {
+                    if (candidate != null && candidate.Exists() && candidate.Handle == handle)
+                    {
+                        ped = candidate;
+                        break;
+                    }
+                }
+
+                if (ped == null)
+                {
+                    return false;
+                }
+
+                into.ModelHash = unchecked((uint)ped.Model.Hash);
+                into.Position = ToNet(ped.Position);
+                into.Velocity = ToNet(ped.Velocity);
+                into.Heading = ped.Heading;
+                into.Health = ped.Health;
+                into.Armor = ped.Armor;
+                into.Movement = SampleMovement(ped);
+                into.Flags = SampleFlags(ped);
+                into.RelationshipGroupHash = unchecked((uint)ped.RelationshipGroup.Hash);
+
+                Weapon weapon = ped.Weapons.Current;
+                into.CurrentWeaponHash = weapon != null && weapon.IsPresent
+                    ? unchecked((uint)weapon.Hash)
+                    : 0u;
+
+                return true;
+            }
+            catch (Exception)
+            {
+                return false;
+            }
+        }
+
         public bool TryGetRemotePedPosition(int handle, out NetVector3 position)
         {
             if (_remotePeds.TryGetValue(handle, out Ped ped) && ped.Exists())

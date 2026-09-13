@@ -120,6 +120,17 @@ namespace Gtamp.Client.Core
         /// </summary>
         public bool SharedTraffic { get; set; } = true;
 
+        /// <summary>
+        /// Whether the people on the pavement are shared as well as the cars.
+        /// <para>
+        /// Requires <see cref="SharedTraffic"/>. Off leaves pedestrians exactly as every
+        /// co-op mod for this game leaves them — local, and different on every machine —
+        /// which is a coherent setting. What is not a setting is suppressing them
+        /// without replicating them, so this is one switch for both halves.
+        /// </para>
+        /// </summary>
+        public bool SharedPedestrians { get; set; } = true;
+
         public bool ShowNetworkOverlay { get; set; }
 
         /// <summary>
@@ -248,6 +259,8 @@ namespace Gtamp.Client.Core
                 $"ApplyRemotePosture={ApplyRemotePosture}",
                 "; Share ambient traffic with the other players instead of spawning your own.",
                 $"SharedTraffic={SharedTraffic}",
+                "; Share the people on the pavement too. Needs SharedTraffic.",
+                $"SharedPedestrians={SharedPedestrians}",
                 $"ShowNetworkOverlay={ShowNetworkOverlay}",
                 $"ShowPlayerBlips={ShowPlayerBlips}",
                 $"ShowPlayerNames={ShowPlayerNames}",
@@ -327,6 +340,9 @@ namespace Gtamp.Client.Core
                     break;
                 case "sharedtraffic":
                     SharedTraffic = ParseBool(value);
+                    break;
+                case "sharedpedestrians":
+                    SharedPedestrians = ParseBool(value);
                     break;
                 case "interpolationdelay":
                     if (double.TryParse(value, NumberStyles.Float, CultureInfo.InvariantCulture, out double delay))

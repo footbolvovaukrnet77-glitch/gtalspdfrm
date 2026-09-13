@@ -25,15 +25,19 @@ namespace Gtamp.Client.Entities
     /// source sees no car until the source has offered it and a snapshot has carried
     /// it, so traffic appears a fraction of a second late on arrival in a new street.
     /// A car is replicated as an entity rather than simulated, so its driving is the
-    /// source's driving interpolated, not local AI. And the cars near a source get
-    /// replicated to everybody: sixty extra entities is why the snapshot budget had to
-    /// be raised from 1024 bytes to 8192.
+    /// source's driving interpolated, not local AI. And the cars and people near a
+    /// source are replicated to everybody, which is eighty-odd extra entities sharing a
+    /// snapshot budget that cannot be raised — it is an MTU limit, not a policy, and
+    /// the attempt to raise it is recorded against `SnapshotByteBudget`. They update
+    /// every second or third snapshot where a player updates every one, and that
+    /// ordering is correct: a player must never lose priority to a parked car.
     /// </para>
     /// <para>
-    /// Pedestrians are NOT part of this. They are not suppressed and not adopted, so
-    /// they stay local and different on every machine, exactly as they were. Half of
-    /// this — suppressing them without replicating them — would empty the pavements,
-    /// which is further from one world rather than closer.
+    /// Pedestrians travel the same way and under their own ceiling, and the two halves
+    /// of that are one switch on purpose. Suppressing them without replicating them
+    /// would empty the pavements, which is further from one world rather than closer —
+    /// so shared cars with local people is a coherent city and a permitted setting,
+    /// while shared cars with nobody walking is neither.
     /// </para>
     /// </summary>
     public sealed class AmbientTrafficController
@@ -59,6 +63,17 @@ namespace Gtamp.Client.Entities
         public const int MaxAdopted = 60;
 
         /// <summary>
+        /// Most ambient pedestrians held at once, on top of the cars.
+        /// <para>
+        /// Smaller than the car ceiling on purpose. A pedestrian is replicated at the
+        /// same cost as a player and is worth a great deal less: nobody has ever
+        /// noticed the twelfth person on a pavement, and everybody notices a car that
+        /// updates twice a second.
+        /// </para>
+        /// </summary>
+        public const int MaxAdoptedPeds = 24;
+
+        /// <summary>
         /// How often ambient cars are offered to the server, in seconds.
         /// <para>
         /// Not every frame: collecting them walks the game's vehicle list, and a car
@@ -71,6 +86,7 @@ namespace Gtamp.Client.Entities
         private readonly IGameBridge _bridge;
         private readonly OwnedEntityStreamer _streamer;
         private readonly List<int> _ambient = new List<int>();
+        private readonly List<int> _ambientPeds = new List<int>();
         private double _nextOffer;
 
         public AmbientTrafficController(IGameBridge bridge, OwnedEntityStreamer streamer)
@@ -92,6 +108,20 @@ namespace Gtamp.Client.Entities
         /// <summary>Ambient cars this client has offered to the server since connecting.</summary>
         public int Offered { get; private set; }
 
+        /// <summary>Ambient pedestrians this client has offered since connecting.</summary>
+        public int PedsOffered { get; private set; }
+
+        /// <summary>
+        /// Whether pedestrians are shared as well as traffic.
+        /// <para>
+        /// Separate from <see cref="Enabled"/> because the two failure modes are not
+        /// the same. Shared cars with local people is a coherent city. Shared cars with
+        /// NO people is not, and that is what this being half-on would produce, so it
+        /// is one switch that turns both halves of the pedestrian work on together.
+        /// </para>
+        /// </summary>
+        public bool SharePedestrians { get; set; } = true;
+
         /// <summary>Frames this client has told the game not to spawn traffic.</summary>
         public int SuppressedFrames { get; private set; }
 
@@ -109,6 +139,11 @@ namespace Gtamp.Client.Entities
             if (!IsSource)
             {
                 _bridge.SuppressAmbientTrafficThisFrame();
+                if (SharePedestrians)
+                {
+                    _bridge.SuppressAmbientPedsThisFrame();
+                }
+
                 SuppressedFrames++;
                 return;
             }
@@ -120,10 +155,20 @@ namespace Gtamp.Client.Entities
 
             _nextOffer = now + OfferIntervalSeconds;
 
-            // The cap counts everything this client already holds for the server, not
-            // only the ambient share: the player's own car and anything a mod spawned
-            // are the same weight in the world and on the wire.
-            int room = MaxAdopted - _streamer.OwnedCount;
+            OfferVehicles(view, now);
+
+            // Outside the vehicle ceiling, not inside it: a street full of traffic would
+            // otherwise leave no room for anybody walking on it, because the cars are
+            // collected first and there are more of them.
+            OfferPedestrians(view, now);
+        }
+
+        private void OfferVehicles(EntitySnapshotView view, double now)
+        {
+            // The cap counts everything this client holds for the server that is not a
+            // pedestrian: the player's own car and anything a mod spawned are the same
+            // weight in the world and on the wire as an ambient one.
+            int room = MaxAdopted - (_streamer.OwnedCount - PedsHeld);
             if (room <= 0)
             {
                 return;
@@ -138,18 +183,64 @@ namespace Gtamp.Client.Entities
                     continue;
                 }
 
-                _streamer.RegisterVehicle(_ambient[i], view, now);
+                _streamer.RegisterVehicle(_ambient[i], view, now, ambient: true);
                 Offered++;
                 room--;
             }
         }
+
+        /// <summary>
+        /// Hands the people on the pavement over, under their own ceiling.
+        /// <para>
+        /// Counted separately from the cars rather than sharing one budget, because a
+        /// street full of traffic would otherwise leave no room for anybody walking on
+        /// it — the cars are collected first and there are more of them.
+        /// </para>
+        /// </summary>
+        private void OfferPedestrians(EntitySnapshotView view, double now)
+        {
+            if (!SharePedestrians)
+            {
+                return;
+            }
+
+            int room = MaxAdoptedPeds - PedsHeld;
+            if (room <= 0)
+            {
+                return;
+            }
+
+            _bridge.SampleAmbientPeds(_ambientPeds, CollectionRadius);
+
+            for (int i = 0; i < _ambientPeds.Count && room > 0; i++)
+            {
+                if (_streamer.OwnsHandle(_ambientPeds[i]))
+                {
+                    continue;
+                }
+
+                _streamer.RegisterPed(_ambientPeds[i], view, now, ambient: true);
+                PedsOffered++;
+                PedsHeld++;
+                room--;
+            }
+        }
+
+        /// <summary>
+        /// Pedestrians this client currently holds for the server. Counted here rather
+        /// than asked of the streamer, which knows how many entities it owns and not
+        /// which of them are people.
+        /// </summary>
+        public int PedsHeld { get; private set; }
 
         /// <summary>Forgotten on disconnect, like everything else that was true of a session.</summary>
         public void Reset()
         {
             IsSource = false;
             _nextOffer = 0;
+            PedsHeld = 0;
             _ambient.Clear();
+            _ambientPeds.Clear();
         }
     }
 }
