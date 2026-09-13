@@ -23,6 +23,24 @@ namespace Gtamp.Client.Entities
         /// <summary>Give up on a spawn request that has not been answered in this long, and ask again.</summary>
         public const double SpawnRequestTimeout = 3.0;
 
+        /// <summary>
+        /// How long a handle the server refused is left alone before being offered again.
+        /// <para>
+        /// A refusal was removed from the pending list and otherwise forgotten, so the
+        /// next offer tick asked again, and the tick after that. A real session shows
+        /// "you already own 32 entities, which is the per-player limit" arriving from
+        /// one client twenty times a second for fifteen seconds -- several hundred
+        /// reliable messages, each one answered, none of which could ever succeed,
+        /// because the condition that caused the refusal does not change on its own in
+        /// fifty milliseconds.
+        /// </para>
+        /// <para>
+        /// Ten seconds is long enough that the storm is gone and short enough that a
+        /// player who drops a car and frees up room gets it back without reconnecting.
+        /// </para>
+        /// </summary>
+        public const double SpawnRefusalCooldown = 10.0;
+
         private readonly IGameBridge _bridge;
         private readonly LogBus _log;
         private readonly EntityRegistry _registry;
@@ -43,6 +61,8 @@ namespace Gtamp.Client.Entities
         private readonly Dictionary<EntityId, double> _lastSeenInView = new Dictionary<EntityId, double>();
         private readonly Dictionary<uint, PendingSpawn> _pending = new Dictionary<uint, PendingSpawn>();
         private readonly Dictionary<int, EntityId> _handleToEntity = new Dictionary<int, EntityId>();
+        private readonly Dictionary<int, double> _refusedUntil = new Dictionary<int, double>();
+        private double _now;
         private readonly List<EntityId> _removalBuffer = new List<EntityId>();
 
         private uint _nextRequestTag = 1;
@@ -178,6 +198,16 @@ namespace Gtamp.Client.Entities
         private void Offer(
             EntityType type, int handle, uint model, NetEntity state, double now, string what, bool ambient)
         {
+            if (_refusedUntil.TryGetValue(handle, out double until))
+            {
+                if (now < until)
+                {
+                    return;
+                }
+
+                _refusedUntil.Remove(handle);
+            }
+
             var writer = new NetWriter(256);
             _registry.Get((byte)type).WriteFull(writer, state);
 
@@ -235,9 +265,15 @@ namespace Gtamp.Client.Entities
                     break;
 
                 case EntityEventKind.SpawnRejected:
-                    if (_pending.TryGetValue(message.RequestTag, out PendingSpawn _))
+                    if (_pending.TryGetValue(message.RequestTag, out PendingSpawn refused))
                     {
                         _pending.Remove(message.RequestTag);
+
+                        // And do not ask again straight away. Whatever the server
+                        // refused it for -- the per-player limit, a model it will not
+                        // take -- is not a condition that changes in the fifty
+                        // milliseconds before the next offer tick.
+                        _refusedUntil[refused.GameHandle] = _now + SpawnRefusalCooldown;
                     }
 
                     SpawnsRejected++;
@@ -263,6 +299,10 @@ namespace Gtamp.Client.Entities
         /// <summary>Reports the state of everything this client owns.</summary>
         public void Stream(EntitySnapshotView view, double now, double interval)
         {
+            // The entity events that carry a refusal arrive between streams and have no
+            // clock of their own; this is the only one there is.
+            _now = now;
+
             if (now - _lastStreamTime < interval)
             {
                 return;

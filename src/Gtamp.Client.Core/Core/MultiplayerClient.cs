@@ -1304,6 +1304,16 @@ namespace Gtamp.Client.Core
         public double ClientUpdateInterval =>
             1d / Math.Max(1, Connection.Accept?.ClientUpdateRate ?? ProtocolConstants.DefaultClientUpdateRate);
 
+        /// <summary>Damage claims dropped because the target was already dead on the server.</summary>
+        public int DamageClaimsSuppressed { get; private set; }
+
+        private static bool IsDead(NetEntity entity) => entity switch
+        {
+            PlayerEntity player => player.Health <= 0 || player.HasFlag(PlayerFlags.Dead),
+            PedEntity ped => ped.Health <= 0,
+            _ => false,
+        };
+
         /// <summary>
         /// Reports a hit this client believes it landed. It is a claim: the server
         /// decides whether it happened — see docs/SECURITY.md.
@@ -1313,6 +1323,24 @@ namespace Gtamp.Client.Core
         {
             if (!Connection.IsConnected)
             {
+                return;
+            }
+
+            // A corpse is not a target.
+            //
+            // The server refuses these with "the target is already dead", and it was
+            // refusing them four times a second for thirty seconds at a stretch: one
+            // reliable message per claim, one log line per refusal, and not one of them
+            // could ever be accepted. The client already knows -- the replicated world
+            // it is drawing from says the entity is dead -- so the claim is one it
+            // should never have made.
+            //
+            // Checked against the replicated world and not against the local game: what
+            // the server thinks is what the server will arbitrate against, and a local
+            // ped that has not caught up yet is exactly the disagreement this is for.
+            if (ReplicatedWorld.TryGet(target, out NetEntity known) && IsDead(known))
+            {
+                DamageClaimsSuppressed++;
                 return;
             }
 

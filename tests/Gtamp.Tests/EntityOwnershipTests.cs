@@ -119,6 +119,7 @@ namespace Gtamp.Tests
             Assert.True(harness.Server.Players.Sessions.Single(s => s.Name == "alice").IsPopulationSource);
         }
 
+
         [Fact]
         public void AVehicleAClientGetsIntoIsAdoptedByTheServer()
         {
@@ -318,6 +319,52 @@ namespace Gtamp.Tests
             Assert.True(alice.Client.OwnedEntities.SpawnsRejected > 0, "the limit was never reported to the client");
         }
 
+
+        /// <summary>
+        /// A refused spawn is not asked for again on the next tick, and the tick after.
+        /// <para>
+        /// The rejection was removed from the pending list and otherwise forgotten, so
+        /// the offer that produced it ran again fifty milliseconds later. A real session
+        /// shows one client's spawn refused -- "you already own 32 entities, which is
+        /// the per-player limit" -- twenty times a second for fifteen seconds without a
+        /// break: several hundred reliable messages, each read, arbitrated and logged by
+        /// the server, none of which could ever succeed, because being over the limit is
+        /// not a condition that changes on its own between two frames.
+        /// </para>
+        /// </summary>
+        [Fact]
+        public void ASpawnTheServerRefusedIsNotAskedForAgainOnTheNextTick()
+        {
+            var config = Config();
+            config.MaxEntitiesPerPlayer = 1;
+
+            using var harness = new TestHarness(config);
+            TestClient alice = Connected(harness, "alice");
+
+            alice.Bridge.PutLocalPlayerInVehicle(Adder, new NetVector3(220f, -810f, 30f));
+            Assert.True(harness.AdvanceUntil(() => alice.Client.OwnedEntities.OwnedCount == 1, timeoutSeconds: 5));
+
+            // A second car, which the server has no room for.
+            alice.Bridge.LocalVehicleHandle = 0;
+            harness.Advance(0.2);
+            alice.Bridge.PutLocalPlayerInVehicle(Adder, new NetVector3(260f, -810f, 30f));
+
+            Assert.True(
+                harness.AdvanceUntil(() => alice.Client.OwnedEntities.SpawnsRejected > 0, timeoutSeconds: 5),
+                "the server never refused the second car");
+
+            int refusalsSoFar = alice.Client.OwnedEntities.SpawnsRejected;
+
+            // Five more seconds of holding a car the server will not take. Before the
+            // cooldown this was an offer every stream tick for the whole five seconds.
+            harness.Advance(5.0);
+
+            Assert.True(
+                alice.Client.OwnedEntities.SpawnsRejected <= refusalsSoFar + 1,
+                $"the client kept asking: {alice.Client.OwnedEntities.SpawnsRejected - refusalsSoFar} "
+                + "refusals in five seconds after the first one");
+        }
+
         [Fact]
         public void ASpawnOutsideTheWorldIsRefused()
         {
@@ -433,6 +480,52 @@ namespace Gtamp.Tests
     public class DamageReplicationTests
     {
         private static readonly uint Pistol = GameHash.Joaat("WEAPON_PISTOL");
+
+        /// <summary>
+        /// Shooting a corpse does not put a message on the wire.
+        /// <para>
+        /// A real session logged "damage claim refused: the target is already dead"
+        /// four times a second for thirty seconds running, and again for another
+        /// thirty. Every one of those was a reliable message the server had to read,
+        /// arbitrate and log, and not one could ever be accepted -- the client was
+        /// drawing the same corpse the server was refusing claims against.
+        /// </para>
+        /// </summary>
+        [Fact]
+        public void AClaimAgainstATargetTheClientCanSeeIsDeadIsNeverSent()
+        {
+            using var harness = new TestHarness(new ServerConfig
+            {
+                PersistenceEnabled = false,
+                SaveIntervalSeconds = 0,
+                RespawnDelaySeconds = 60,
+            });
+
+            TestClient alice = Connected(harness, "alice");
+            TestClient bob = Connected(harness, "bob");
+            Assert.True(harness.AdvanceUntil(() => alice.PlayerCount == 2 && bob.PlayerCount == 2));
+
+            alice.Bridge.Sample.CurrentWeaponHash = Pistol;
+            bob.Bridge.Sample.Health = 0;
+
+            // Alice's client has to have seen bob die before it can know not to bother.
+            Assert.True(
+                harness.AdvanceUntil(
+                    () => alice.Client.ReplicatedWorld.TryGet(bob.Client.LocalEntityId, out NetEntity seen)
+                        && seen is PlayerEntity dead && dead.Health <= 0,
+                    timeoutSeconds: 5),
+                "alice's client never saw bob die");
+
+            int before = alice.Client.DamageClaimsSuppressed;
+            PlayerEntity bobOnServer = harness.Server.World.GetPlayer(bob.Client.LocalEntityId)!;
+
+            for (int i = 0; i < 20; i++)
+            {
+                alice.Client.ReportDamage(bob.Client.LocalEntityId, Pistol, 45, bobOnServer.Position);
+            }
+
+            Assert.Equal(before + 20, alice.Client.DamageClaimsSuppressed);
+        }
 
         private static TestClient Connected(TestHarness harness, string name)
         {

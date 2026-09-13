@@ -116,6 +116,72 @@ namespace Gtamp.Tests
             Assert.DoesNotContain(outcome.Violations, v => v.Kind == ViolationKind.HealthHack);
         }
 
+
+        /// <summary>
+        /// A disagreement the correction cannot fix must not last forever.
+        /// <para>
+        /// A real session spent minutes like this: the client reported a position
+        /// 234.8 m from where the server had the player, the server refused it as a
+        /// teleport, kept its own, and sent it back as a correction the client applied
+        /// to a game that did not move. Next update: the same 234.8 m, refused again.
+        /// 1,494 corrections, the same number to the centimetre, and the player stood
+        /// somewhere nobody else could see them for the whole session.
+        /// </para>
+        /// <para>
+        /// The budget cannot close it -- on foot it caps at about 34 m -- so no amount
+        /// of waiting resolves a gap of 235 m, and nothing else was ever going to. A
+        /// teleport that repeats, unchanged, for two seconds is not a teleport being
+        /// attempted; it is where the player actually is, and the server is the one
+        /// that is wrong. Believing them once is strictly better than a permanent,
+        /// total desync, and it is logged.
+        /// </para>
+        /// </summary>
+        [Fact]
+        public void APositionTheServerCannotTalkTheClientOutOfIsEventuallyBelieved()
+        {
+            var engine = new AntiCheatEngine();
+            PlayerEntity player = Player();
+            var state = new PlayerValidationState();
+
+            double now = 1.0;
+            engine.ValidatePlayerState(player, Proposal(player.Position), state, now);
+
+            var stuck = new NetVector3(234.8f, 0f, 30f);
+            bool believed = false;
+
+            for (int i = 0; i < 200 && !believed; i++)
+            {
+                now += 1d / 20d;
+                ValidationOutcome outcome = engine.ValidatePlayerState(player, Proposal(stuck), state, now);
+                believed = outcome.Accepted;
+            }
+
+            Assert.True(believed, "the server never stopped arguing with a client it could not move");
+        }
+
+        /// <summary>
+        /// And it is not a way to teleport at will: a client that keeps moving is not
+        /// repeating itself, so it never earns the resync.
+        /// </summary>
+        [Fact]
+        public void AClientTeleportingSomewhereNewEachTimeIsStillRefused()
+        {
+            var engine = new AntiCheatEngine();
+            PlayerEntity player = Player();
+            var state = new PlayerValidationState();
+
+            double now = 1.0;
+            engine.ValidatePlayerState(player, Proposal(player.Position), state, now);
+
+            for (int i = 0; i < 200; i++)
+            {
+                now += 1d / 20d;
+                var somewhereElse = new NetVector3(300f + (i * 50f), 0f, 30f);
+                ValidationOutcome outcome = engine.ValidatePlayerState(player, Proposal(somewhereElse), state, now);
+                Assert.False(outcome.Accepted, $"accepted a fresh teleport on update {i}");
+            }
+        }
+
         [Fact]
         public void NormalMovementIsAccepted()
         {

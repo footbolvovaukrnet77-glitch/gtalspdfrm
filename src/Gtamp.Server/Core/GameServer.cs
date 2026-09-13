@@ -952,6 +952,16 @@ namespace Gtamp.Server.Core
             };
 
             ValidationOutcome outcome = AntiCheat.ValidatePlayerState(entity, proposal, session.Validation, _now);
+            if (outcome.Resynchronised)
+            {
+                Log.Warning(
+                    LogCategory.Security,
+                    $"{session.Name}#{session.PlayerId}: resynchronised to {proposal.Position} after refusing the "
+                    + $"same position {AntiCheat.Settings.RefusalsBeforeResync} times running "
+                    + $"({NetVector3.Distance(entity.Position, proposal.Position):0.#} m away). The correction was "
+                    + "not reaching their game, so every other client had them in the wrong place.");
+            }
+
             if (!outcome.Accepted)
             {
                 HandleViolations(session, outcome);

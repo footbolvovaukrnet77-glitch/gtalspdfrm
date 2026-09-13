@@ -34,6 +34,13 @@ namespace Gtamp.Shared.Security
 
         public List<ViolationRecord> Violations { get; } = new List<ViolationRecord>();
 
+        /// <summary>
+        /// True when this update was accepted only because the server had been
+        /// refusing the same one for too long. Worth a line in the log: it means the
+        /// server's idea of where this player is had become unreachable by correction.
+        /// </summary>
+        public bool Resynchronised { get; set; }
+
         public ViolationAction StrongestAction
         {
             get
@@ -81,6 +88,20 @@ namespace Gtamp.Shared.Security
         /// </para>
         /// </summary>
         public float MovementBurstSeconds { get; set; } = 1.5f;
+
+        /// <summary>
+        /// Consecutive refusals of the same position before the server believes it.
+        /// <para>
+        /// Two seconds at the usual update rate. A correction that has not moved the
+        /// client in two seconds is not going to: the budget caps well below the gaps
+        /// this happens at, so nothing was ever going to close it, and the player
+        /// stands somewhere no other client can see them until they disconnect.
+        /// </para>
+        /// </summary>
+        public int RefusalsBeforeResync { get; set; } = 40;
+
+        /// <summary>How far a repeated position may drift and still count as the same one.</summary>
+        public float ResyncPositionTolerance { get; set; } = 1f;
 
         /// <summary>Health a player may legitimately regain per second.</summary>
         public float MaxHealthRegenPerSecond { get; set; } = 25f;
@@ -148,6 +169,11 @@ namespace Gtamp.Shared.Security
 
         /// <summary>Health points of regeneration currently banked. Negative means never primed.</summary>
         public double HealthBudget { get; set; } = -1d;
+
+        /// <summary>The position the last refusal was about, and how many times running.</summary>
+        public NetVector3 RefusedPosition { get; set; }
+
+        public int ConsecutiveRefusals { get; set; }
 
         /// <summary>
         /// Behavioural checks are skipped until this time.
@@ -294,12 +320,40 @@ namespace Gtamp.Shared.Security
             double teleportAllowance = Math.Max(Settings.TeleportDistance, state.MovementBudget);
             if (distance > teleportAllowance)
             {
-                Reject(
-                    outcome,
-                    state,
-                    ViolationKind.Teleport,
-                    $"jumped {distance:0.#} m in one update (limit {teleportAllowance:0} m)",
-                    Settings.ActionFor(ViolationKind.Teleport));
+                // Counted before it is judged, because a refusal that keeps arriving
+                // unchanged is the thing being measured.
+                if (NetVector3.Distance(state.RefusedPosition, proposal.Position)
+                    <= Settings.ResyncPositionTolerance)
+                {
+                    state.ConsecutiveRefusals++;
+                }
+                else
+                {
+                    state.RefusedPosition = proposal.Position;
+                    state.ConsecutiveRefusals = 1;
+                }
+
+                if (state.ConsecutiveRefusals >= Settings.RefusalsBeforeResync)
+                {
+                    // The server has been refusing this exact position for two seconds
+                    // and correcting the client to one it will not go to. That is not a
+                    // teleport being attempted, it is where the player is, and every
+                    // other client has been drawing them somewhere else the whole time.
+                    // Believing them once ends it; refusing forever never does.
+                    state.ConsecutiveRefusals = 0;
+                    state.RefusedPosition = default;
+                    state.MovementBudget = -1d;
+                    outcome.Resynchronised = true;
+                }
+                else
+                {
+                    Reject(
+                        outcome,
+                        state,
+                        ViolationKind.Teleport,
+                        $"jumped {distance:0.#} m in one update (limit {teleportAllowance:0} m)",
+                        Settings.ActionFor(ViolationKind.Teleport));
+                }
             }
             else if (distance > state.MovementBudget)
             {
@@ -314,6 +368,7 @@ namespace Gtamp.Shared.Security
             else
             {
                 state.MovementBudget -= distance;
+                state.ConsecutiveRefusals = 0;
             }
 
             // --- Health and armour ---------------------------------------------
