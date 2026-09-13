@@ -1086,7 +1086,83 @@ namespace Gtamp.Client.Shv.Bridge
             prop.IsCollisionEnabled = state.HasFlag(ObjectFlags.HasCollision);
             prop.IsPositionFrozen = state.HasFlag(ObjectFlags.Frozen);
 
+            ApplyObjectPhysics(prop, state);
+            ApplyObjectHealth(prop, state);
             ApplyAttachment(prop, state, attachParentHandle);
+        }
+
+        /// <summary>
+        /// Makes a replicated object behave like a thing physics is moving, or like a
+        /// thing that has been put somewhere.
+        /// <para>
+        /// <c>ObjectFlags.Dynamic</c> was declared, serialised, delta encoded and
+        /// persisted, and no native was ever called for it — so a crate the owner had
+        /// pushed down a hill was a dynamic object on their screen and a placed one on
+        /// everybody else's, arriving as a sequence of positions and sliding between
+        /// them with no weight to it.
+        /// </para>
+        /// <para>
+        /// The velocity matters as much as the flag. A physics object given only
+        /// positions is corrected by the solver on every frame it receives one, which
+        /// is the twitching a replicated ragdoll used to have; given the velocity as
+        /// well it carries on moving between updates and the positions become
+        /// corrections rather than instructions.
+        /// </para>
+        /// </summary>
+        private static void ApplyObjectPhysics(Prop prop, ObjectEntity state)
+        {
+            bool dynamic = state.HasFlag(ObjectFlags.Dynamic) && !state.HasFlag(ObjectFlags.Frozen);
+
+            try
+            {
+                Function.Call(Hash.SET_ENTITY_DYNAMIC, prop.Handle, dynamic);
+                Function.Call(Hash.SET_ENTITY_HAS_GRAVITY, prop.Handle, dynamic);
+
+                if (dynamic)
+                {
+                    prop.Velocity = ToGame(state.Velocity);
+                }
+            }
+            catch (Exception)
+            {
+                // A script host without one of them; the object is then placed rather
+                // than simulated, which is what it was before this.
+            }
+        }
+
+        /// <summary>
+        /// Carries an object's health across, and breaks it where the engine will.
+        /// <para>
+        /// <c>Health</c> and <c>ObjectFlags.Broken</c> were in the same state as
+        /// <c>Dynamic</c>: declared, replicated, persisted, applied by nothing. A
+        /// barrier somebody had smashed was intact on every other screen.
+        /// </para>
+        /// <para>
+        /// <b>What this can and cannot do, stated rather than left to be found.</b>
+        /// GTA V breaks a prop as a consequence of damage, and there is no native that
+        /// says "be broken now". Zero health is the only lever, and it works on the
+        /// props the engine considers breakable and does nothing at all on the rest —
+        /// a concrete block stays whole on every machine including the one that broke
+        /// it, because it did not break there either. What is NOT done is hiding or
+        /// deleting an unbreakable object to fake it: an object that vanishes where the
+        /// owner still sees one is a worse lie than one that is whole where the owner
+        /// sees rubble.
+        /// </para>
+        /// </summary>
+        private static void ApplyObjectHealth(Prop prop, ObjectEntity state)
+        {
+            try
+            {
+                int health = state.HasFlag(ObjectFlags.Broken) ? 0 : Math.Max(0, state.Health);
+                if (prop.Health != health)
+                {
+                    prop.Health = health;
+                }
+            }
+            catch (Exception)
+            {
+                // Not every model answers for health. Left as it is rather than guessed.
+            }
         }
 
         /// <summary>

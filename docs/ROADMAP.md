@@ -248,7 +248,7 @@ machine and real clients, and is not claimed here.
 | Step | What it guards |
 | --- | --- |
 | `dotnet build -c Release -warnaserror` | The zero-warning claim. Without `-warnaserror` it decays the first time a warning lands that nobody scrolls up far enough to see |
-| `dotnet test -c Release` | All 737 tests, with the `.trx` uploaded as an artifact so a failure is readable without re-running anything |
+| `dotnet test -c Release` | All 742 tests, with the `.trx` uploaded as an artifact so a failure is readable without re-running anything |
 | `python3 tools/check-docs.py` | Dead relative links, `#anchors` naming headings that no longer exist, any document that lost its counterpart in the other language, and the three things the documentation asserts about the code: the protocol version, the test count, and the `client.ini` example. All three had drifted before the checks existed |
 
 The whole solution compiles on `ubuntu-latest`, the `net48` client included,
@@ -492,8 +492,26 @@ it through the wall the rocket really hit.
 
 ### Section 14 — Objects
 
-✅ id, model, position, rotation, visibility, collision, attachment, damage,
-custom data. ❌ **scale, physics, destruction, interaction.**
+✅ id, model, position, rotation, visibility, collision, attachment, custom data,
+and now **physics and damage**. `ObjectFlags.Dynamic`, `ObjectFlags.Broken` and
+`Health` were declared, serialised, delta encoded and persisted and no native was ever
+called for any of them: a crate the owner had pushed down a hill was a physics object
+on their screen and a placed one on everybody else's. Velocity travels with the
+dynamic flag, because a physics object given only positions is corrected by the solver
+every frame it receives one — the twitching a replicated ragdoll used to have.
+
+⏸ **destruction**, as far as the engine allows. GTA V breaks a prop as a consequence
+of damage and has no native meaning "be broken now", so zero health is the only lever:
+it works on the props the engine considers breakable and does nothing on the rest.
+Deliberately NOT faked by hiding or deleting an unbreakable object — one that vanishes
+where the owner still sees it is a worse lie than one that is whole where the owner
+sees rubble.
+
+❌ **scale** — no native exposes per-instance object scale in a form this layer can
+use; a mod that needs two sizes ships two models. **interaction** is a gameplay
+concept rather than an engine state: `ObjectFlags.Interactive`, `CustomData` and the
+RPC layer are what a mod uses for it, and the framework deliberately has no opinion
+about what interacting with a crate means.
 
 ### Section 15 — World
 

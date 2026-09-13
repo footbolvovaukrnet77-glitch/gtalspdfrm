@@ -122,6 +122,16 @@ namespace Gtamp.Shared.Entities
                     (w, e) => w.WriteVarUInt((uint)e.Flags),
                     (r, e) => e.Flags = (ObjectFlags)r.ReadVarUInt())
                 .Add(
+                    // Only for an object physics is moving. A crate standing on a
+                    // pavement has a velocity of zero for its whole life and does not
+                    // need a field on the wire to say so twenty times a second; one
+                    // rolling down a hill needs it every time, or it arrives as a
+                    // sequence of positions and slides between them.
+                    "Velocity",
+                    (a, b) => !a.Velocity.Equals(b.Velocity),
+                    (w, e) => w.WriteQuantizedVelocity(e.Velocity),
+                    (r, e) => e.Velocity = r.ReadQuantizedVelocity())
+                .Add(
                     "Health",
                     (a, b) => a.Health != b.Health,
                     (w, e) => w.WriteVarInt(e.Health),
