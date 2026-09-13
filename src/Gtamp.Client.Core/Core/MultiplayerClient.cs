@@ -209,6 +209,18 @@ namespace Gtamp.Client.Core
                 Send = (type, payload, delivery) => Connection.Peer?.Send(type, payload, delivery),
             };
 
+            // An NPC's combat target is most often the person reading the screen, and
+            // they are in no remote list anywhere — so the local player resolves too.
+            RemoteEntities.ResolvePlayerPedHandle = id =>
+            {
+                if (id == LocalEntityId)
+                {
+                    return Bridge.GetLocalPlayerPedHandle();
+                }
+
+                return RemotePlayers.TryGet(id, out RemotePlayer player) ? player.PedHandle : 0;
+            };
+
             AmbientTraffic = new AmbientTrafficController(Bridge, OwnedEntities)
             {
                 Enabled = Config.SharedTraffic,

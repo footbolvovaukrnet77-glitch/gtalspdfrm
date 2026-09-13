@@ -175,6 +175,14 @@ namespace Gtamp.Tests
             _pedPositions[handle] = command.TargetPosition;
         }
 
+        /// <summary>What each NPC was last told to do, and against whom.</summary>
+        public Dictionary<int, (Gtamp.Client.Entities.NpcIntent Intent, int Target)> NpcIntents { get; }
+            = new Dictionary<int, (Gtamp.Client.Entities.NpcIntent, int)>();
+
+        public void ApplyNpcIntent(
+            int handle, Gtamp.Client.Entities.NpcIntent intent, int targetHandle, uint scenarioHash) =>
+            NpcIntents[handle] = (intent, targetHandle);
+
         public void SetRemotePedRelationshipGroup(int handle, uint relationshipGroupHash)
         {
             RelationshipGroups[handle] = relationshipGroupHash;

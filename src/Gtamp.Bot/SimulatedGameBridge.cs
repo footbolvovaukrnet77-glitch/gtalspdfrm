@@ -200,6 +200,14 @@ namespace Gtamp.Bot
         {
         }
 
+        /// <summary>What the client last told each NPC to do, so a bot can report it arrived.</summary>
+        public System.Collections.Generic.Dictionary<int, Gtamp.Client.Entities.NpcIntent> NpcIntents { get; }
+            = new System.Collections.Generic.Dictionary<int, Gtamp.Client.Entities.NpcIntent>();
+
+        public void ApplyNpcIntent(
+            int handle, Gtamp.Client.Entities.NpcIntent intent, int targetHandle, uint scenarioHash) =>
+            NpcIntents[handle] = intent;
+
         public void PlayRemoteShot(int pedHandle, uint weaponHash, NetVector3 origin, NetVector3 impact) =>
             Seen.ShotsDrawn++;
 

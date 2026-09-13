@@ -115,6 +115,19 @@ namespace Gtamp.Client.Core
         void SetRemotePedRelationshipGroup(int handle, uint relationshipGroupHash);
 
         /// <summary>
+        /// Tells a networked NPC to do what the server says it is doing: fight, flee,
+        /// surrender, be arrested, or play a scenario.
+        /// <para>
+        /// The decision is <see cref="Gtamp.Client.Entities.NpcIntentDirector"/>'s and
+        /// is unit-tested; this is the native call. The server owns the intent and the
+        /// game owns the execution, because the server has no navigation mesh and a ped
+        /// whose every footstep came from one would walk through walls.
+        /// </para>
+        /// </summary>
+        /// <param name="targetHandle">The ped to fight or flee from, or 0.</param>
+        void ApplyNpcIntent(int handle, Gtamp.Client.Entities.NpcIntent intent, int targetHandle, uint scenarioHash);
+
+        /// <summary>
         /// Rounds the local player fired since the last call, with the geometry of the
         /// last of them. Called every frame, unlike <see cref="SampleLocalPlayer"/>:
         /// a shot is an event and the send rate would swallow most of them.

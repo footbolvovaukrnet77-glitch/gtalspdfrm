@@ -248,7 +248,7 @@ machine and real clients, and is not claimed here.
 | Step | What it guards |
 | --- | --- |
 | `dotnet build -c Release -warnaserror` | The zero-warning claim. Without `-warnaserror` it decays the first time a warning lands that nobody scrolls up far enough to see |
-| `dotnet test -c Release` | All 749 tests, with the `.trx` uploaded as an artifact so a failure is readable without re-running anything |
+| `dotnet test -c Release` | All 758 tests, with the `.trx` uploaded as an artifact so a failure is readable without re-running anything |
 | `python3 tools/check-docs.py` | Dead relative links, `#anchors` naming headings that no longer exist, any document that lost its counterpart in the other language, and the three things the documentation asserts about the code: the protocol version, the test count, and the `client.ini` example. All three had drifted before the checks existed |
 
 The whole solution compiles on `ubuntu-latest`, the `net48` client included,
@@ -441,10 +441,23 @@ Until that was wired, every remote ped inherited the local player's own group,
 so a suspect the server had marked hostile was drawn as an ally on every client
 at once.
 
-⏸ task, scenario, combat target, group, alert state — replicated and applied by
-nothing. `GroupId` is a key for a mod's own registry and has no meaning to the
-game; the other four are decisions, and they belong to a server-side AI that does
-not exist. Alert state has a native (`SET_PED_ALERTNESS`) but no effect on a ped
+✅ **combat target, scenario, fleeing, chasing, attacking, surrender, arrest** — the
+server owns the intent and each client's own GTA V executes it. The reason previously
+recorded against them was that they are "the AI itself, not state about it", and that
+was true of a design where the server would have had to move the ped. It has no
+navigation mesh and never will, so it does not: it says fight, flee, surrender, be
+arrested or play a scenario, and the engine that knows where the pavements are does
+the rest. A fight or a flight is refused when the target names nothing this client has
+built, for the same reason melee is.
+
+⏸ **group and alert state.** `GroupId` is a key for a mod's own registry and has no
+meaning to the game. `SET_PED_ALERTNESS` exists but does nothing to a ped whose
+permanent events are blocked, which every replicated ped's are, so applying it would
+be a native call that changes nothing.
+
+⚠ **scenarios are resolved through a name table.** The wire carries a hash because a
+hash is four bytes and a name is not, and turning it back needs the names. A scenario
+a mod invents does not match, and produces no scenario rather than the wrong one. Alert state has a native (`SET_PED_ALERTNESS`) but no effect on a ped
 whose permanent events are blocked, which every replicated ped's are, so applying
 it would be a native call that changes nothing.
 

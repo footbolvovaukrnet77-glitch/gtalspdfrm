@@ -35,10 +35,13 @@ namespace Gtamp.Shared.Entities
     /// <summary>
     /// A server-owned NPC with a network identity.
     /// <para>
-    /// Only peds the framework or a mod explicitly creates are replicated. GTA V's
-    /// own ambient population is spawned locally from a seed the framework does not
-    /// control and cannot be made identical across clients — see
-    /// docs/ENGINE_ANALYSIS.md §4.6.
+    /// Peds the framework or a mod explicitly creates are replicated, and so, since
+    /// shared population was built, are the ambient ones a traffic source hands over.
+    /// The old note here said GTA V's ambient population "cannot be made identical
+    /// across clients", which was true of the route it had in mind — identical spawn
+    /// seeds, which the framework does not control — and not of the one taken: one
+    /// client spawns them and the server replicates them like anything else. See
+    /// AmbientTrafficController.
     /// </para>
     /// </summary>
     public sealed class PedEntity : CharacterEntity

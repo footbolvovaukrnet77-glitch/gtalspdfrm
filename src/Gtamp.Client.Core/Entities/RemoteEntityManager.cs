@@ -341,8 +341,83 @@ namespace Gtamp.Client.Entities
                 _bridge.ApplyRemotePedCommand(npc.PedHandle, in command);
                 ApplyNpcAppearanceIfChanged(npc);
                 ApplyNpcRelationshipGroupIfChanged(npc);
+                ApplyNpcIntentIfChanged(npc);
             }
         }
+
+        /// <summary>
+        /// Tells an NPC to do what the server says it is doing, when that changes.
+        /// <para>
+        /// Section 11 lists fleeing, chasing, attacking, surrender and arrest among the
+        /// things to synchronise, and every one of them was on the wire and applied by
+        /// nothing: a suspect the server had running away stood still on every machine
+        /// but the one that decided it. The reason recorded against them was that they
+        /// are "the AI itself, not state about it" — true of a design where the server
+        /// would have had to move the ped, and not true of this one, where the server
+        /// owns the intent and each client's own GTA V executes it.
+        /// </para>
+        /// <para>
+        /// On change only, and that is not an optimisation: a combat task re-issued
+        /// every frame restarts, and a ped whose fight restarts sixty times a second
+        /// never throws a punch. It is the same rule the melee, cover and jump work
+        /// each needed, learnt separately three times.
+        /// </para>
+        /// </summary>
+        private void ApplyNpcIntentIfChanged(RemoteNpc npc)
+        {
+            PedEntity? latest = npc.Latest;
+            if (latest == null)
+            {
+                return;
+            }
+
+            int target = ResolveCharacterHandle(latest.CombatTargetId);
+            NpcIntent intent = NpcIntentDirector.Decide(latest, target != 0);
+
+            if (_appliedNpcIntent.TryGetValue(npc.EntityId, out (NpcIntent Intent, int Target) applied)
+                && applied.Intent == intent
+                && applied.Target == target)
+            {
+                return;
+            }
+
+            _appliedNpcIntent[npc.EntityId] = (intent, target);
+            _bridge.ApplyNpcIntent(npc.PedHandle, intent, target, latest.ScenarioHash);
+        }
+
+        /// <summary>
+        /// The local ped standing in for a replicated character — another NPC, a remote
+        /// player, or this client's own player — or 0 when there is none.
+        /// <para>
+        /// All three have to resolve, and the third is the one that matters most: the
+        /// character an NPC is most often fighting is the person reading the screen,
+        /// and they are in no remote list anywhere. The melee work found the same hole
+        /// on the player path an hour before this was written.
+        /// </para>
+        /// </summary>
+        private int ResolveCharacterHandle(EntityId id)
+        {
+            if (!id.IsValid)
+            {
+                return 0;
+            }
+
+            if (_npcs.TryGetValue(id, out RemoteNpc? other))
+            {
+                return other.PedHandle;
+            }
+
+            return ResolvePlayerPedHandle?.Invoke(id) ?? 0;
+        }
+
+        /// <summary>
+        /// Resolves a player's replicated id to the ped this client drew for them, or
+        /// to the local player's own ped. Supplied by the host, which owns both maps.
+        /// </summary>
+        public System.Func<EntityId, int>? ResolvePlayerPedHandle { get; set; }
+
+        private readonly Dictionary<EntityId, (NpcIntent Intent, int Target)> _appliedNpcIntent =
+            new Dictionary<EntityId, (NpcIntent, int)>();
 
         /// <summary>
         /// Puts an NPC in the relationship group the server gave it, on change only.

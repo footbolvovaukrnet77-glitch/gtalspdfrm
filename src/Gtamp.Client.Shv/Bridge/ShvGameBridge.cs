@@ -706,6 +706,116 @@ namespace Gtamp.Client.Shv.Bridge
             }
         }
 
+        /// <summary>
+        /// Hands a networked NPC over to GTA V's own AI with the server's instruction.
+        /// <para>
+        /// Every one of these is a task the engine already knows how to carry out on
+        /// its own pavements, around its own cover, through its own doors. The server
+        /// says what; the game says how. Anything else would need a navigation mesh the
+        /// server does not have.
+        /// </para>
+        /// <para>
+        /// <b>Not verified against a running game.</b> The native names are checked by
+        /// the compiler — Hash.X is an enum member — but nothing here can run GTA V, so
+        /// the arguments and the resulting behaviour are not. A ped that stands still
+        /// where it should flee is this method first.
+        /// </para>
+        /// </summary>
+        public void ApplyNpcIntent(int handle, NpcIntent intent, int targetHandle, uint scenarioHash)
+        {
+            if (!_remotePeds.TryGetValue(handle, out Ped ped) || !ped.Exists())
+            {
+                return;
+            }
+
+            try
+            {
+                // Every intent replaces the last one, so whatever was running has to
+                // stop first. Without it a ped told to surrender keeps fighting, because
+                // the combat task it already has outranks a new one.
+                if (intent != NpcIntent.None)
+                {
+                    Function.Call(Hash.CLEAR_PED_TASKS, ped.Handle);
+                }
+
+                switch (intent)
+                {
+                    case NpcIntent.Fight:
+                        Function.Call(Hash.TASK_COMBAT_PED, ped.Handle, targetHandle, 0, 16);
+                        break;
+
+                    case NpcIntent.Flee:
+                        Function.Call(
+                            Hash.TASK_SMART_FLEE_PED, ped.Handle, targetHandle, FleeDistance, -1, false, false);
+                        break;
+
+                    case NpcIntent.Surrender:
+                        Function.Call(Hash.TASK_HANDS_UP, ped.Handle, -1, 0, -1, false);
+                        break;
+
+                    case NpcIntent.Arrest:
+                        Function.Call(Hash.TASK_HANDS_UP, ped.Handle, -1, 0, -1, false);
+                        Function.Call(Hash.SET_ENABLE_HANDCUFFS, ped.Handle, true);
+                        break;
+
+                    case NpcIntent.Scenario:
+                        Function.Call(
+                            Hash.TASK_START_SCENARIO_IN_PLACE, ped.Handle, ScenarioName(scenarioHash), 0, true);
+                        break;
+                }
+
+                // Replicated peds have their permanent events blocked, which is what
+                // stops the local game inventing behaviour for them — and it also stops
+                // a task surviving on its own, so it is kept explicitly.
+                Function.Call(Hash.SET_PED_KEEP_TASK, ped.Handle, true);
+            }
+            catch (Exception exception)
+            {
+                _log.Error(LogCategory.Entity, "Could not apply an NPC's intent.", exception);
+            }
+        }
+
+        /// <summary>How far a fleeing ped is told to get. Far enough to leave, near enough to stay streamed.</summary>
+        private const float FleeDistance = 200f;
+
+        /// <summary>
+        /// The scenario name behind a replicated hash.
+        /// <para>
+        /// Scenarios are named strings in GTA V and the wire carries a hash, because a
+        /// hash is four bytes and a name is not. Turning it back needs a table, and the
+        /// table is the scenarios this framework knows: anything a mod invents comes
+        /// back as its own hash, does not match, and produces no scenario rather than
+        /// the wrong one. That is a real limit and it is stated here rather than
+        /// discovered from a ped smoking a cigarette it was never told to smoke.
+        /// </para>
+        /// </summary>
+        private static string ScenarioName(uint hash)
+        {
+            foreach (string name in KnownScenarios)
+            {
+                if (GameHash.Joaat(name) == hash)
+                {
+                    return name;
+                }
+            }
+
+            return string.Empty;
+        }
+
+        private static readonly string[] KnownScenarios =
+        {
+            "WORLD_HUMAN_SMOKING",
+            "WORLD_HUMAN_STAND_IMPATIENT",
+            "WORLD_HUMAN_STAND_MOBILE",
+            "WORLD_HUMAN_GUARD_STAND",
+            "WORLD_HUMAN_COP_IDLES",
+            "WORLD_HUMAN_LEANING",
+            "WORLD_HUMAN_CLIPBOARD",
+            "WORLD_HUMAN_HANG_OUT_STREET",
+            "WORLD_HUMAN_DRINKING",
+            "WORLD_HUMAN_AA_SMOKE",
+        };
+
         public void SuppressAmbientPedsThisFrame()
         {
             try
