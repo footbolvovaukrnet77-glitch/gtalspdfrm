@@ -120,7 +120,18 @@ namespace Gtamp.Bot
 
     public sealed class BotOptions
     {
-        public const string Usage = """
+        /// <summary>
+        /// The help text, with the task list built from the tasks that exist.
+        /// <para>
+        /// It used to be one literal with the tasks typed into it, and three tasks were
+        /// added before anybody noticed the help had stopped listing them. A list of
+        /// names is the one kind of documentation that can be generated and therefore
+        /// the one kind that should never be written by hand.
+        /// </para>
+        /// </summary>
+        public static string Usage => Header + TaskList + Examples;
+
+        private const string Header = """
 Использование: Gtamp.Bot [ключи]
 
   --server <хост:порт>   куда подключаться (по умолчанию 127.0.0.1:27015)
@@ -136,18 +147,30 @@ namespace Gtamp.Bot
   --help                 эта справка
 
 Задачи:
-  stand      стоять на месте и оставаться видимым
-  patrol     ходить квадратом, меняя походку
-  drive      взять машину и проехать маршрут
-  follow     идти за живым игроком и не терять его
-  shoot      стрелять в живого игрока и заявлять попадания
-  die        умереть и дождаться респавна
-  reconnect  переподключиться и проверить, что сервер помнит
+
+""";
+
+        private const string Examples = """
 
 Примеры:
   Gtamp.Bot --task follow --name Напарник
+  Gtamp.Bot --count 2 --task melee,jump,traffic
   Gtamp.Bot --count 10 --task patrol      (нагрузка: десять игроков сразу)
 """;
+
+        private static string TaskList
+        {
+            get
+            {
+                var builder = new System.Text.StringBuilder();
+                foreach (Tasks.BotTask task in Tasks.BotTask.All())
+                {
+                    builder.Append("  ").Append(task.Name.PadRight(11)).AppendLine(task.Goal);
+                }
+
+                return builder.ToString();
+            }
+        }
 
         public string Host { get; private set; } = "127.0.0.1";
 
