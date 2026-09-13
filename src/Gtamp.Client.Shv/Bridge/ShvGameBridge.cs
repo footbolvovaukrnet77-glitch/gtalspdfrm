@@ -637,6 +637,75 @@ namespace Gtamp.Client.Shv.Bridge
             }
         }
 
+        public void SuppressAmbientTrafficThisFrame()
+        {
+            try
+            {
+                // All four, because GTA V counts them separately and leaving any one of
+                // them alone leaves that category of car spawning: moving traffic,
+                // random traffic, parked cars, and the multiplier that gates the rest.
+                Function.Call(Hash.SET_VEHICLE_DENSITY_MULTIPLIER_THIS_FRAME, 0f);
+                Function.Call(Hash.SET_RANDOM_VEHICLE_DENSITY_MULTIPLIER_THIS_FRAME, 0f);
+                Function.Call(Hash.SET_PARKED_VEHICLE_DENSITY_MULTIPLIER_THIS_FRAME, 0f);
+                Function.Call(Hash.SET_AMBIENT_VEHICLE_RANGE_MULTIPLIER_THIS_FRAME, 0f);
+            }
+            catch (Exception)
+            {
+                // A script host that does not know one of them. Traffic is then local,
+                // which is the behaviour that existed before this.
+            }
+        }
+
+        public void SampleAmbientVehicles(List<int> into, float radius)
+        {
+            into.Clear();
+
+            try
+            {
+                Ped player = Game.Player.Character;
+                if (!player.Exists())
+                {
+                    return;
+                }
+
+                Vector3 origin = player.Position;
+                Vehicle? own = player.CurrentVehicle;
+                float squared = radius * radius;
+
+                foreach (Vehicle vehicle in GtaWorld.GetAllVehicles())
+                {
+                    if (vehicle == null || !vehicle.Exists())
+                    {
+                        continue;
+                    }
+
+                    // Anything this client is already showing on the server's behalf.
+                    // Handing a replicated car back to the server would have it adopt
+                    // its own reflection, and the street would double every few seconds.
+                    if (_vehicles.IsRemoteVehicleValid(vehicle.Handle))
+                    {
+                        continue;
+                    }
+
+                    if (own != null && own.Exists() && vehicle.Handle == own.Handle)
+                    {
+                        continue;
+                    }
+
+                    if (vehicle.Position.DistanceToSquared(origin) > squared)
+                    {
+                        continue;
+                    }
+
+                    into.Add(vehicle.Handle);
+                }
+            }
+            catch (Exception exception)
+            {
+                _log.Error(LogCategory.Client, "Could not read the ambient vehicles.", exception);
+            }
+        }
+
         public bool TryGetRemotePedPosition(int handle, out NetVector3 position)
         {
             if (_remotePeds.TryGetValue(handle, out Ped ped) && ped.Exists())

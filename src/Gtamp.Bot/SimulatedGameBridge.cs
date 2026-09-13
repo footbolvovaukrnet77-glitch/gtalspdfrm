@@ -230,6 +230,14 @@ namespace Gtamp.Bot
         /// <summary>A simulated body still needs a handle of its own: it is what anybody punching it aims at.</summary>
         public int GetLocalPlayerPedHandle() => BotBody.LocalPedHandle;
 
+        /// <summary>Counted rather than done: a simulated game has no ambient traffic to suppress.</summary>
+        public int TrafficSuppressedFrames { get; private set; }
+
+        public void SuppressAmbientTrafficThisFrame() => TrafficSuppressedFrames++;
+
+        /// <summary>A simulated game spawns no cars of its own, so there is never anything to hand over.</summary>
+        public void SampleAmbientVehicles(System.Collections.Generic.List<int> into, float radius) => into.Clear();
+
         public uint GetVehicleModel(int handle) =>
             handle != 0 && handle == _body.VehicleHandle ? _body.VehicleModel : 0u;
 

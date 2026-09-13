@@ -208,6 +208,11 @@ namespace Gtamp.Client.Core
             {
                 Send = (type, payload, delivery) => Connection.Peer?.Send(type, payload, delivery),
             };
+
+            AmbientTraffic = new AmbientTrafficController(Bridge, OwnedEntities)
+            {
+                Enabled = Config.SharedTraffic,
+            };
             // A remote player's car may be a replicated vehicle or the one this client
             // owns and is driving — a passenger in your own car is the ordinary case,
             // and the two live in different places.
@@ -272,6 +277,12 @@ namespace Gtamp.Client.Core
 
         /// <summary>Entities this client simulates and reports upward.</summary>
         public OwnedEntityStreamer OwnedEntities { get; }
+
+        /// <summary>
+        /// Shares ambient traffic with the other players, when the server has made this
+        /// client the source for its area.
+        /// </summary>
+        public AmbientTrafficController AmbientTraffic { get; }
 
         public ModSdk Sdk { get; }
 
@@ -554,6 +565,7 @@ namespace Gtamp.Client.Core
             }
 
             ReplicatedWorld.Reset();
+            AmbientTraffic.Reset();
             RemotePlayers.Clear();
             RemoteEntities.Clear();
             OwnedEntities.Clear();
@@ -603,6 +615,11 @@ namespace Gtamp.Client.Core
                 OwnedEntities.LocalPlayerId = LocalPlayerId;
                 OwnedEntities.ExpirePendingSpawns(now);
                 OwnedEntities.RegisterLocalVehicleIfNeeded(ReplicatedWorld.Current, now);
+
+                // After the player's own car and before streaming, so an ambient car
+                // adopted this frame goes out in the same pass as everything else this
+                // client holds rather than waiting a frame to be noticed.
+                AmbientTraffic.Update(ReplicatedWorld.Current, now);
                 OwnedEntities.Stream(ReplicatedWorld.Current, now, ClientUpdateInterval);
 
                 // Rendered a fixed delay behind the estimated server clock, which is
@@ -774,6 +791,16 @@ namespace Gtamp.Client.Core
             if (header != null && header.AcknowledgedClientUpdate > _serverAcknowledgedSequence)
             {
                 _serverAcknowledgedSequence = header.AcknowledgedClientUpdate;
+            }
+
+            if (header != null)
+            {
+                // Taken from every snapshot rather than remembered from a message,
+                // because being wrong about it in either direction is visible: a client
+                // that has stopped being the source and does not know keeps spawning
+                // cars nobody asked for, and one that has become the source and does
+                // not know leaves an empty street.
+                AmbientTraffic.IsSource = header.IsPopulationSource;
             }
 
             SynchroniseServerClock(ReplicatedWorld.ServerTime);

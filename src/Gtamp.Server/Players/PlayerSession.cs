@@ -153,6 +153,13 @@ namespace Gtamp.Server.Players
         /// <summary>Set once a disconnect has been decided, so the tick loop can reap the session.</summary>
         public bool PendingRemoval { get; set; }
 
+        /// <summary>
+        /// Whether this client is currently the one spawning ambient traffic for its
+        /// part of the world. Decided by <see cref="Gtamp.Shared.World.PopulationDirector"/>
+        /// once per tick and carried to the client in every snapshot header.
+        /// </summary>
+        public bool IsPopulationSource { get; set; }
+
         public bool IsAdmin => Role == PlayerRole.Admin;
 
         public override string ToString() => $"{Name}#{PlayerId} ({EndPoint})";

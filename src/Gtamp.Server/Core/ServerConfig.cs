@@ -30,8 +30,47 @@ namespace Gtamp.Server.Core
 
         public int SnapshotRate { get; set; } = ProtocolConstants.DefaultSnapshotRate;
 
-        /// <summary>Bytes of snapshot payload per client per snapshot. Caps outbound bandwidth.</summary>
+        /// <summary>
+        /// Bytes of snapshot payload per client per snapshot. Caps outbound bandwidth.
+        /// <para>
+        /// <b>This is an MTU limit, not a bandwidth policy, and that matters.</b>
+        /// Snapshots go out unreliably, because a snapshot that has to wait for a lost
+        /// one is worth less than no snapshot at all — and an unreliable message is
+        /// never fragmented, so the whole thing has to fit in one datagram. The
+        /// transport refuses anything over 1168 bytes. Raising this past that does not
+        /// buy bandwidth; it throws.
+        /// </para>
+        /// <para>
+        /// The consequence is worth stating plainly rather than leaving to be found:
+        /// 1024 bytes twenty times a second is about 20 KB/s per client, and a street
+        /// of shared ambient traffic does not fit in it. Sixty replicated cars are
+        /// roughly 1,800 bytes of delta per full pass, so with players taking their
+        /// share first each car is updated every second or third snapshot rather than
+        /// every one. That is the correct order — a player must never lose priority to
+        /// a parked car — and it is why traffic will look coarser than players do.
+        /// </para>
+        /// <para>
+        /// Closing that gap means fragmenting snapshots across several unreliable
+        /// datagrams and discarding the whole set when one goes missing. It is the
+        /// normal answer and it is NOT built: it trades one lost packet for one lost
+        /// snapshot, which is a different failure mode on a real link than on a test
+        /// harness, and nothing here can measure it. Raising SnapshotRate is the knob
+        /// that exists today.
+        /// </para>
+        /// </summary>
         public int SnapshotByteBudget { get; set; } = 1024;
+
+        /// <summary>
+        /// Whether one client per group of players spawns the ambient traffic everyone
+        /// else sees, instead of every client spawning its own.
+        /// <para>
+        /// On means two players on the same corner see the same cars, which is what
+        /// section 15 of the specification asks for. Off restores the behaviour every
+        /// co-op mod for this game has: traffic is local, and nobody's cars are
+        /// anybody else's.
+        /// </para>
+        /// </summary>
+        public bool SharedTraffic { get; set; } = true;
 
         /// <summary>
         /// Floor the adaptive shaper will not go below, however bad a client's link is.

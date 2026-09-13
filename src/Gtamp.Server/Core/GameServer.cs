@@ -253,6 +253,7 @@ namespace Gtamp.Server.Core
                 // Immediately before the snapshot, so the list a client receives
                 // agrees with the seats the same snapshot carries on the characters.
                 RebuildVehicleOccupants();
+                DecidePopulationSources();
                 SendSnapshots();
             }
 
@@ -1238,6 +1239,82 @@ namespace Gtamp.Server.Core
         /// who else is in its car is a client asserting something about other players.
         /// </para>
         /// </summary>
+        /// <summary>
+        /// Chooses which clients spawn the ambient traffic everyone sees.
+        /// <para>
+        /// Once per snapshot rather than once per tick: the answer only leaves the
+        /// server in a snapshot header, and deciding it three times between two
+        /// snapshots is three times the work for the same byte. The decision itself is
+        /// in <see cref="PopulationDirector"/>, where it is tested without a server.
+        /// </para>
+        /// <para>
+        /// Traffic is not spawned by the server because it cannot be: traffic follows
+        /// GTA V's road network, which is game data the server does not have. What the
+        /// server owns is the choice of who spawns it, and that choice has to be the
+        /// server's — two clients deciding locally that they are both the source is a
+        /// street with two sets of cars in it.
+        /// </para>
+        /// </summary>
+        private void DecidePopulationSources()
+        {
+            if (!Config.SharedTraffic)
+            {
+                foreach (PlayerSession session in Players.Sessions)
+                {
+                    session.IsPopulationSource = false;
+                }
+
+                return;
+            }
+
+            _populationCandidates.Clear();
+            foreach (PlayerSession session in Players.Sessions)
+            {
+                if (session.PendingRemoval || !session.EntityId.IsValid)
+                {
+                    continue;
+                }
+
+                PlayerEntity? entity = World.GetPlayer(session.EntityId);
+                if (entity == null)
+                {
+                    continue;
+                }
+
+                _populationCandidates.Add(
+                    new PopulationCandidate(session.PlayerId, entity.Position, session.IsPopulationSource));
+            }
+
+            foreach (PlayerSession session in Players.Sessions)
+            {
+                bool decided = false;
+                for (int i = 0; i < _populationCandidates.Count; i++)
+                {
+                    if (_populationCandidates[i].PlayerId != session.PlayerId)
+                    {
+                        continue;
+                    }
+
+                    decided = PopulationDirector.IsSource(_populationCandidates[i], _populationCandidates);
+                    break;
+                }
+
+                if (decided != session.IsPopulationSource)
+                {
+                    Log.Debug(
+                        LogCategory.Server,
+                        decided
+                            ? $"{session.Name} is now the ambient traffic source for their area."
+                            : $"{session.Name} is no longer the ambient traffic source.");
+                }
+
+                session.IsPopulationSource = decided;
+            }
+        }
+
+        /// <summary>Reused every snapshot; the list is rebuilt rather than allocated.</summary>
+        private readonly List<PopulationCandidate> _populationCandidates = new List<PopulationCandidate>();
+
         private void RebuildVehicleOccupants()
         {
             foreach (NetEntity entity in World.State.Entities)
@@ -1622,7 +1699,8 @@ namespace Gtamp.Server.Core
                 SnapshotWriteResult result = SnapshotCodec.Write(
                     World.State, baseline, Registry, order, snapshotId, budget,
                     session.LastProcessedUpdateSequence,
-                    entity => ReplicationPriority.SharesDimension(entity, viewerDimension));
+                    entity => ReplicationPriority.SharesDimension(entity, viewerDimension),
+                    session.IsPopulationSource);
 
                 session.Peer.Send(NetMessageType.Snapshot, result.Payload, DeliveryMethod.Unreliable);
                 session.Replication.RecordSent(result, World.Tick);

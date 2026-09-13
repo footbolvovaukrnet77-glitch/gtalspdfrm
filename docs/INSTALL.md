@@ -49,7 +49,7 @@ Expected output: `Build succeeded. 0 Warning(s) 0 Error(s)`.
 ./tools/test.sh          # or tools\test.bat
 ```
 
-Expected: `Passed! - Failed: 0, Passed: 723`.
+Expected: `Passed! - Failed: 0, Passed: 734`.
 
 ### Check the documentation
 
@@ -115,7 +115,8 @@ Edit `server.json`, then restart. The settings that matter first:
   "port": 27015,
   "tickRate": 60,              // simulation Hz
   "snapshotRate": 20,          // snapshots per client per second
-  "snapshotByteBudget": 1024,  // bytes per client per snapshot
+  "snapshotByteBudget": 1024,  // bytes per client per snapshot; an MTU limit, not a policy
+  "sharedTraffic": true,       // one client per group spawns the traffic everyone sees
   "saveIntervalSeconds": 60,
   "antiCheat": "Standard",     // Off | Basic | Standard | Strict | Custom
   "startTime": "12:00",
@@ -268,6 +269,7 @@ InterpolationDelay=0.12
 CorrectionThreshold=3
 HealthCorrectionThreshold=20
 ApplyRemotePosture=True
+SharedTraffic=True
 ShowNetworkOverlay=False
 ShowPlayerBlips=True
 ShowPlayerNames=True

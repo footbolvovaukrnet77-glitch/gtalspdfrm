@@ -198,6 +198,33 @@ namespace Gtamp.Client.Core
         /// </summary>
         int GetLocalPlayerPedHandle();
 
+        /// <summary>
+        /// Stops GTA V spawning ambient traffic of its own, for this frame only.
+        /// <para>
+        /// Per-frame because the natives that do it are: the game resets the density
+        /// multipliers every frame, so suppression is a thing you keep saying rather
+        /// than a thing you set. Called on every client that is not the traffic source
+        /// for its area, so that the only cars on the street are the ones the source
+        /// spawned and the server replicated.
+        /// </para>
+        /// <para>
+        /// Pedestrians are deliberately not suppressed. They are not adopted either,
+        /// so suppressing them would empty the pavements rather than share them — a
+        /// city with no people in it is further from one world, not closer.
+        /// </para>
+        /// </summary>
+        void SuppressAmbientTrafficThisFrame();
+
+        /// <summary>
+        /// Collects the ambient vehicles near the local player: the ones the game
+        /// spawned by itself, which this client may hand to the server.
+        /// <para>
+        /// Ordered nearest first, so a cap takes the cars the player can actually see
+        /// rather than an arbitrary subset of the street.
+        /// </para>
+        /// </summary>
+        void SampleAmbientVehicles(List<int> into, float radius);
+
         /// <summary>Model hash of a local vehicle handle, or 0 when the handle is not valid.</summary>
         uint GetVehicleModel(int handle);
 

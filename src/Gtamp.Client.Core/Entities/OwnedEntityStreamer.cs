@@ -76,6 +76,9 @@ namespace Gtamp.Client.Entities
         /// <summary>Game handle of the entity this client owns, or 0.</summary>
         public bool TryGetHandle(EntityId id, out int handle) => _ownedHandles.TryGetValue(id, out handle);
 
+        /// <summary>Whether this client already holds a game handle on the server's behalf.</summary>
+        public bool OwnsHandle(int handle) => _handleToEntity.ContainsKey(handle);
+
         /// <summary>
         /// Notices the local player has got into a vehicle the server does not know
         /// about, and asks the server to adopt it.
@@ -83,6 +86,26 @@ namespace Gtamp.Client.Entities
         public void RegisterLocalVehicleIfNeeded(EntitySnapshotView view, double now)
         {
             int handle = _bridge.GetLocalPlayerVehicleHandle();
+            if (handle == 0)
+            {
+                return;
+            }
+
+            RegisterVehicle(handle, view, now);
+        }
+
+        /// <summary>
+        /// Offers one vehicle this client's game created to the server, if it has not
+        /// been offered already.
+        /// <para>
+        /// Split out of <see cref="RegisterLocalVehicleIfNeeded"/> when ambient traffic
+        /// began being shared: the car the player is sitting in and the car parked
+        /// behind them reach the server the same way, and the only difference is what
+        /// decides to offer them.
+        /// </para>
+        /// </summary>
+        public void RegisterVehicle(int handle, EntitySnapshotView view, double now)
+        {
             if (handle == 0)
             {
                 return;

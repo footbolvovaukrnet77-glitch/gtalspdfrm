@@ -248,7 +248,7 @@ machine and real clients, and is not claimed here.
 | Step | What it guards |
 | --- | --- |
 | `dotnet build -c Release -warnaserror` | The zero-warning claim. Without `-warnaserror` it decays the first time a warning lands that nobody scrolls up far enough to see |
-| `dotnet test -c Release` | All 723 tests, with the `.trx` uploaded as an artifact so a failure is readable without re-running anything |
+| `dotnet test -c Release` | All 734 tests, with the `.trx` uploaded as an artifact so a failure is readable without re-running anything |
 | `python3 tools/check-docs.py` | Dead relative links, `#anchors` naming headings that no longer exist, any document that lost its counterpart in the other language, and the three things the documentation asserts about the code: the protocol version, the test count, and the `client.ini` example. All three had drifted before the checks existed |
 
 The whole solution compiles on `ubuntu-latest`, the `net48` client included,
@@ -494,10 +494,24 @@ fire or explosion — one that belongs to a place rather than to an entity — a
 are not done, for the reason given under section 13: the natives create them and
 cannot be asked where one happened.
 
-❌ **traffic, pedestrian state, police state, doors, world events, temporary world
-states.** Ambient traffic and pedestrians are local to each client and always have
-been — every co-op mod for this game makes that choice, and it is named here rather
-than left to be discovered from a street full of cars only you can see. Doors fail
+✅ **traffic**, with its cost named. The cars on the street are the same cars for
+everybody: the server nominates one client per group of players as the source, every
+other client stops the game spawning its own, and the source hands what the game
+spawned to the server to replicate. The server does not spawn traffic and cannot —
+traffic follows GTA V's road network, which is game data the server does not have,
+and a server that spawned cars would put them through walls.
+
+What it costs: a car is replicated rather than simulated, so its driving is the
+source's driving interpolated; traffic appears a fraction of a second late when a
+player arrives somewhere new; and sixty extra entities per player share a snapshot
+budget capped at the MTU, so cars update every second or third snapshot where players
+update every one. That ordering is correct and the ceiling is real — see
+`SnapshotByteBudget` for why it cannot simply be raised.
+
+❌ **pedestrian state, police state, doors, world events, temporary world states.**
+Pedestrians are deliberately left local: suppressing them without replicating them
+would empty the pavements, which is further from one world rather than closer, and
+replicating them is the next slice of this work rather than a decision against it. Doors fail
 the same test as world explosions in the other direction: `SET_STATE_OF_CLOSEST_DOOR_OF_TYPE`
 will change one, and nothing will tell you which door somebody else changed, so
 replicating them means shipping a door registry or a mod-facing registration API

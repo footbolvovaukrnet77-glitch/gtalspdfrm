@@ -379,6 +379,20 @@ namespace Gtamp.Tests
 
         public int GetLocalPlayerPedHandle() => LocalPedHandle;
 
+        /// <summary>How many frames this client has been told to stop the game spawning traffic.</summary>
+        public int TrafficSuppressedFrames { get; private set; }
+
+        public void SuppressAmbientTrafficThisFrame() => TrafficSuppressedFrames++;
+
+        /// <summary>Ambient vehicles the fake game has "spawned", which the client may offer to the server.</summary>
+        public List<int> AmbientVehicles { get; } = new List<int>();
+
+        public void SampleAmbientVehicles(List<int> into, float radius)
+        {
+            into.Clear();
+            into.AddRange(AmbientVehicles);
+        }
+
         /// <summary>Vehicle handles this client has drawn an explosion for, in order.</summary>
         public List<int> VehicleExplosions { get; } = new List<int>();
 

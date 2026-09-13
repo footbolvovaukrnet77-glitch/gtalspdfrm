@@ -57,6 +57,13 @@ namespace Gtamp.Shared.World
         /// </summary>
         public uint AcknowledgedClientUpdate { get; set; }
 
+        /// <summary>
+        /// Whether this client is the one the server has chosen to spawn ambient
+        /// traffic for its part of the world. See <c>AmbientTrafficController</c>.
+        /// </summary>
+        public bool IsPopulationSource { get; set; }
+
+
         public List<EntityId> CreatedIds { get; } = new List<EntityId>();
 
         public List<EntityId> UpdatedIds { get; } = new List<EntityId>();
@@ -88,7 +95,8 @@ namespace Gtamp.Shared.World
     /// Wire format of the world snapshot message.
     /// <code>
     /// varuint snapshotId | varuint baselineId | varuint tick | f64 serverTime
-    /// u8 flags (bit0 = environment present, bit1 = view holds the whole world) | [environment]
+    /// u8 flags (bit0 = environment present, bit1 = view holds the whole world,
+    ///           bit2 = this client is the ambient traffic source) | [environment]
     /// varuint removedCount | varuint removedId*
     /// varuint entityCount
     ///   varuint entityId | u8 entryFlags (bit0 = full state) | [u8 typeId] | fields
@@ -105,6 +113,20 @@ namespace Gtamp.Shared.World
         /// "the rest are gone".
         /// </summary>
         private const byte FlagWholeWorld = 0x02;
+
+        /// <summary>
+        /// Set on the one client the server has chosen to be the source of ambient
+        /// traffic for its part of the world.
+        /// <para>
+        /// It rides in the snapshot header rather than in a message of its own because
+        /// it costs nothing here — the byte is already written — and because it must
+        /// never be stale: a client that has stopped being the source and does not know
+        /// it keeps spawning cars nobody asked for, and one that has become the source
+        /// and does not know it leaves an empty street.
+        /// </para>
+        /// </summary>
+        private const byte FlagPopulationSource = 0x04;
+
         private const byte EntryFlagFullState = 0x01;
 
         /// <summary>
@@ -130,7 +152,8 @@ namespace Gtamp.Shared.World
             uint snapshotId,
             int byteBudget,
             uint acknowledgedClientUpdate = 0,
-            Func<NetEntity, bool>? visible = null)
+            Func<NetEntity, bool>? visible = null,
+            bool populationSource = false)
         {
             if (snapshotId == 0)
             {
@@ -169,7 +192,13 @@ namespace Gtamp.Shared.World
             // Whether the world fits is only known once the budget runs out, so the
             // slot is written now and patched below rather than reordering the header.
             int flagsOffset = writer.Length;
-            writer.WriteByte(environmentChanged ? FlagEnvironmentPresent : (byte)0);
+            byte flags = environmentChanged ? FlagEnvironmentPresent : (byte)0;
+            if (populationSource)
+            {
+                flags |= FlagPopulationSource;
+            }
+
+            writer.WriteByte(flags);
             if (environmentChanged)
             {
                 WriteEnvironment(writer, world.Environment);
@@ -312,6 +341,7 @@ namespace Gtamp.Shared.World
             WorldEnvironment environment = baseline.Environment.Clone();
             byte flags = reader.ReadByte();
             header.DescribesWholeWorld = (flags & FlagWholeWorld) != 0;
+            header.IsPopulationSource = (flags & FlagPopulationSource) != 0;
             if ((flags & FlagEnvironmentPresent) != 0)
             {
                 ReadEnvironment(reader, environment);

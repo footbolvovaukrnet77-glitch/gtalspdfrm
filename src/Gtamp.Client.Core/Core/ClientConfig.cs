@@ -104,6 +104,22 @@ namespace Gtamp.Client.Core
         /// </summary>
         public bool ApplyRemotePosture { get; set; } = true;
 
+        /// <summary>
+        /// Whether this client takes part in shared ambient traffic.
+        /// <para>
+        /// On means the cars on the street are the same cars for everybody: one client
+        /// per group spawns them and the rest stop spawning their own. Off means this
+        /// client keeps its own traffic and is never asked to spawn anybody else's —
+        /// which is the behaviour every co-op mod for this game has, and the thing to
+        /// turn back on if a street ever looks wrong.
+        /// </para>
+        /// <para>
+        /// The server has the same switch and its answer wins: a server with shared
+        /// traffic off never nominates a source, so nothing here can start one.
+        /// </para>
+        /// </summary>
+        public bool SharedTraffic { get; set; } = true;
+
         public bool ShowNetworkOverlay { get; set; }
 
         /// <summary>
@@ -230,6 +246,8 @@ namespace Gtamp.Client.Core
                 $"HealthCorrectionThreshold={HealthCorrectionThreshold.ToString(CultureInfo.InvariantCulture)}",
                 "; Jump, climb and parachute on remote players. Off restores the pre-13.09 behaviour.",
                 $"ApplyRemotePosture={ApplyRemotePosture}",
+                "; Share ambient traffic with the other players instead of spawning your own.",
+                $"SharedTraffic={SharedTraffic}",
                 $"ShowNetworkOverlay={ShowNetworkOverlay}",
                 $"ShowPlayerBlips={ShowPlayerBlips}",
                 $"ShowPlayerNames={ShowPlayerNames}",
@@ -306,6 +324,9 @@ namespace Gtamp.Client.Core
                     break;
                 case "applyremoteposture":
                     ApplyRemotePosture = ParseBool(value);
+                    break;
+                case "sharedtraffic":
+                    SharedTraffic = ParseBool(value);
                     break;
                 case "interpolationdelay":
                     if (double.TryParse(value, NumberStyles.Float, CultureInfo.InvariantCulture, out double delay))
