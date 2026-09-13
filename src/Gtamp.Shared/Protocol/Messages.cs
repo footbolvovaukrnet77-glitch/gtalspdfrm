@@ -514,6 +514,48 @@ namespace Gtamp.Shared.Protocol
     /// through <see cref="RequestTag"/>.
     /// </para>
     /// </summary>
+    /// <summary>
+    /// A shove applied to one entity, travelling so that every machine's own physics
+    /// produces the same leap rather than sliding to where the leap ended.
+    /// </summary>
+    public sealed class EntityImpulseMessage
+    {
+        public EntityId EntityId { get; set; }
+
+        /// <summary>Newton-seconds per unit mass, in world space.</summary>
+        public NetVector3 Impulse { get; set; }
+
+        /// <summary>
+        /// True when this came from an explosion rather than a collision or a mod.
+        /// <para>
+        /// Carried because the two want different things of the engine: an explosion
+        /// push is applied at the entity's centre of mass and a collision is applied
+        /// where it landed. It is a hint for the receiving bridge and is not arbitrated.
+        /// </para>
+        /// </summary>
+        public bool IsExplosion { get; set; }
+
+        public byte[] Serialize()
+        {
+            var writer = new NetWriter(32);
+            writer.WriteVarUInt(EntityId.Value);
+            writer.WriteQuantizedVelocity(Impulse);
+            writer.WriteBool(IsExplosion);
+            return writer.ToArray();
+        }
+
+        public static EntityImpulseMessage Deserialize(byte[] payload)
+        {
+            var reader = new NetReader(payload);
+            return new EntityImpulseMessage
+            {
+                EntityId = new EntityId(reader.ReadVarUInt()),
+                Impulse = reader.ReadQuantizedVelocity(),
+                IsExplosion = reader.ReadBool(),
+            };
+        }
+    }
+
     public sealed class EntitySpawnRequestMessage
     {
         public EntityType Type { get; set; } = EntityType.Vehicle;

@@ -749,6 +749,10 @@ namespace Gtamp.Client.Core
                         break;
                     }
 
+                    case NetMessageType.EntityImpulse:
+                        HandleEntityImpulse(EntityImpulseMessage.Deserialize(message.Payload));
+                        break;
+
                     case NetMessageType.WeaponShot:
                     {
                         WeaponShotMessage shot = WeaponShotMessage.Deserialize(message.Payload);
@@ -1452,6 +1456,101 @@ namespace Gtamp.Client.Core
             return RemotePlayers.TryGetByPedHandle(sample.MeleeTargetPedHandle, out RemotePlayer target)
                 ? target.EntityId
                 : EntityId.None;
+        }
+
+        /// <summary>
+        /// Applies a shove the server has arbitrated, to whichever local body the
+        /// entity turned out to be.
+        /// <para>
+        /// Vehicles, objects and NPCs all live in different maps here, and a push is
+        /// meaningful to all three. A push for something this client has not built is
+        /// dropped rather than queued: by the time the entity arrives the shove is over,
+        /// and the position the server sends will already include what it did.
+        /// </para>
+        /// </summary>
+        private void HandleEntityImpulse(EntityImpulseMessage message)
+        {
+            int handle = ResolveImpulseTarget(message.EntityId);
+            if (handle == 0)
+            {
+                return;
+            }
+
+            ImpulsesApplied++;
+            Bridge.ApplyEntityImpulse(handle, message.Impulse, message.IsExplosion);
+        }
+
+        /// <summary>Impulses this client has applied, for `net` and the self-test.</summary>
+        public int ImpulsesApplied { get; private set; }
+
+        /// <summary>
+        /// Asks the server to shove an entity, so that the leap happens on every
+        /// machine rather than only on this one.
+        /// <para>
+        /// The push is NOT applied locally here. It goes to the server, is arbitrated
+        /// and comes back — including to the sender — so that what this client's physics
+        /// does is the same thing everybody else's does. Applying it locally as well
+        /// would double it for the one machine that asked, which is precisely the
+        /// disagreement this exists to remove.
+        /// </para>
+        /// <para>
+        /// For mods, through the SDK. Nothing in the framework itself pushes anything:
+        /// collisions and explosions are already simulated locally by every copy of the
+        /// game, and re-sending what all of them worked out independently would shove
+        /// the same car twice.
+        /// </para>
+        /// </summary>
+        public void RequestImpulse(EntityId entityId, NetVector3 impulse, bool isExplosion = false)
+        {
+            if (!Connection.IsConnected || !entityId.IsValid)
+            {
+                return;
+            }
+
+            var message = new EntityImpulseMessage
+            {
+                EntityId = entityId,
+                Impulse = impulse,
+                IsExplosion = isExplosion,
+            };
+
+            ImpulsesRequested++;
+            Connection.Peer?.Send(
+                NetMessageType.EntityImpulse, message.Serialize(), DeliveryMethod.Unreliable);
+        }
+
+        public int ImpulsesRequested { get; private set; }
+
+        private int ResolveImpulseTarget(EntityId id)
+        {
+            if (!id.IsValid)
+            {
+                return 0;
+            }
+
+            // Something this client owns and is simulating: the push is already in its
+            // own physics, so applying it again would double it.
+            if (OwnedEntities.TryGetHandle(id, out _))
+            {
+                return 0;
+            }
+
+            if (RemoteEntities.TryGetVehicle(id, out RemoteVehicle vehicle) && vehicle.VehicleHandle != 0)
+            {
+                return vehicle.VehicleHandle;
+            }
+
+            if (RemoteEntities.TryGetNpc(id, out RemoteNpc npc) && npc.PedHandle != 0)
+            {
+                return npc.PedHandle;
+            }
+
+            if (RemotePlayers.TryGet(id, out RemotePlayer player) && player.PedHandle != 0)
+            {
+                return player.PedHandle;
+            }
+
+            return id == LocalEntityId ? Bridge.GetLocalPlayerPedHandle() : 0;
         }
 
         private void SendPeriodicPing(double now)

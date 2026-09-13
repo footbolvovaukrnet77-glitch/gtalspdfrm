@@ -77,6 +77,13 @@ namespace Gtamp.Shared.Protocol
         /// </summary>
         WeaponShot = 0x33,
 
+        /// <summary>
+        /// One shove of one entity. Sent unreliably in both directions for the same
+        /// reason a shot is: a push is only worth applying at the moment it happens,
+        /// and one that arrives late moves a car that has already stopped.
+        /// </summary>
+        EntityImpulse = 0x34,
+
         // 0x40-0x4F — mod negotiation. Both ids are RESERVED and neither is ever
         // sent: mod negotiation happens inside the handshake, because it has to be
         // settled before a client is admitted rather than after. The manifest rides

@@ -283,6 +283,13 @@ namespace Gtamp.Bot
         /// <summary>Counted rather than done: a simulated game has no pavement to empty.</summary>
         public int PedsSuppressedFrames { get; private set; }
 
+        /// <summary>Impulses the client has asked this simulated game to apply, by handle.</summary>
+        public System.Collections.Generic.Dictionary<int, NetVector3> Impulses { get; }
+            = new System.Collections.Generic.Dictionary<int, NetVector3>();
+
+        public void ApplyEntityImpulse(int handle, NetVector3 impulse, bool isExplosion) =>
+            Impulses[handle] = impulse;
+
         public void SuppressAmbientPedsThisFrame() => PedsSuppressedFrames++;
 
         public void SampleAmbientPeds(System.Collections.Generic.List<int> into, float radius) => into.Clear();

@@ -868,6 +868,10 @@ namespace Gtamp.Server.Core
                     HandleWeaponShot(session, WeaponShotMessage.Deserialize(message.Payload));
                     break;
 
+                case NetMessageType.EntityImpulse:
+                    HandleEntityImpulse(session, EntityImpulseMessage.Deserialize(message.Payload));
+                    break;
+
                 case NetMessageType.ModRpcRequest:
                 {
                     ModRpcRequestMessage request = ModRpcRequestMessage.Deserialize(message.Payload);
@@ -1541,6 +1545,87 @@ namespace Gtamp.Server.Core
             {
                 Log.Info(LogCategory.Server, $"{victimSession.Name} was killed by {session.Name}.");
                 Kill(victimSession, victim);
+            }
+        }
+
+        /// <summary>
+        /// Arbitrates one shove and relays it to everybody who can see the thing shoved.
+        /// <para>
+        /// Section 12 asks for forces and impulses to be synchronised and prescribes the
+        /// arrangement when GTA V's physics cannot run on a server: client physics,
+        /// server validation, server state, correction. A push is the part of physics
+        /// that is an event rather than a state — a car that was shoved and a car that
+        /// was driven end as the same position and the same velocity, so replicating the
+        /// state replicates the result and loses the shove. On the machine that did it
+        /// the car leaps; everywhere else it slides to where it landed.
+        /// </para>
+        /// <para>
+        /// Broadcast including back to the sender, unlike a gunshot. A gunshot is drawn
+        /// by its own client at the moment of firing; a push has to reach every machine
+        /// in the same shape, and the sender's own physics has already run — the copy it
+        /// gets back is what keeps the arbitrated magnitude and the local one the same
+        /// when the server clamped it.
+        /// </para>
+        /// </summary>
+        private void HandleEntityImpulse(PlayerSession session, EntityImpulseMessage message)
+        {
+            PlayerEntity? pusher = World.GetPlayer(session.EntityId);
+            if (pusher == null)
+            {
+                return;
+            }
+
+            World.TryGet(message.EntityId, out NetEntity target);
+
+            ImpulseResolution resolution = ImpulseArbiter.Resolve(
+                target, pusher.Position, message.Impulse, fromServerSideMod: false);
+
+            if (!resolution.Accepted)
+            {
+                Log.Debug(
+                    LogCategory.Security,
+                    $"{session} impulse on {message.EntityId} refused: {resolution.Verdict} — {resolution.Detail}");
+
+                if (resolution.Verdict == ImpulseVerdict.RejectedOutOfRange
+                    || resolution.Verdict == ImpulseVerdict.RejectedNotPushable)
+                {
+                    session.Validation.Count(ViolationKind.InvalidEvent);
+                }
+
+                return;
+            }
+
+            if (resolution.Verdict == ImpulseVerdict.Clamped)
+            {
+                Log.Warning(LogCategory.Security, $"{session}: impulse {resolution.Detail}");
+            }
+
+            var relayed = new EntityImpulseMessage
+            {
+                EntityId = message.EntityId,
+                Impulse = resolution.Impulse,
+                IsExplosion = message.IsExplosion,
+            };
+
+            byte[] payload = relayed.Serialize();
+
+            foreach (PlayerSession other in Players.Sessions)
+            {
+                if (other.PendingRemoval)
+                {
+                    continue;
+                }
+
+                // Distance is a replication filter and never a world-state one: a push
+                // nobody can see is not sent and no entity is touched either way.
+                PlayerEntity? listener = World.GetPlayer(other.EntityId);
+                if (listener == null
+                    || NetVector3.DistanceSquared(listener.Position, target!.Position) > ShotRelayRangeSquared)
+                {
+                    continue;
+                }
+
+                other.Peer.Send(NetMessageType.EntityImpulse, payload, DeliveryMethod.Unreliable);
             }
         }
 

@@ -415,6 +415,13 @@ namespace Gtamp.Tests
         /// <summary>How many frames this client has been told to stop the game spawning pedestrians.</summary>
         public int PedsSuppressedFrames { get; private set; }
 
+        /// <summary>Impulses this client has been told to apply, by handle, newest last.</summary>
+        public List<(int Handle, NetVector3 Impulse, bool IsExplosion)> Impulses { get; }
+            = new List<(int, NetVector3, bool)>();
+
+        public void ApplyEntityImpulse(int handle, NetVector3 impulse, bool isExplosion) =>
+            Impulses.Add((handle, impulse, isExplosion));
+
         public void SuppressAmbientPedsThisFrame() => PedsSuppressedFrames++;
 
         /// <summary>Ambient pedestrians the fake game has "spawned", which the client may offer to the server.</summary>

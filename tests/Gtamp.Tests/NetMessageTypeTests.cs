@@ -35,7 +35,7 @@ namespace Gtamp.Tests
             NetMessageType.OwnedEntityUpdate, NetMessageType.EntityReleaseRequest,
             NetMessageType.DamageReport, NetMessageType.ModRpcRequest, NetMessageType.ModRpcResponse,
             NetMessageType.ModEvent, NetMessageType.EntityEvent, NetMessageType.ServerEvent,
-            NetMessageType.ChatMessage, NetMessageType.WeaponShot,
+            NetMessageType.ChatMessage, NetMessageType.WeaponShot, NetMessageType.EntityImpulse,
             NetMessageType.AdminCommand, NetMessageType.SecurityNotice,
         };
 

@@ -248,7 +248,7 @@ machine and real clients, and is not claimed here.
 | Step | What it guards |
 | --- | --- |
 | `dotnet build -c Release -warnaserror` | The zero-warning claim. Without `-warnaserror` it decays the first time a warning lands that nobody scrolls up far enough to see |
-| `dotnet test -c Release` | All 758 tests, with the `.trx` uploaded as an artifact so a failure is readable without re-running anything |
+| `dotnet test -c Release` | All 767 tests, with the `.trx` uploaded as an artifact so a failure is readable without re-running anything |
 | `python3 tools/check-docs.py` | Dead relative links, `#anchors` naming headings that no longer exist, any document that lost its counterpart in the other language, and the three things the documentation asserts about the code: the protocol version, the test count, and the `client.ini` example. All three had drifted before the checks existed |
 
 The whole solution compiles on `ubuntu-latest`, the `net48` client included,
@@ -470,10 +470,23 @@ events.** These are the AI itself, not state about it.
 trailer physics, attachments, damage; client prediction, interpolation, server
 correction and reconciliation are all in place.
 
-❌ **forces, impulses, collisions, destruction.** The specification says not to
-give up on physics because it is hard, and this is the part not done: a collision
-between two players is resolved twice, once on each machine, and only the
-positions are reconciled afterwards.
+✅ **forces and impulses.** A push is the part of physics that is an event rather
+than a state: a car that was shoved and a car that was driven end as the same position
+and the same velocity, so replicating the state replicates the result and loses the
+shove — on the machine that did it the car leaps, everywhere else it slides to where it
+landed. An impulse now travels, is arbitrated (clamped rather than dropped, bounded by
+range, and never applied to a player on a client's say-so) and is applied by every
+machine's own physics except the owner's, whose physics has already run. That is the
+arrangement section 12 itself prescribes: client physics, server validation, server
+state, correction.
+
+❌ **collisions and destruction.** A collision between two players is still resolved
+twice, once on each machine, with only the positions reconciled afterwards. The
+impulse path is what a fix would be built on — the disagreement is about who applies
+what to whom, and that is now sayable — but deciding one collision from two independent
+simulations is a different problem from carrying one decision, and it is not solved
+here. Destruction of a vehicle already travels as an explosion, and of an object as
+health; neither is the general case.
 
 ### Section 13 — Weapons and combat
 

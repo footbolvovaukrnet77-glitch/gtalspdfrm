@@ -816,6 +816,39 @@ namespace Gtamp.Client.Shv.Bridge
             "WORLD_HUMAN_AA_SMOKE",
         };
 
+        public void ApplyEntityImpulse(int handle, NetVector3 impulse, bool isExplosion)
+        {
+            if (handle == 0)
+            {
+                return;
+            }
+
+            try
+            {
+                // Force type 1 is an impulse — an instantaneous change in momentum —
+                // rather than a force applied over time, which is what a collision and
+                // an explosion both are. Applied at the centre of mass, because the
+                // point of contact is not replicated and guessing one would spin a car
+                // in a direction nobody chose.
+                Function.Call(
+                    Hash.APPLY_FORCE_TO_ENTITY,
+                    handle,
+                    1,
+                    impulse.X, impulse.Y, impulse.Z,
+                    0f, 0f, 0f,
+                    0,
+                    false,
+                    true,
+                    true,
+                    false,
+                    true);
+            }
+            catch (Exception exception)
+            {
+                _log.Error(LogCategory.Entity, "Could not apply an impulse.", exception);
+            }
+        }
+
         public void SuppressAmbientPedsThisFrame()
         {
             try

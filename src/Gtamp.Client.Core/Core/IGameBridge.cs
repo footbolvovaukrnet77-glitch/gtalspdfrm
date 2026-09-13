@@ -289,6 +289,17 @@ namespace Gtamp.Client.Core
         /// </summary>
         void PlayVehicleExplosion(int vehicleHandle);
 
+        /// <summary>
+        /// Shoves an entity this client is drawing, so that the leap happens here too
+        /// rather than only on the machine that caused it.
+        /// <para>
+        /// The handle may be a vehicle, an object or a ped; the caller has already
+        /// resolved which. A handle of 0 means this client has not built the thing and
+        /// the push is simply not applied — there is nothing here to move.
+        /// </para>
+        /// </summary>
+        void ApplyEntityImpulse(int handle, NetVector3 impulse, bool isExplosion);
+
         // --- objects -------------------------------------------------------
 
         int CreateRemoteObject(uint modelHash, NetVector3 position, float heading);
