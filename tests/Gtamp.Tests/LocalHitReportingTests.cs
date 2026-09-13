@@ -168,5 +168,51 @@ namespace Gtamp.Tests
                 Assert.Equal(new[] { 1, 2, 3 }, seen);
             }
         }
+        /// <summary>
+        /// A hit smaller than the client's health-correction threshold must still
+        /// reach the player it hit.
+        /// <para>
+        /// Every test above this one measured the victim's health <em>on the server</em>,
+        /// and every one of them fired for 40 or 45 damage. Both halves of that are why
+        /// this went unseen for twelve phases: the server was always right, and the
+        /// numbers were always big enough to cross the threshold that decides whether
+        /// the client is told. A pistol round is about twelve. Twelve is below the
+        /// threshold, so the arbiter accepted the hit, the server lowered the health,
+        /// held authority over it — and the victim's own game was never told, so the
+        /// player took no damage at all until enough hits had stacked up on the server
+        /// to cross twenty in one go.
+        /// </para>
+        /// </summary>
+        [Fact]
+        public void ASmallHitReachesTheVictimsOwnGameAndNotOnlyTheServer()
+        {
+            var (harness, shooter, victim) = Duel();
+            using (harness)
+            {
+                PlayerEntity? victimOnServer = harness.Server.World.GetPlayer(victim.Client.LocalEntityId);
+                Assert.NotNull(victimOnServer);
+                int beforeOnServer = victimOnServer!.Health;
+                int beforeInGame = victim.Bridge.Sample.Health;
+
+                shooter.Bridge.PendingHits.Add(new LocalHitSample
+                {
+                    PedHandle = PedHandleFor(shooter, "victim"),
+                    WeaponHash = Pistol,
+                    Damage = 12,
+                    HitPosition = victimOnServer.Position,
+                    HitBone = -1,
+                });
+
+                Assert.True(
+                    harness.AdvanceUntil(
+                        () => harness.Server.World.GetPlayer(victim.Client.LocalEntityId)?.Health < beforeOnServer),
+                    "the server never applied the hit");
+
+                // The half that was never asserted: the victim's game.
+                Assert.True(
+                    harness.AdvanceUntil(() => victim.Bridge.Sample.Health < beforeInGame),
+                    $"the server took the damage but the victim's game still reads {victim.Bridge.Sample.Health}");
+            }
+        }
     }
 }

@@ -172,6 +172,8 @@ namespace Gtamp.Client.Shv
 
             double now = _clock.Elapsed.TotalSeconds;
 
+            HoldOffTheSinglePlayerDeathSequence();
+
             try
             {
                 _client.Update(now);
@@ -197,6 +199,54 @@ namespace Gtamp.Client.Shv
             if (_client.Config.ShowNetworkOverlay && !_client.Console.IsOpen)
             {
                 _overlay.Draw(NetworkOverlay.Build(_client));
+            }
+        }
+
+        /// <summary>
+        /// Stops single-player GTA V running its own death handling while the server
+        /// owns this player's life.
+        /// <para>
+        /// Nothing did this, and the cost was the worst symptom the project has had:
+        /// a player killed by another player got the game's WASTED sequence — fade to
+        /// black, its own respawn at a hospital — at the same time as the server was
+        /// arbitrating a death and preparing a respawn of its own. The two fight, and
+        /// what the player sees is a black screen that never ends. The framework was
+        /// right about everything except that it was not the only thing in the process
+        /// with an opinion about dying.
+        /// </para>
+        /// <para>
+        /// Reasserted every frame rather than set once: these are per-frame flags in
+        /// GTA V, and a mission script or another mod can clear them between frames.
+        /// Only while connected — offline the game's own death handling is the correct
+        /// behaviour and taking it away would leave a single-player death with nothing
+        /// to resolve it.
+        /// </para>
+        /// <para>
+        /// <b>Not verified against a running game.</b> These are the natives the
+        /// death sequence is driven by, and calling them is the documented way to hold
+        /// it off, but no test here can run GTA V. If a black screen still happens
+        /// after a death, this is the first place to look and the log line to bring is
+        /// the one about the server correcting health to zero.
+        /// </para>
+        /// </summary>
+        private void HoldOffTheSinglePlayerDeathSequence()
+        {
+            if (_client == null || !_client.IsConnected)
+            {
+                return;
+            }
+
+            try
+            {
+                Function.Call(Hash.PAUSE_DEATH_ARREST_RESTART, true);
+                Function.Call(Hash.IGNORE_NEXT_RESTART, true);
+                Function.Call(Hash.SET_FADE_OUT_AFTER_DEATH, false);
+                Function.Call(Hash.SET_FADE_IN_AFTER_DEATH_ARREST, false);
+            }
+            catch (Exception)
+            {
+                // A script host too old to know one of these. The death sequence is
+                // then the game's, which is the behaviour that existed before this.
             }
         }
 

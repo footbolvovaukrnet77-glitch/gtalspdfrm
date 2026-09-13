@@ -65,10 +65,16 @@ namespace Gtamp.Tests
             Assert.True(harness.AdvanceUntil(() => alice.Client.IsConnected));
             harness.Advance(1.0);
 
-            // The interesting case is drift the correction does not act on: below the
-            // threshold the client never snaps, so the disagreement is invisible
-            // everywhere except here. Raising the threshold reproduces that on demand.
-            alice.Config.HealthCorrectionThreshold = 1000;
+            // The interesting case is a disagreement the correction does not close.
+            // This used to be reproduced by raising the health threshold, which stopped
+            // being a disagreement the client tolerates the moment health the server
+            // took away began correcting unconditionally — and it had to, because that
+            // threshold was swallowing every hit in a real game. So the reproduction is
+            // now the one that actually happens: the correction IS applied and does not
+            // reach the game. That is not hypothetical either — a player sitting in a
+            // vehicle logged the same correction a hundred times running because the
+            // ped was placed and the car it was in was not.
+            alice.Bridge.IgnoreLocalCorrections = true;
 
             // An admin kill: the server holds the player dead and ignores the health
             // their client keeps reporting, so the two genuinely disagree.

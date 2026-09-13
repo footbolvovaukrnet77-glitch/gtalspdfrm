@@ -41,6 +41,24 @@ namespace Gtamp.Client.Shv.Bridge
         /// <summary>Re-task a walking ped only when its destination has moved this far.</summary>
         private const float RetaskDistance = 0.75f;
 
+        /// <summary>
+        /// The health every remote ped is held at locally, so that no single frame of
+        /// damage can reach zero and kill it.
+        /// <para>
+        /// High enough to absorb the heaviest thing that is not already proofed
+        /// against — a tank round is roughly a thousand — and it is never displayed,
+        /// so its size costs nothing. See ApplyVitals for why a remote ped must not
+        /// carry the server's health.
+        /// </para>
+        /// </summary>
+        private const int LocalPedHealthHeadroom = 2500;
+
+        /// <summary>How long one shooting task runs. Short, because it is re-issued while the flag is set.</summary>
+        private const int ShootBurstMilliseconds = 250;
+
+        /// <summary>Rockstar's FIRING_PATTERN_FULL_AUTO. The pattern decides cadence; the flag decides whether to fire at all.</summary>
+        private const uint FiringPatternFullAuto = 0xC6EE6B4C;
+
         /// <summary>Task timeout. Long enough to survive several missed snapshots, short enough to expire if we stop.</summary>
         private const int TaskTimeoutMilliseconds = 4000;
 
@@ -532,6 +550,13 @@ namespace Gtamp.Client.Shv.Bridge
                 Function.Call(Hash.SET_PED_SUFFERS_CRITICAL_HITS, ped.Handle, false);
                 Function.Call(Hash.SET_PED_DIES_WHEN_INJURED, ped.Handle, false);
 
+                // SET_PED_DIES_WHEN_INJURED(false) stops a ped dying from an injury it
+                // survives; it does not stop one whose health a bullet took to zero.
+                // Nothing does, so the ped is given somewhere to fall from instead.
+                Function.Call(Hash.SET_PED_MAX_HEALTH, ped.Handle, LocalPedHealthHeadroom);
+                ped.Health = LocalPedHealthHeadroom;
+                ped.Armor = 0;
+
                 // Proof against everything that can take a ped from full health to
                 // zero inside one frame — fire, explosions, collisions, drowning —
                 // and deliberately *not* proof against bullets or melee, which are
@@ -696,22 +721,51 @@ namespace Gtamp.Client.Shv.Bridge
                 return;
             }
 
-            int health = command.Health < 1 ? 1 : command.Health;
+            // The ped is held at the headroom figure, NOT at the server's health, and
+            // that is the whole point of it.
+            //
+            // Writing the server's health onto the ped looked obviously right and was
+            // the single most destructive line in the client. A remote player the
+            // server had at 20 health carried a ped with 20 health, so the next bullet
+            // took it to zero and GTA V killed it — and a dead ped cannot be revived in
+            // place, so the client destroyed it and built a new one. One real session
+            // logged that rebuild 1,835 times in thirteen minutes. Every rebuild is a
+            // ped vanishing and reappearing, which is exactly what "the running
+            // animation looks like teleporting" was; and a ped that is destroyed the
+            // instant it is shot can never play a death, so a player the server had
+            // killed simply blinked and carried on.
+            //
+            // Local health here is a measuring instrument, not a display. Nothing reads
+            // it: the health bar over a remote player comes from the replicated entity,
+            // death comes from the server through RemotePedAction.Dead, and every local
+            // reaction to injury is already blocked. So the ped is parked at a figure
+            // no single frame of damage can cross, the hit sampler reports the drop,
+            // and the number is put straight back.
+            //
+            // Armour is held at zero for the same reason in reverse: local armour would
+            // absorb part of the hit before it could be measured, and the server
+            // applies the victim's real armour itself when it arbitrates.
+            if (ped.MaxHealth != LocalPedHealthHeadroom)
+            {
+                Function.Call(Hash.SET_PED_MAX_HEALTH, ped.Handle, LocalPedHealthHeadroom);
+            }
+
+            int health = LocalPedHealthHeadroom;
             if (ped.Health != health)
             {
                 ped.Health = health;
             }
 
-            if (ped.Armor != command.Armor)
+            if (ped.Armor != 0)
             {
-                ped.Armor = command.Armor;
+                ped.Armor = 0;
             }
 
             // The baseline the hit sampler measures against. Without it a hit can be
             // detected but not sized, and a damage report with no number in it is not
             // a report.
             state.AppliedHealth = health;
-            state.AppliedArmor = command.Armor;
+            state.AppliedArmor = 0;
         }
 
         private void DriveDead(Ped ped, in RemotePedCommand command, PedDriveState state)
@@ -1085,10 +1139,40 @@ namespace Gtamp.Client.Shv.Bridge
             state.Reloading = reloading;
         }
 
+        /// <summary>
+        /// Points a remote player's gun, and pulls the trigger when they are pulling
+        /// theirs.
+        /// <para>
+        /// Only the aim half existed. <see cref="PlayerFlags.Shooting"/> was sampled,
+        /// replicated, stored and arbitrated, and on the way out it was folded into
+        /// one boolean with <see cref="PlayerFlags.Aiming"/> — so a remote player who
+        /// was firing was tasked to aim, exactly like one who was only aiming. There
+        /// was no recoil, no fire animation and no report, because nothing ever told
+        /// the ped to shoot; the bullet was drawn past it by
+        /// <see cref="PlayRemoteShot"/> while the shooter stood still holding a gun.
+        /// </para>
+        /// <para>
+        /// The shooting task is re-issued while the flag is set, because it is a task
+        /// with a duration and a burst is many frames long. Aiming is left as it was.
+        /// </para>
+        /// </summary>
         private static void ApplyAim(Ped ped, in RemotePedCommand command)
         {
             if (!command.Aiming)
             {
+                return;
+            }
+
+            if ((command.Flags & PlayerFlags.Shooting) != 0)
+            {
+                Function.Call(
+                    Hash.TASK_SHOOT_AT_COORD,
+                    ped.Handle,
+                    command.AimPosition.X,
+                    command.AimPosition.Y,
+                    command.AimPosition.Z,
+                    ShootBurstMilliseconds,
+                    FiringPatternFullAuto);
                 return;
             }
 
@@ -1309,8 +1393,15 @@ namespace Gtamp.Client.Shv.Bridge
                 // the server from the shooter's own damage report; a rendered bullet
                 // that also wounded would count one trigger pull once per client that
                 // drew it.
-                GtaWorld.ShootBullet(ToGame(origin), ToGame(impact), ped, _shotAsset.Value, 0, -1f);
-                PlayMuzzleFlash(ped, origin);
+                // The origin on the wire is a world coordinate read from the shooter's
+                // muzzle on the shooter's machine. On this machine that player's ped is
+                // an interpolation delay behind and somewhere slightly else, so drawing
+                // from the transmitted point puts the round beside the ped that fired
+                // it — which is what "the shot appears above his head" was. The
+                // direction is the shooter's; the muzzle is ours.
+                NetVector3 muzzle = ToNet(MuzzlePosition(ped));
+                GtaWorld.ShootBullet(ToGame(muzzle), ToGame(impact), ped, _shotAsset.Value, 0, -1f);
+                PlayMuzzleFlash(ped, muzzle);
             }
             catch (Exception)
             {

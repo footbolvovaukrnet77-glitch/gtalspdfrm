@@ -884,7 +884,27 @@ namespace Gtamp.Client.Core
             // death and respawn: a respawn refills health and moves the player, and a
             // rejected update leaves the server's health standing. Position drift alone
             // would miss a death that happened where the player was already standing.
-            if (drift <= Config.CorrectionThreshold && healthGap <= Config.HealthCorrectionThreshold)
+            //
+            // The threshold applies in one direction only, and getting that wrong cost
+            // this project its entire combat system in a real game. Health the server
+            // has taken *away* is damage it arbitrated against a report this snapshot
+            // answers: there is no noise in it and no later packet that confirms it.
+            // A pistol round is about twelve points; a threshold of twenty swallowed it
+            // whole, so the server lowered the victim's health, held authority over it,
+            // and the victim's own game was never told — a player could be shot all day
+            // and stand there at full health, until enough hits stacked up on the
+            // server to cross twenty in a single step and their health fell in a lump.
+            //
+            // Upwards is the direction that does carry noise: the game regenerates
+            // health on its own and the server is always a round-trip behind the
+            // regeneration the client has already applied. That is what the deadband
+            // was for, and it keeps it.
+            bool serverTookHealth = authoritative.Health < referenceHealth;
+            bool healthDisagrees = serverTookHealth
+                ? healthGap > 0
+                : healthGap > Config.HealthCorrectionThreshold;
+
+            if (drift <= Config.CorrectionThreshold && !healthDisagrees)
             {
                 return;
             }
