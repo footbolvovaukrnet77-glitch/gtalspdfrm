@@ -24,7 +24,7 @@ namespace Gtamp.Client.Shv.Bridge
     /// see the console for, and the next session would find strangers standing in it.
     /// </para>
     /// </summary>
-    public sealed class BotProcessHost : IBotHost, IDisposable
+    public sealed class BotProcessHost : IBotHost, IServerHost, IDisposable
     {
         /// <summary>How many output lines are kept for the menu to show.</summary>
         private const int LineBufferSize = 12;
@@ -35,12 +35,14 @@ namespace Gtamp.Client.Shv.Bridge
         private readonly LogBus _log;
         private readonly string _gameDirectory;
         private readonly string? _configuredPath;
+        private readonly string? _configuredServerPath;
 
-        public BotProcessHost(LogBus log, string gameDirectory, string? configuredPath)
+        public BotProcessHost(LogBus log, string gameDirectory, string? configuredPath, string? configuredServerPath = null)
         {
             _log = log;
             _gameDirectory = gameDirectory ?? string.Empty;
             _configuredPath = string.IsNullOrWhiteSpace(configuredPath) ? null : configuredPath;
+            _configuredServerPath = string.IsNullOrWhiteSpace(configuredServerPath) ? null : configuredServerPath;
         }
 
         public int RunningCount
@@ -140,7 +142,162 @@ namespace Gtamp.Client.Shv.Bridge
             }
         }
 
-        public void Dispose() => StopAll();
+        public void Dispose()
+        {
+            StopAll();
+            StopServer();
+        }
+
+        // ---- IServerHost ----
+        //
+        // The same machinery, pointed at a different program. A local server is a child
+        // process for exactly the reasons a bot is: it is .NET 8 and the client is
+        // .NET Framework 4.8 inside the game's process, so one process was never on
+        // offer. What this removes is the second window, which is the whole of what the
+        // separate-process design actually costs somebody playing alone.
+
+        private Process? _server;
+
+        public bool IsServerRunning
+        {
+            get
+            {
+                lock (_gate)
+                {
+                    try
+                    {
+                        if (_server != null && _server.HasExited)
+                        {
+                            _server = null;
+                        }
+                    }
+                    catch (Exception)
+                    {
+                        _server = null;
+                    }
+
+                    return _server != null;
+                }
+            }
+        }
+
+        public bool IsServerAvailable => LocateServer() != null;
+
+        public string ServerUnavailableReason =>
+            "Gtamp.Server не найден. Положите собранный сервер в '"
+            + Path.Combine(_gameDirectory, "Gtamp", "server")
+            + "' (tools\\package-client.bat кладёт его туда), или укажите ServerPath в client.ini.";
+
+        public bool StartServer(int port, out string error)
+        {
+            if (IsServerRunning)
+            {
+                error = "локальный сервер уже запущен";
+                return false;
+            }
+
+            string? server = LocateServer();
+            if (server == null)
+            {
+                error = ServerUnavailableReason;
+                return false;
+            }
+
+            try
+            {
+                bool managedDll = server.EndsWith(".dll", StringComparison.OrdinalIgnoreCase);
+                string arguments = "--port " + port.ToString(CultureInfo.InvariantCulture);
+
+                var start = new ProcessStartInfo
+                {
+                    FileName = managedDll ? "dotnet" : server,
+                    Arguments = managedDll ? Quote(server) + " " + arguments : arguments,
+                    WorkingDirectory = Path.GetDirectoryName(server) ?? _gameDirectory,
+                    UseShellExecute = false,
+                    RedirectStandardOutput = true,
+                    RedirectStandardError = true,
+                    CreateNoWindow = true,
+                };
+
+                var process = new Process { StartInfo = start, EnableRaisingEvents = true };
+                process.OutputDataReceived += (_, e) => Record(e.Data);
+                process.ErrorDataReceived += (_, e) => Record(e.Data);
+
+                if (!process.Start())
+                {
+                    error = "не удалось запустить процесс сервера";
+                    return false;
+                }
+
+                process.BeginOutputReadLine();
+                process.BeginErrorReadLine();
+
+                lock (_gate)
+                {
+                    _server = process;
+                }
+
+                _log.Info(LogCategory.Client, $"Started a local server on port {port} from '{server}'.");
+                error = string.Empty;
+                return true;
+            }
+            catch (Exception exception)
+            {
+                _log.Error(LogCategory.Client, "Could not start the local server.", exception);
+                error = "запуск не удался: " + exception.Message;
+                return false;
+            }
+        }
+
+        public void StopServer()
+        {
+            lock (_gate)
+            {
+                if (_server == null)
+                {
+                    return;
+                }
+
+                try
+                {
+                    if (!_server.HasExited)
+                    {
+                        // Killed rather than asked to stop. A server told to shut down
+                        // saves its world first, which is what you want — but this runs
+                        // when the game is closing and there is no frame left to wait
+                        // in. Periodic saving is what makes that survivable, and it is
+                        // on by default.
+                        _server.Kill();
+                    }
+                }
+                catch (Exception)
+                {
+                    // Already gone.
+                }
+
+                _server = null;
+            }
+        }
+
+        private string? LocateServer()
+        {
+            if (_configuredServerPath != null && File.Exists(_configuredServerPath))
+            {
+                return _configuredServerPath;
+            }
+
+            string installed = Path.Combine(_gameDirectory, "Gtamp", "server");
+            foreach (string name in new[] { "Gtamp.Server.exe", "Gtamp.Server.dll" })
+            {
+                string candidate = Path.Combine(installed, name);
+                if (File.Exists(candidate))
+                {
+                    return candidate;
+                }
+            }
+
+            return null;
+        }
 
         /// <summary>
         /// The bot, in the order a player is most likely to have put it:

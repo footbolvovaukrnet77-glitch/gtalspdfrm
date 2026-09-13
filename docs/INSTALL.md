@@ -49,7 +49,7 @@ Expected output: `Build succeeded. 0 Warning(s) 0 Error(s)`.
 ./tools/test.sh          # or tools\test.bat
 ```
 
-Expected: `Passed! - Failed: 0, Passed: 774`.
+Expected: `Passed! - Failed: 0, Passed: 783`.
 
 ### Check the documentation
 
@@ -266,6 +266,7 @@ IdentitySecret=<your private key; never share it, never lose it>
 ConsoleKey=119
 BotMenuKey=118
 BotPath=
+ServerPath=
 InterpolationDelay=0.12
 CorrectionThreshold=3
 HealthCorrectionThreshold=20

@@ -119,11 +119,41 @@ namespace Gtamp.Client.Shv
 
             _renderer = new ConsoleRenderer(console);
 
-            _botHost = new BotProcessHost(_log, gameDirectory, _config.BotPath);
-            _botMenu = new BotMenu(_botHost);
+            _botHost = new BotProcessHost(_log, gameDirectory, _config.BotPath, _config.ServerPath);
+            _botMenu = new BotMenu(_botHost, _botHost, new ClientMenuSession(this));
             _botMenuRenderer = new BotMenuRenderer(_botMenu);
 
-            _log.Success(LogCategory.Client, $"GTAMP client {_client.ClientVersion} loaded. Press F8 for the console.");
+            // A way in that does not depend on a key.
+            //
+            // A key can be taken by another mod, remapped, or swallowed by a menu that
+            // got there first, and when it is, the player has no way to tell that from a
+            // build without the menu at all -- which is exactly the report this answers.
+            // Typing a word into a console that is already open cannot be intercepted.
+            console.RegisterCommand(new ConsoleCommand(
+                "menu",
+                "menu",
+                "open the bot and server menu, for when the key is taken by another mod",
+                _ =>
+                {
+                    if (!_botMenu.IsOpen)
+                    {
+                        _botMenu.Toggle();
+                    }
+
+                    console.Close();
+                    return "Menu open. Tab switches pages, Escape closes it.";
+                }));
+
+            // Both keys, every time. A player whose F7 does nothing has no way to tell
+            // an old build from a swallowed key, and this line is the one place the
+            // answer can be without asking them to do anything: if it names F7, the
+            // build has the menu.
+            _log.Success(
+                LogCategory.Client,
+                $"GTAMP client {_client.ClientVersion} loaded. "
+                + $"{DescribeKey(_config.ConsoleKey, ClientConfig.DefaultConsoleKey, "F8")} for the console, "
+                + $"{DescribeKey(_config.BotMenuKey, ClientConfig.DefaultBotMenuKey, "F7")} for the bot and server menu "
+                + "(or type 'menu' in the console if the key is taken by another mod).");
 
             // On screen as well as in the log, and not only as a courtesy. It is drawn by
             // the same native text machinery the console uses, so it is the one signal a
@@ -298,6 +328,10 @@ namespace Gtamp.Client.Shv
             _botMenu.Password = _config.ServerPassword;
         }
 
+        /// <summary>"F7", or "key 118" when the player has rebound it to something unnamed.</summary>
+        private static string DescribeKey(int configured, int standard, string name) =>
+            configured == standard ? name : $"key {configured.ToString(System.Globalization.CultureInfo.InvariantCulture)}";
+
         private string BuildStatusLine()
         {
             if (_client == null)
@@ -466,6 +500,7 @@ namespace Gtamp.Client.Shv
                     case Keys.Left: _botMenu.Left(); return;
                     case Keys.Right: _botMenu.Right(); return;
                     case Keys.Enter: _botMenu.Activate(); return;
+                    case Keys.Tab: _botMenu.NextPage(); return;
                     case Keys.Escape: _botMenu.Close(); return;
                     default: return;
                 }
@@ -552,6 +587,39 @@ namespace Gtamp.Client.Shv
             {
                 // Nothing useful left to do while the script is being torn down.
             }
+        }
+
+        /// <summary>
+        /// The four things the menu is allowed to do to the live session.
+        /// <para>
+        /// Deliberately not a reference to <see cref="MultiplayerClient"/>: the menu
+        /// lives in Client.Core and is tested without a network, a game or a server, and
+        /// it keeps being testable only for as long as it cannot reach one.
+        /// </para>
+        /// </summary>
+        private sealed class ClientMenuSession : IMenuSession
+        {
+            private readonly GtampScript _script;
+
+            public ClientMenuSession(GtampScript script)
+            {
+                _script = script;
+            }
+
+            public bool IsConnected => _script._client?.IsConnected == true;
+
+            public int PlayerCount => _script._client?.RemotePlayers.Count + 1 ?? 0;
+
+            public string ServerAddress => _script._config?.ServerAddress ?? "127.0.0.1";
+
+            public int ServerPort => _script._config?.ServerPort ?? BotMenu.LocalServerPort;
+
+            public void Connect(string host, int port) => _script._client?.Connect(host, port);
+
+            public void Disconnect() => _script._client?.Disconnect("menu");
+
+            public bool SendAdminCommand(string commandLine) =>
+                _script._client?.SendAdminCommand(commandLine) == true;
         }
 
         /// <summary>Last-resort log when the failure happened before the log bus existed.</summary>

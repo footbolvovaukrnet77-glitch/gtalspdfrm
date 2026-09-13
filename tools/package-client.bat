@@ -14,6 +14,7 @@ if exist "%OUT%" rd /s /q "%OUT%"
 mkdir "%OUT%\scripts"
 mkdir "%OUT%\Gtamp\Adapters"
 mkdir "%OUT%\Gtamp\bot"
+mkdir "%OUT%\Gtamp\server"
 mkdir "%OUT%\RagePluginHook-plugins"
 
 copy /y "src\Gtamp.Client.Shv\bin\%CONFIG%\net48\Gtamp.Client.Shv.dll"  "%OUT%\scripts\" >nul
@@ -28,6 +29,11 @@ REM launch. It is a .NET 8 program and the client is .NET Framework 4.8 inside t
 REM game's process, so it runs as a child process and needs its whole publish output.
 dotnet publish "src\Gtamp.Bot\Gtamp.Bot.csproj" -c %CONFIG% -o "%OUT%\Gtamp\bot" -v quiet
 if errorlevel 1 echo   (bot not published; the in-game bot menu will say so)
+
+REM The server ships with the client so that hosting a two-player session from the
+REM machine that is playing does not mean a second console window beside the game.
+dotnet publish "src\Gtamp.Server\Gtamp.Server.csproj" -c %CONFIG% -o "%OUT%\Gtamp\server" -v quiet
+if errorlevel 1 echo   (server not published; the menu's local-server row will say so)
 
 REM Loaded by RAGE Plugin Hook rather than ScriptHookVDotNet, so it belongs in RPH's
 REM own plugins folder together with the shared assembly it uses.

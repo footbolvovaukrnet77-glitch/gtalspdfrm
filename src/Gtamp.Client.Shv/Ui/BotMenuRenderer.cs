@@ -45,12 +45,24 @@ namespace Gtamp.Client.Shv.Ui
             NativeDraw.Rect(Left, Top, Width, height, Color.FromArgb(220, 8, 10, 14));
             NativeDraw.Rect(Left, Top, Width, RowHeight, Color.FromArgb(235, 20, 26, 36));
 
+            // Both page names are always drawn, with the active one bright. A tab bar
+            // that only shows where you are does not tell you the other page exists,
+            // and a menu whose second half nobody finds is a menu with one half.
+            bool bots = _menu.Page == MenuPage.Bots;
+            Color active = Color.FromArgb(255, 255, 255, 255);
+            Color idle = Color.FromArgb(255, 130, 136, 142);
+
+            NativeDraw.Text("БОТЫ", Left + 10f, Top + 4f, TextScale, bots ? active : idle, FontChaletComprimeCologne);
+            NativeDraw.Text("СЕРВЕР", Left + 72f, Top + 4f, TextScale, bots ? idle : active, FontChaletComprimeCologne);
+
             NativeDraw.Text(
-                $"БОТЫ   запущено: {_menu.RunningCount}   ←→ менять, Enter — выполнить, F7 — закрыть",
-                Left + 10f,
+                bots
+                    ? $"запущено: {_menu.RunningCount}   Tab — сервер, ←→ менять, Enter — выполнить, F7 — закрыть"
+                    : "Tab — боты, ←→ менять, Enter — выполнить, F7 — закрыть",
+                Left + 150f,
                 Top + 4f,
                 TextScale,
-                Color.FromArgb(255, 235, 235, 235),
+                Color.FromArgb(255, 200, 204, 208),
                 FontChaletComprimeCologne);
 
             float y = Top + RowHeight + 4f;

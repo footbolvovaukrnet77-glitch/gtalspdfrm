@@ -11,7 +11,7 @@ dotnet build "$SOLUTION" -c "$CONFIG" -v quiet
 
 OUT="$ROOT/dist/client"
 rm -rf "$OUT"
-mkdir -p "$OUT/scripts" "$OUT/Gtamp/Adapters" "$OUT/Gtamp/bot" "$OUT/RagePluginHook-plugins"
+mkdir -p "$OUT/scripts" "$OUT/Gtamp/Adapters" "$OUT/Gtamp/bot" "$OUT/Gtamp/server" "$OUT/RagePluginHook-plugins"
 
 CLIENT_BIN="$ROOT/src/Gtamp.Client.Shv/bin/$CONFIG/net48"
 cp "$CLIENT_BIN/Gtamp.Client.Shv.dll" "$OUT/scripts/"
@@ -31,6 +31,16 @@ if dotnet publish "$ROOT/src/Gtamp.Bot/Gtamp.Bot.csproj" -c "$CONFIG" -o "$OUT/G
   :
 else
   echo "  (bot not published; the in-game bot menu will say so)" >&2
+fi
+
+# The server ships with the client for the same reason and on the same terms: so
+# that hosting a two-player session from the machine that is playing does not mean
+# leaving a second console window open beside a full-screen game. A dedicated
+# server does not use this copy.
+if dotnet publish "$ROOT/src/Gtamp.Server/Gtamp.Server.csproj" -c "$CONFIG" -o "$OUT/Gtamp/server" -v quiet; then
+  :
+else
+  echo "  (server not published; the menu's local-server row will say so)" >&2
 fi
 
 # The RPH bridge is loaded by RAGE Plugin Hook, not by ScriptHookVDotNet, so it goes
@@ -58,8 +68,9 @@ RagePluginHook-plugins/ into your GTA V "Plugins" folder. Without it the RPH
 and LSPDFR adapters still load, but they can only report what is installed —
 they cannot see any live RPH or LSPDFR state.
 
-The Gtamp/bot folder is the headless bot the in-game bot menu (F7) launches.
-It needs the .NET 8 runtime. Deleting it costs you the menu and nothing else.
+The Gtamp/bot folder is the headless bot the in-game menu (F7) launches, and
+Gtamp/server is the server its second page can start. Both need the .NET 8
+runtime. Deleting either costs you that row of the menu and nothing else.
 
 See docs/INSTALL.md for the full walkthrough.
 TXT

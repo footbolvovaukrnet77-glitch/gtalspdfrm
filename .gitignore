@@ -23,3 +23,7 @@ Gtamp/client.ini
 .DS_Store
 Thumbs.db
 diagnostics/
+
+# Bot identities. Each holds an IdentitySecret, which is the private half of a
+# key and must never be published. They are generated on first run.
+bot-identities/

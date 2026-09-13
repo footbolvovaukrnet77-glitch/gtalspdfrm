@@ -33,6 +33,8 @@ looking at a screen; it removes the need for a second one.
 
 ## The in-game menu (F7)
 
+Two pages: bots, and the server. **Tab** moves between them.
+
 From inside the game, without minimising it: **F7**. Arrows move between rows and
 between values, Enter acts, Escape or F7 closes.
 
@@ -61,6 +63,39 @@ and `BotMenuKey` (118 = F7) changes the key.
 
 Quitting the game kills every bot: one left running after the player has gone would
 stand in the server's world as a player whose console nobody can see.
+
+### If F7 does nothing
+
+Type `menu` in the F8 console. A key can be taken by another mod, remapped, or
+swallowed by a menu that got there first, and when it is, nothing on screen tells
+you that apart from a build that simply has no menu. The console command cannot be
+intercepted, so it separates the two cases.
+
+The startup line in `Gtamp\logs\client-<date>.log` names both keys. If it does not
+mention F7 at all, the build is older than the menu and the answer is to update.
+
+### The server page
+
+**Tab** switches between the two pages. The second one is the session rather than
+the bots:
+
+| Row | What |
+| --- | --- |
+| Локальный сервер | starts or stops a `Gtamp.Server` on port 27015, as a child process |
+| Подключение | connects to, or leaves, the address in `client.ini` |
+| Погода | ten of GTA V's weather names; Enter sends it |
+| Время | eight times of day; Enter sends it |
+
+Weather and time go through the same admin path the console uses, and **the server
+decides whether the player may** (section 46). A player without the rights is told
+the server refused — the menu does not quietly do nothing, which reads as a broken
+menu rather than a denied one.
+
+The local server is the two-player case without a second console window beside a
+full-screen game. `tools\package-client.bat` installs it into `<GTA V>\Gtamp\server\`
+and `ServerPath` in `client.ini` points at it anywhere else. A dedicated server
+does not use this: it is `tools\run-server.bat` as before, and the menu's own copy
+stays stopped.
 
 ## Running it
 

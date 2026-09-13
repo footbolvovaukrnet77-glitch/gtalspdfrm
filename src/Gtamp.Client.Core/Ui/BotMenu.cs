@@ -59,6 +59,55 @@ namespace Gtamp.Client.Ui
         public NetVector3? At { get; }
     }
 
+    /// <summary>What a local server can be asked to do, and what it can report back.</summary>
+    /// <remarks>
+    /// Behind an interface for the same reason the bot host is: the menu talks to this
+    /// and never to a process, so the whole menu is testable without .NET 8, without a
+    /// game and without anything listening on a port.
+    /// </remarks>
+    public interface IServerHost
+    {
+        bool IsServerRunning { get; }
+
+        bool IsServerAvailable { get; }
+
+        string ServerUnavailableReason { get; }
+
+        bool StartServer(int port, out string error);
+
+        void StopServer();
+    }
+
+    /// <summary>What the menu is allowed to do to the connection and the world.</summary>
+    /// <remarks>
+    /// The menu does not hold a MultiplayerClient. It holds this, which is the four
+    /// things it actually needs — and which a test can supply without a network.
+    /// </remarks>
+    public interface IMenuSession
+    {
+        bool IsConnected { get; }
+
+        int PlayerCount { get; }
+
+        string ServerAddress { get; }
+
+        int ServerPort { get; }
+
+        void Connect(string host, int port);
+
+        void Disconnect();
+
+        /// <summary>Sends an admin command. False when the server refused or there is no server.</summary>
+        bool SendAdminCommand(string commandLine);
+    }
+
+    /// <summary>Which half of the menu is on screen.</summary>
+    public enum MenuPage : byte
+    {
+        Bots = 0,
+        Server = 1,
+    }
+
     /// <summary>One selectable row.</summary>
     public sealed class BotMenuRow
     {
@@ -78,19 +127,19 @@ namespace Gtamp.Client.Ui
     }
 
     /// <summary>
-    /// The in-game bot menu: everything about it except the drawing.
+    /// The in-game menu: everything about it except the drawing.
     /// <para>
-    /// It exists because the bots were a second console window. Testing a two-player
-    /// situation meant alt-tabbing out of a full-screen game, typing a command line,
-    /// alt-tabbing back, and doing it again for every change of task — which is enough
-    /// friction that the two-player cases went untested, which is how a framework ends
-    /// up with a combat system that has never worked.
+    /// It exists because both halves of setting up a session were a second window. Bots
+    /// meant alt-tabbing out of a full-screen game, typing a command line, alt-tabbing
+    /// back, and doing it again for every change of task; a server meant leaving one
+    /// running in a console beside the game. That is enough friction that the
+    /// two-player cases went untested, which is how a framework ends up with a combat
+    /// system that has never worked.
     /// </para>
     /// <para>
-    /// The spawn point is the part that pays for itself: "next to me" launches the
-    /// bots at the player's own coordinates. Bots at the server's spawn are two
-    /// kilometres away from wherever the player is standing, and a fight that cannot
-    /// be reached is not a test.
+    /// Two pages rather than two menus, switched with Tab. A second key is a second
+    /// thing to discover and a second thing to collide with another mod, and the two
+    /// pages are the same job seen from either end: what is running, and who is in it.
     /// </para>
     /// </summary>
     public sealed class BotMenu
@@ -104,36 +153,70 @@ namespace Gtamp.Client.Ui
             "drive",
             "follow",
             "shoot",
+            "melee",
+            "jump",
+            "traffic",
             "die",
             "reconnect",
             "shoot,die",
+            "melee,jump,traffic",
             "stand,follow,shoot,die",
+        };
+
+        /// <summary>Weather the server page can set, by GTA V's own names.</summary>
+        public static readonly string[] Weathers =
+        {
+            "EXTRASUNNY", "CLEAR", "CLOUDS", "OVERCAST", "RAIN",
+            "THUNDER", "FOGGY", "SMOG", "SNOWLIGHT", "XMAS",
+        };
+
+        /// <summary>Times of day the server page can set.</summary>
+        public static readonly string[] Times =
+        {
+            "06:00", "09:00", "12:00", "15:00", "18:00", "21:00", "00:00", "03:00",
         };
 
         public const int MaxCount = 8;
 
+        /// <summary>Port a locally started server listens on. The protocol's own default.</summary>
+        public const int LocalServerPort = 27015;
+
         private readonly IBotHost _host;
-        private readonly List<BotMenuRow> _rows = new List<BotMenuRow>();
+        private readonly IServerHost? _serverHost;
+        private readonly IMenuSession? _session;
+        private readonly List<BotMenuRow> _botRows = new List<BotMenuRow>();
+        private readonly List<BotMenuRow> _serverRows = new List<BotMenuRow>();
         private int _count = 2;
         private int _preset;
         private bool _spawnOnMe = true;
+        private int _weather;
+        private int _time = 2;
 
-        public BotMenu(IBotHost host)
+        public BotMenu(IBotHost host, IServerHost? serverHost = null, IMenuSession? session = null)
         {
             _host = host ?? throw new ArgumentNullException(nameof(host));
+            _serverHost = serverHost;
+            _session = session;
 
-            _rows.Add(new BotMenuRow("Ботов", () => _count.ToString(CultureInfo.InvariantCulture)));
-            _rows.Add(new BotMenuRow("Задачи", () => Presets[_preset].Length == 0 ? "все по порядку" : Presets[_preset]));
-            _rows.Add(new BotMenuRow("Появиться", () => _spawnOnMe ? "рядом со мной" : "точка сервера"));
-            _rows.Add(new BotMenuRow("Запустить", () => _host.RunningCount > 0 ? "ещё" : string.Empty, isAction: true));
-            _rows.Add(new BotMenuRow("Остановить всех", () => _host.RunningCount.ToString(CultureInfo.InvariantCulture), isAction: true));
+            _botRows.Add(new BotMenuRow("Ботов", () => _count.ToString(CultureInfo.InvariantCulture)));
+            _botRows.Add(new BotMenuRow("Задачи", () => Presets[_preset].Length == 0 ? "все по порядку" : Presets[_preset]));
+            _botRows.Add(new BotMenuRow("Появиться", () => _spawnOnMe ? "рядом со мной" : "точка сервера"));
+            _botRows.Add(new BotMenuRow("Запустить", () => _host.RunningCount > 0 ? "ещё" : string.Empty, isAction: true));
+            _botRows.Add(new BotMenuRow("Остановить всех", () => _host.RunningCount.ToString(CultureInfo.InvariantCulture), isAction: true));
+
+            _serverRows.Add(new BotMenuRow("Локальный сервер", DescribeServer, isAction: true));
+            _serverRows.Add(new BotMenuRow("Подключение", DescribeConnection, isAction: true));
+            _serverRows.Add(new BotMenuRow("Погода", () => Weathers[_weather], isAction: true));
+            _serverRows.Add(new BotMenuRow("Время", () => Times[_time], isAction: true));
         }
 
         public bool IsOpen { get; private set; }
 
+        public MenuPage Page { get; private set; } = MenuPage.Bots;
+
         public int Selected { get; private set; }
 
-        public IReadOnlyList<BotMenuRow> Rows => _rows;
+        public IReadOnlyList<BotMenuRow> Rows => Page == MenuPage.Bots ? _botRows : _serverRows;
 
         /// <summary>The last thing the menu did or refused to do, shown under the rows.</summary>
         public string Status { get; private set; } = string.Empty;
@@ -161,9 +244,26 @@ namespace Gtamp.Client.Ui
 
         public void Close() => IsOpen = false;
 
-        public void MoveUp() => Selected = Selected == 0 ? _rows.Count - 1 : Selected - 1;
+        /// <summary>
+        /// Switches page, and puts the cursor back at the top.
+        /// <para>
+        /// The selection is reset rather than carried across, because the pages are
+        /// different lengths and a cursor remembered on row four of a five-row page
+        /// lands on nothing on a four-row one. Carrying it would also mean arriving on
+        /// whatever happened to be at that index, which on the server page is a button
+        /// that starts things.
+        /// </para>
+        /// </summary>
+        public void NextPage()
+        {
+            Page = Page == MenuPage.Bots ? MenuPage.Server : MenuPage.Bots;
+            Selected = 0;
+            Status = string.Empty;
+        }
 
-        public void MoveDown() => Selected = (Selected + 1) % _rows.Count;
+        public void MoveUp() => Selected = Selected == 0 ? Rows.Count - 1 : Selected - 1;
+
+        public void MoveDown() => Selected = (Selected + 1) % Rows.Count;
 
         public void Left() => Adjust(-1);
 
@@ -172,6 +272,12 @@ namespace Gtamp.Client.Ui
         /// <summary>Enter on the selected row.</summary>
         public void Activate()
         {
+            if (Page == MenuPage.Server)
+            {
+                ActivateServerRow();
+                return;
+            }
+
             switch (Selected)
             {
                 case 3:
@@ -197,6 +303,123 @@ namespace Gtamp.Client.Ui
             }
         }
 
+        private string DescribeServer()
+        {
+            if (_serverHost == null)
+            {
+                return "недоступен";
+            }
+
+            return _serverHost.IsServerRunning
+                ? "запущен на " + LocalServerPort.ToString(CultureInfo.InvariantCulture)
+                : "выключен";
+        }
+
+        private string DescribeConnection()
+        {
+            if (_session == null)
+            {
+                return "недоступно";
+            }
+
+            return _session.IsConnected
+                ? $"подключён, игроков {_session.PlayerCount}"
+                : "не подключён";
+        }
+
+        private void ActivateServerRow()
+        {
+            switch (Selected)
+            {
+                case 0:
+                    ToggleLocalServer();
+                    return;
+
+                case 1:
+                    ToggleConnection();
+                    return;
+
+                case 2:
+                    Status = SendWorldCommand("weather " + Weathers[_weather], "погода: " + Weathers[_weather]);
+                    return;
+
+                case 3:
+                    Status = SendWorldCommand("time " + Times[_time], "время: " + Times[_time]);
+                    return;
+            }
+        }
+
+        private void ToggleLocalServer()
+        {
+            if (_serverHost == null)
+            {
+                Status = "локальный сервер недоступен в этой сборке";
+                return;
+            }
+
+            if (_serverHost.IsServerRunning)
+            {
+                _serverHost.StopServer();
+                Status = "локальный сервер остановлен";
+                return;
+            }
+
+            if (!_serverHost.IsServerAvailable)
+            {
+                Status = _serverHost.ServerUnavailableReason;
+                return;
+            }
+
+            Status = _serverHost.StartServer(LocalServerPort, out string error)
+                ? $"локальный сервер запущен на {LocalServerPort}"
+                : error;
+        }
+
+        private void ToggleConnection()
+        {
+            if (_session == null)
+            {
+                Status = "подключение недоступно в этой сборке";
+                return;
+            }
+
+            if (_session.IsConnected)
+            {
+                _session.Disconnect();
+                Status = "отключаюсь";
+                return;
+            }
+
+            _session.Connect(_session.ServerAddress, _session.ServerPort);
+            Status = $"подключаюсь к {_session.ServerAddress}:{_session.ServerPort}";
+        }
+
+        /// <summary>
+        /// Sends one world command and says what happened.
+        /// <para>
+        /// A refusal is reported rather than swallowed. These go through the same admin
+        /// path the console uses and the server checks permission for them, so a player
+        /// without it must be told that and not left looking at a menu that appears to
+        /// have worked.
+        /// </para>
+        /// </summary>
+        private string SendWorldCommand(string commandLine, string success)
+        {
+            if (_session == null)
+            {
+                return "недоступно в этой сборке";
+            }
+
+            if (!_session.IsConnected)
+            {
+                return "нужно быть подключённым к серверу";
+            }
+
+            return _session.SendAdminCommand(commandLine)
+                ? success
+                : "сервер отказал — нужны права администратора";
+        }
+
         private void Launch()
         {
             if (!_host.IsAvailable)
@@ -219,6 +442,22 @@ namespace Gtamp.Client.Ui
 
         private void Adjust(int direction)
         {
+            if (Page == MenuPage.Server)
+            {
+                switch (Selected)
+                {
+                    case 2:
+                        _weather = (_weather + direction + Weathers.Length) % Weathers.Length;
+                        return;
+
+                    case 3:
+                        _time = (_time + direction + Times.Length) % Times.Length;
+                        return;
+                }
+
+                return;
+            }
+
             switch (Selected)
             {
                 case 0:

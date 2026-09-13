@@ -72,6 +72,17 @@ namespace Gtamp.Client.Core
         public string BotPath { get; set; } = string.Empty;
 
         /// <summary>
+        /// Where Gtamp.Server lives, for the menu's "local server" row.
+        /// <para>
+        /// Empty by default and found under <c>Gtamp\server</c>, the same as the bot.
+        /// A dedicated server does not need this; it is for hosting from the machine
+        /// that is playing, which is the two-player case that used to mean leaving a
+        /// console window open beside a full-screen game.
+        /// </para>
+        /// </summary>
+        public string ServerPath { get; set; } = string.Empty;
+
+        /// <summary>
         /// How far behind the newest snapshot remote players are rendered, in seconds.
         /// Two snapshot intervals plus a jitter margin; lowering it makes other players
         /// stutter, raising it makes them lag behind their real position.
@@ -252,6 +263,8 @@ namespace Gtamp.Client.Core
                 $"BotMenuKey={BotMenuKey.ToString(CultureInfo.InvariantCulture)}",
                 "; Full path to Gtamp.Bot.exe or Gtamp.Bot.dll. Empty means look in Gtamp\\bot.",
                 $"BotPath={BotPath}",
+                "; Full path to Gtamp.Server.exe or Gtamp.Server.dll. Empty means look in Gtamp\\server.",
+                $"ServerPath={ServerPath}",
                 $"InterpolationDelay={InterpolationDelay.ToString("0.###", CultureInfo.InvariantCulture)}",
                 $"CorrectionThreshold={CorrectionThreshold.ToString("0.###", CultureInfo.InvariantCulture)}",
                 $"HealthCorrectionThreshold={HealthCorrectionThreshold.ToString(CultureInfo.InvariantCulture)}",
@@ -334,6 +347,9 @@ namespace Gtamp.Client.Core
                     break;
                 case "botpath":
                     BotPath = value;
+                    break;
+                case "serverpath":
+                    ServerPath = value;
                     break;
                 case "applyremoteposture":
                     ApplyRemotePosture = ParseBool(value);

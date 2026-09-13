@@ -1,4 +1,6 @@
+using System;
 using System.Collections.Generic;
+using Gtamp.Bot.Tasks;
 using Gtamp.Client.Ui;
 using Gtamp.Shared.Core;
 using Xunit;
@@ -195,13 +197,254 @@ namespace Gtamp.Tests
             Assert.Equal(0, menu.RunningCount);
         }
 
+
+        private sealed class FakeServerHost : IServerHost
+        {
+            public int Started { get; private set; }
+
+            public int Stopped { get; private set; }
+
+            public int LastPort { get; private set; }
+
+            public bool IsServerRunning { get; set; }
+
+            public bool IsServerAvailable { get; set; } = true;
+
+            public string ServerUnavailableReason { get; set; } = "сервер не найден";
+
+            public string FailWith { get; set; } = string.Empty;
+
+            public bool StartServer(int port, out string error)
+            {
+                if (FailWith.Length > 0)
+                {
+                    error = FailWith;
+                    return false;
+                }
+
+                Started++;
+                LastPort = port;
+                IsServerRunning = true;
+                error = string.Empty;
+                return true;
+            }
+
+            public void StopServer()
+            {
+                Stopped++;
+                IsServerRunning = false;
+            }
+        }
+
+        private sealed class FakeSession : IMenuSession
+        {
+            public readonly List<string> Commands = new List<string>();
+
+            public int Connects { get; private set; }
+
+            public int Disconnects { get; private set; }
+
+            public bool IsConnected { get; set; }
+
+            public int PlayerCount { get; set; }
+
+            public string ServerAddress { get; set; } = "127.0.0.1";
+
+            public int ServerPort { get; set; } = 27015;
+
+            public bool RefuseCommands { get; set; }
+
+            public void Connect(string host, int port)
+            {
+                Connects++;
+                IsConnected = true;
+            }
+
+            public void Disconnect()
+            {
+                Disconnects++;
+                IsConnected = false;
+            }
+
+            public bool SendAdminCommand(string commandLine)
+            {
+                if (RefuseCommands)
+                {
+                    return false;
+                }
+
+                Commands.Add(commandLine);
+                return true;
+            }
+        }
+
+        private static (BotMenu Menu, FakeServerHost Server, FakeSession Session) OpenServerPage()
+        {
+            var server = new FakeServerHost();
+            var session = new FakeSession();
+            var menu = new BotMenu(new FakeBotHost(), server, session);
+            menu.Toggle();
+            menu.NextPage();
+            Assert.Equal(MenuPage.Server, menu.Page);
+            return (menu, server, session);
+        }
+
+        [Fact]
+        public void TabMovesBetweenThePagesAndBack()
+        {
+            (BotMenu menu, FakeBotHost _) = Open();
+
+            Assert.Equal(MenuPage.Bots, menu.Page);
+            menu.NextPage();
+            Assert.Equal(MenuPage.Server, menu.Page);
+            menu.NextPage();
+            Assert.Equal(MenuPage.Bots, menu.Page);
+        }
+
+        /// <summary>
+        /// The pages are different lengths, so a cursor carried across can land past the
+        /// end of the shorter one -- or, worse, on whatever happens to sit at that index,
+        /// which on the server page is a button that starts a process.
+        /// </summary>
+        [Fact]
+        public void SwitchingPageDoesNotCarryTheCursorOntoARowItNeverMeantToSelect()
+        {
+            (BotMenu menu, FakeBotHost _) = Open();
+
+            menu.MoveDown();
+            menu.MoveDown();
+            menu.MoveDown();
+            menu.MoveDown();
+            Assert.Equal(4, menu.Selected);
+
+            menu.NextPage();
+
+            Assert.Equal(0, menu.Selected);
+            Assert.True(menu.Selected < menu.Rows.Count);
+        }
+
+        [Fact]
+        public void TheLocalServerRowStartsAndThenStopsTheServer()
+        {
+            (BotMenu menu, FakeServerHost server, FakeSession _) = OpenServerPage();
+
+            menu.Activate();
+            Assert.Equal(1, server.Started);
+            Assert.Equal(BotMenu.LocalServerPort, server.LastPort);
+            Assert.True(server.IsServerRunning);
+
+            menu.Activate();
+            Assert.Equal(1, server.Stopped);
+            Assert.False(server.IsServerRunning);
+        }
+
+        [Fact]
+        public void AnInstallationWithNoServerSaysSoRatherThanLookingLikeItWorked()
+        {
+            (BotMenu menu, FakeServerHost server, FakeSession _) = OpenServerPage();
+            server.IsServerAvailable = false;
+            server.ServerUnavailableReason = "Gtamp.Server не найден";
+
+            menu.Activate();
+
+            Assert.Equal(0, server.Started);
+            Assert.Contains("не найден", menu.Status);
+        }
+
+        [Fact]
+        public void TheConnectionRowConnectsAndThenDisconnects()
+        {
+            (BotMenu menu, FakeServerHost _, FakeSession session) = OpenServerPage();
+            menu.MoveDown();
+
+            menu.Activate();
+            Assert.Equal(1, session.Connects);
+
+            menu.Activate();
+            Assert.Equal(1, session.Disconnects);
+        }
+
+        [Fact]
+        public void WeatherAndTimeGoOutAsAdminCommands()
+        {
+            (BotMenu menu, FakeServerHost _, FakeSession session) = OpenServerPage();
+            session.IsConnected = true;
+
+            menu.MoveDown();
+            menu.MoveDown();
+            menu.Right();
+            menu.Activate();
+
+            menu.MoveDown();
+            menu.Activate();
+
+            Assert.Equal(2, session.Commands.Count);
+            Assert.StartsWith("weather ", session.Commands[0]);
+            Assert.StartsWith("time ", session.Commands[1]);
+        }
+
+        /// <summary>
+        /// Section 46: these go through the same admin path the console uses and the
+        /// server decides whether the player may. A refusal has to reach the player,
+        /// because a menu that silently does nothing reads as a broken menu.
+        /// </summary>
+        [Fact]
+        public void AServerThatRefusesAWorldCommandIsReportedAndNotSwallowed()
+        {
+            (BotMenu menu, FakeServerHost _, FakeSession session) = OpenServerPage();
+            session.IsConnected = true;
+            session.RefuseCommands = true;
+
+            menu.MoveDown();
+            menu.MoveDown();
+            menu.Activate();
+
+            Assert.Empty(session.Commands);
+            Assert.Contains("администратор", menu.Status);
+        }
+
+        [Fact]
+        public void SettingTheWeatherWithNoServerToSetItOnSaysThatInstead()
+        {
+            (BotMenu menu, FakeServerHost _, FakeSession session) = OpenServerPage();
+            session.IsConnected = false;
+
+            menu.MoveDown();
+            menu.MoveDown();
+            menu.Activate();
+
+            Assert.Empty(session.Commands);
+            Assert.Contains("подключённым", menu.Status);
+        }
+
+        /// <summary>
+        /// The bot page must keep working in a build where the menu was handed no
+        /// server and no session at all, because that is how every existing caller
+        /// constructs it.
+        /// </summary>
+        [Fact]
+        public void TheServerPageDegradesInsteadOfThrowingWhenThereIsNoServerHost()
+        {
+            (BotMenu menu, FakeBotHost _) = Open();
+            menu.NextPage();
+
+            menu.Activate();
+
+            Assert.Contains("недоступен", menu.Status);
+        }
+
         [Fact]
         public void EveryPresetIsARealTaskListOrTheDefaultOfAllOfThem()
         {
-            var valid = new HashSet<string>
+            // Taken from the bot rather than written down here. A list copied into a
+            // test goes stale exactly as quietly as one copied into a --help string,
+            // and then the test's job -- catching a preset that names a task nobody
+            // implemented -- is being done against the wrong list.
+            var valid = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            foreach (BotTask task in BotTask.All())
             {
-                "stand", "patrol", "drive", "follow", "shoot", "die", "reconnect",
-            };
+                valid.Add(task.Name);
+            }
 
             foreach (string preset in BotMenu.Presets)
             {
