@@ -73,6 +73,13 @@ namespace Gtamp.Bot
 
         public NetVector3 AimPosition { get; set; }
 
+        /// <summary>
+        /// The ped this body is swinging at, as the simulated game would report it.
+        /// Set by the melee task; the client turns it into a replicated id exactly as
+        /// it does for a real one.
+        /// </summary>
+        public int MeleeTargetPedHandle { get; set; }
+
         public byte WantedLevel { get; set; }
 
         /// <summary>Handle of the vehicle the bot is driving, or 0 on foot.</summary>

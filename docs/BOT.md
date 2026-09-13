@@ -98,6 +98,9 @@ tools/run-bot.sh --count 2 --task stand,follow,shoot,die
 | `drive` | Claim a vehicle, have the server adopt it, drive a route |
 | `follow` | Walk after the nearest real player and never lose them |
 | `shoot` | Fire at a player, claim the hits, and see whether damage arrives |
+| `melee` | Punch a player and check the melee target travelled and resolved to that body |
+| `jump` | Jump, and check the jump reaches the other client |
+| `traffic` | Check that exactly one client per group is the shared-traffic source |
 | `die` | Be killed **by somebody else** and wait for the server to bring you back |
 | `reconnect` | Leave and return, and check what the server remembered |
 
@@ -172,3 +175,23 @@ from 200 to 20 and no further. That is roughly six claims applied out of
 thirty-eight. Whether the rest were correctly rejected — the hit rate limiter, the
 range check, the damage envelope — or wrongly dropped is **not established**, and the
 number is written here rather than explained.
+
+## What the bot has verified that a person has not
+
+The three tasks added on 13 September exist because six commits of work had gone in
+without GTA V being started once. A bot cannot say what a punch looks like, but it can
+say whether the punch reached the other client at all — and that is the half that has
+been silently wrong in this project over and over.
+
+Run against a real server, two bots:
+
+```
+melee    ok  472 frames of being punched, and punched as the right body
+jump     ok  the other player's jumps arrived (75 frames)
+traffic  ok  one bot is the source, the other suppresses its own (481 frames)
+```
+
+That is the live path: the real client, the real protocol, the real server. What it
+does not cover is everything below IGameBridge — whether the punch animation plays,
+where the jumping ped lands, whether the shared cars drive properly. Those still need
+a person and a screen.

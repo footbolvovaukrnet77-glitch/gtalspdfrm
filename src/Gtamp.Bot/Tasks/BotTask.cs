@@ -133,6 +133,9 @@ namespace Gtamp.Bot.Tasks
             new DriveTask(),
             new FollowTask(),
             new ShootTask(),
+            new MeleeTask(),
+            new JumpTask(),
+            new TrafficTask(),
             new DieTask(),
             new ReconnectTask(),
         };

@@ -29,6 +29,16 @@ namespace Gtamp.Bot
 
         public int ModelChanges { get; set; }
 
+        /// <summary>Frames on which the client told us to swing one body at another.</summary>
+        public int MeleeTargetsSeen { get; set; }
+
+        /// <summary>The ped handle of the last melee target, so a bot can say whether it was itself.</summary>
+        public int LastMeleeTarget { get; set; }
+
+        public int JumpsSeen { get; set; }
+
+        public int CoverEntriesSeen { get; set; }
+
         public List<string> Notifications { get; } = new List<string>();
 
         public bool AnyRemotePedNow => RemotePeds.Count > 0;
@@ -87,6 +97,7 @@ namespace Gtamp.Bot
             WeaponTint = 0,
             WeaponComponents = null,
             AimPosition = _body.AimPosition,
+            MeleeTargetPedHandle = _body.MeleeTargetPedHandle,
             InteriorId = 0,
             WantedLevel = _body.WantedLevel,
             AnimationHash = 0,
@@ -158,6 +169,26 @@ namespace Gtamp.Bot
             if (Seen.RemotePeds.ContainsKey(handle))
             {
                 Seen.RemotePeds[handle] = command.TargetPosition;
+            }
+
+            // What the client asked us to do to somebody else's body, rather than what
+            // it asked us to draw. It is how a headless bot can report that a punch,
+            // a jump or a cover entry arrived at all — the three of which reach a ped
+            // as a task and leave no trace in a position.
+            if (command.MeleeTargetHandle != 0)
+            {
+                Seen.MeleeTargetsSeen++;
+                Seen.LastMeleeTarget = command.MeleeTargetHandle;
+            }
+
+            if ((command.Flags & PlayerFlags.Jumping) != 0)
+            {
+                Seen.JumpsSeen++;
+            }
+
+            if ((command.Flags & PlayerFlags.InCover) != 0)
+            {
+                Seen.CoverEntriesSeen++;
             }
         }
 

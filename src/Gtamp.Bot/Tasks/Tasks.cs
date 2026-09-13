@@ -584,4 +584,193 @@ namespace Gtamp.Bot.Tasks
             return TaskVerdict.Pass(state);
         }
     }
+    /// <summary>
+    /// Punch another player and see whether the server carried who was being punched.
+    /// <para>
+    /// <c>PlayerFlags.Melee</c> travelled for twelve phases with nothing to swing at,
+    /// because the target was not replicated. It is now, and this is the half of that
+    /// a headless bot can prove: not what the punch looks like, but that the other
+    /// client was told which body to swing at and that the body it named was the right
+    /// one.
+    /// </para>
+    /// </summary>
+    public sealed class MeleeTask : BotTask
+    {
+        private int _targetsAtStart;
+        private int _punchesThrown;
+
+        public override string Name => "melee";
+
+        public override string Goal => "ударить другого игрока и проверить, что цель доехала (T9)";
+
+        public override double TimeLimitSeconds => 15d;
+
+        public override void Start(BotContext context)
+        {
+            _targetsAtStart = context.Bridge.Seen.MeleeTargetsSeen;
+            _punchesThrown = 0;
+            context.Body.WeaponHash = 0;
+        }
+
+        public override bool Update(BotContext context, double elapsed, double delta)
+        {
+            RemotePlayer? target = context.NearestPlayer();
+            if (target == null || target.PedHandle == 0)
+            {
+                context.Body.Flags &= ~PlayerFlags.Melee;
+                context.Body.MeleeTargetPedHandle = 0;
+                return false;
+            }
+
+            // Read fresh every frame rather than remembered: a remote ped is destroyed
+            // and rebuilt when its model changes, and a remembered handle is stale from
+            // that moment on. The real bridge reads it the same way.
+            context.Body.Flags |= PlayerFlags.Melee;
+            context.Body.MeleeTargetPedHandle = target.PedHandle;
+            _punchesThrown++;
+            return elapsed > 8d;
+        }
+
+        public override TaskVerdict Finish(BotContext context, double elapsed)
+        {
+            context.Body.Flags &= ~PlayerFlags.Melee;
+            context.Body.MeleeTargetPedHandle = 0;
+
+            if (_punchesThrown == 0)
+            {
+                return TaskVerdict.Skip("некого было бить — нужен живой игрок рядом");
+            }
+
+            int seen = context.Bridge.Seen.MeleeTargetsSeen - _targetsAtStart;
+            if (seen == 0)
+            {
+                return TaskVerdict.Fail(
+                    "по боту никто не бил, хотя бил он сам: цель удара до этого клиента не доехала");
+            }
+
+            // The body the other bot was told to hit must be this one. Anything else
+            // means the id travelled and resolved to the wrong ped, which is worse than
+            // not travelling: the punch lands on a bystander.
+            if (context.Bridge.Seen.LastMeleeTarget != BotBody.LocalPedHandle)
+            {
+                return TaskVerdict.Fail(
+                    $"клиенту велели бить тело {context.Bridge.Seen.LastMeleeTarget}, " +
+                    $"а это тело {BotBody.LocalPedHandle} — цель разрешилась не в того");
+            }
+
+            return TaskVerdict.Pass($"{seen} кадр(ов) по боту били, и били именно его");
+        }
+    }
+
+    /// <summary>
+    /// Check that exactly one bot in a group is spawning the ambient traffic.
+    /// <para>
+    /// The decision is the server's and reaches a client in every snapshot header. A
+    /// bot cannot see a car — its game has none — but it can see which side of the
+    /// answer it is on, and that is the half that goes wrong silently: two sources is a
+    /// street with two sets of cars, no source is an empty one.
+    /// </para>
+    /// </summary>
+    public sealed class TrafficTask : BotTask
+    {
+        private int _suppressedAtStart;
+
+        public override string Name => "traffic";
+
+        public override string Goal => "проверить, что источник трафика ровно один (T15)";
+
+        public override double TimeLimitSeconds => 8d;
+
+        public override void Start(BotContext context)
+        {
+            _suppressedAtStart = context.Bridge.TrafficSuppressedFrames;
+        }
+
+        public override bool Update(BotContext context, double elapsed, double delta) => false;
+
+        public override TaskVerdict Finish(BotContext context, double elapsed)
+        {
+            bool source = context.Client.AmbientTraffic.IsSource;
+            int suppressed = context.Bridge.TrafficSuppressedFrames - _suppressedAtStart;
+
+            if (context.NearestPlayer() == null)
+            {
+                return source
+                    ? TaskVerdict.Pass("бот один в своей части мира и спавнит трафик сам — так и должно быть")
+                    : TaskVerdict.Fail("бот один, но трафик ему никто не спавнит — улица будет пустой");
+            }
+
+            if (source)
+            {
+                return suppressed > 0
+                    ? TaskVerdict.Fail($"бот назначен источником и при этом {suppressed} кадр(ов) глушил трафик")
+                    : TaskVerdict.Pass("бот — источник трафика для своей группы");
+            }
+
+            return suppressed > 0
+                ? TaskVerdict.Pass($"бот не источник и глушит свой трафик ({suppressed} кадр(ов))")
+                : TaskVerdict.Fail("бот не источник, но свой трафик не глушит — на улице будет два набора машин");
+        }
+    }
+
+    /// <summary>
+    /// Jump, and check the flag reached the other client as something to act on.
+    /// <para>
+    /// Jump, climb and parachute travelled from the first commit and were applied by
+    /// nothing. What a bot can prove is the travelling; what the task looks like on a
+    /// ped needs a person and a screen.
+    /// </para>
+    /// </summary>
+    public sealed class JumpTask : BotTask
+    {
+        private int _jumpsAtStart;
+        private double _nextJump;
+        private int _jumped;
+
+        public override string Name => "jump";
+
+        public override string Goal => "прыгать и проверить, что прыжок доезжает (T9)";
+
+        public override double TimeLimitSeconds => 12d;
+
+        public override void Start(BotContext context)
+        {
+            _jumpsAtStart = context.Bridge.Seen.JumpsSeen;
+            _nextJump = 1d;
+            _jumped = 0;
+        }
+
+        public override bool Update(BotContext context, double elapsed, double delta)
+        {
+            // Held for a few frames and then cleared, because a jump is a transition
+            // and a flag that is never cleared is never a transition again.
+            if (elapsed >= _nextJump && _jumped < 4)
+            {
+                context.Body.Flags |= PlayerFlags.Jumping;
+                _nextJump = elapsed + 2d;
+                _jumped++;
+            }
+            else if (elapsed >= _nextJump - 1.7d)
+            {
+                context.Body.Flags &= ~PlayerFlags.Jumping;
+            }
+
+            return _jumped >= 4 && elapsed > 9d;
+        }
+
+        public override TaskVerdict Finish(BotContext context, double elapsed)
+        {
+            context.Body.Flags &= ~PlayerFlags.Jumping;
+
+            if (context.NearestPlayer() == null)
+            {
+                return TaskVerdict.Skip("некому было смотреть на прыжки — нужен второй игрок");
+            }
+
+            int seen = context.Bridge.Seen.JumpsSeen - _jumpsAtStart;
+            return seen > 0
+                ? TaskVerdict.Pass($"прыжки другого игрока доехали ({seen} кадр(ов))")
+                : TaskVerdict.Fail("рядом прыгали, но до этого клиента прыжок не доехал");
+        }
+    }
 }
