@@ -44,7 +44,8 @@ namespace Gtamp.Client.Players
             int vehicleHandle = 0,
             sbyte vehicleSeat = -2,
             byte weaponTint = 0,
-            System.Collections.Generic.List<uint>? weaponComponents = null)
+            System.Collections.Generic.List<uint>? weaponComponents = null,
+            int meleeTargetHandle = 0)
         {
             Action = action;
             TargetPosition = targetPosition;
@@ -62,7 +63,20 @@ namespace Gtamp.Client.Players
             VehicleSeat = vehicleSeat;
             WeaponTint = weaponTint;
             WeaponComponents = weaponComponents;
+            MeleeTargetHandle = meleeTargetHandle;
         }
+
+        /// <summary>
+        /// Game-side handle of the ped this one is swinging at, or 0 when there is
+        /// none to swing at — the target has not been built on this client, or the
+        /// character is not in melee.
+        /// <para>
+        /// Resolved by the manager for the same reason <see cref="VehicleHandle"/> is:
+        /// the controller works in replicated ids and knows nothing about what the
+        /// local game has built.
+        /// </para>
+        /// </summary>
+        public int MeleeTargetHandle { get; }
 
         public RemotePedAction Action { get; }
 
@@ -177,7 +191,15 @@ namespace Gtamp.Client.Players
         /// Game handle of the vehicle this character is riding in, resolved by the
         /// caller, or 0 when the local game has no such vehicle.
         /// </param>
-        public static RemotePedCommand Decide(in RemotePedFrame frame, NetVector3 pedPosition, int vehicleHandle = 0)
+        /// <param name="meleeTargetHandle">
+        /// Game handle of the ped this character is striking, resolved by the caller,
+        /// or 0 when the local game has no such ped.
+        /// </param>
+        public static RemotePedCommand Decide(
+            in RemotePedFrame frame,
+            NetVector3 pedPosition,
+            int vehicleHandle = 0,
+            int meleeTargetHandle = 0)
         {
             bool dead = frame.Health <= 0 || (frame.Flags & PlayerFlags.Dead) != 0;
             if (dead)
@@ -282,7 +304,8 @@ namespace Gtamp.Client.Players
                 0,
                 -2,
                 frame.WeaponTint,
-                frame.WeaponComponents);
+                frame.WeaponComponents,
+                meleeTargetHandle);
         }
 
         private static RemotePedAction ChooseGait(in RemotePedFrame frame, float distance)

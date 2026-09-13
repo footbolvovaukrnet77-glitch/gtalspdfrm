@@ -71,6 +71,20 @@ namespace Gtamp.Shared.Entities
         public uint AnimationHash { get; set; }
 
         /// <summary>
+        /// The character this one is swinging at, or <see cref="EntityId.None"/> when
+        /// it is not in melee.
+        /// <para>
+        /// <see cref="PlayerFlags.Melee"/> travelled on its own for twelve phases and
+        /// was applied by nothing, for a reason that was correct: a melee task needs an
+        /// entity to strike, and a ped told to fight without one swings at the air in a
+        /// direction nobody chose. This is the missing half. It is a replicated id
+        /// rather than a position because the receiving client has to resolve it to one
+        /// of its own peds, and a position would have it guessing which ped was meant.
+        /// </para>
+        /// </summary>
+        public EntityId MeleeTargetId { get; set; }
+
+        /// <summary>
         /// Limb positions while this character is ragdolling, and
         /// <see cref="RagdollPose.None"/> otherwise.
         /// <para>
@@ -116,6 +130,7 @@ namespace Gtamp.Shared.Entities
             target.WeaponComponents.Clear();
             target.WeaponComponents.AddRange(WeaponComponents);
             target.AimPosition = AimPosition;
+            target.MeleeTargetId = MeleeTargetId;
             target.VehicleId = VehicleId;
             target.VehicleSeat = VehicleSeat;
             target.AnimationHash = AnimationHash;
@@ -248,6 +263,11 @@ namespace Gtamp.Shared.Entities
                     (a, b) => a.Ragdoll != b.Ragdoll,
                     (w, e) => e.Ragdoll.Write(w),
                     (r, e) => e.Ragdoll = RagdollPose.Read(r))
+                .Add(
+                    "MeleeTargetId",
+                    (a, b) => a.MeleeTargetId != b.MeleeTargetId,
+                    (w, e) => w.WriteVarUInt(e.MeleeTargetId.Value),
+                    (r, e) => e.MeleeTargetId = new EntityId(r.ReadVarUInt()))
                 .Add(
                     "Appearance",
                     (a, b) => !a.Appearance.ValueEquals(b.Appearance),

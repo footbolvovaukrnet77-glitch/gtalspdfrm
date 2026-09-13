@@ -56,6 +56,9 @@ namespace Gtamp.Client.Shv.Bridge
         /// <summary>How long one shooting task runs. Short, because it is re-issued while the flag is set.</summary>
         private const int ShootBurstMilliseconds = 250;
 
+        /// <summary>How long a cover task runs before expiring. Re-issued when the player leaves and re-enters cover.</summary>
+        private const int CoverTimeoutMilliseconds = 20000;
+
         /// <summary>Rockstar's FIRING_PATTERN_FULL_AUTO. The pattern decides cadence; the flag decides whether to fire at all.</summary>
         private const uint FiringPatternFullAuto = 0xC6EE6B4C;
 
@@ -212,8 +215,36 @@ namespace Gtamp.Client.Shv.Bridge
                 sample.WeaponComponents = ReadWeaponComponents(weapon);
             }
 
+            sample.MeleeTargetPedHandle = SampleMeleeTarget(ped, sample.Flags);
             sample.Ragdoll = SampleRagdollPose(ped, sample.Flags, sample.Position);
             return sample;
+        }
+
+        /// <summary>
+        /// Who the local player is swinging at, as a game handle, or 0.
+        /// <para>
+        /// Read only while the melee flag is set, because the native costs a call and
+        /// nobody is in melee on almost every frame of a session. The handle means
+        /// nothing to anyone else; the client turns it into a replicated id before it
+        /// goes anywhere, and a handle that belongs to an ambient ped rather than a
+        /// player resolves to nothing and is dropped there.
+        /// </para>
+        /// </summary>
+        private static int SampleMeleeTarget(Ped ped, PlayerFlags flags)
+        {
+            if ((flags & PlayerFlags.Melee) == 0)
+            {
+                return 0;
+            }
+
+            try
+            {
+                return Function.Call<int>(Hash.GET_MELEE_TARGET_FOR_PED, ped.Handle);
+            }
+            catch (Exception)
+            {
+                return 0;
+            }
         }
 
         /// <summary>
@@ -589,6 +620,19 @@ namespace Gtamp.Client.Shv.Bridge
             catch (Exception exception)
             {
                 _log.Error(LogCategory.Client, "Could not create a remote ped.", exception);
+                return 0;
+            }
+        }
+
+        public int GetLocalPlayerPedHandle()
+        {
+            try
+            {
+                Ped ped = Game.Player.Character;
+                return ped != null && ped.Exists() ? ped.Handle : 0;
+            }
+            catch (Exception)
+            {
                 return 0;
             }
         }
@@ -1145,7 +1189,111 @@ namespace Gtamp.Client.Shv.Bridge
 
             state.Reloading = reloading;
 
+            ApplyMelee(ped, in command, state);
+            ApplyCover(ped, in command, state);
             ApplyPostureTask(ped, in command, state);
+        }
+
+        /// <summary>
+        /// Swings a remote player's fists at whoever they are actually swinging at.
+        /// <para>
+        /// <see cref="PlayerFlags.Melee"/> travelled from the first commit and was
+        /// applied by nothing, with a reason that was correct as far as it went: a
+        /// melee task needs an entity to strike, only the flag was replicated, and a
+        /// ped told to fight nobody swings at the air in a direction nobody chose.
+        /// The missing half now travels — <c>CharacterEntity.MeleeTargetId</c>, resolved
+        /// back to a local ped by the manager — so the refusal no longer applies.
+        /// </para>
+        /// <para>
+        /// Still refused when the target resolves to nothing: a player too far away to
+        /// have been built on this client, or one who has left. That is the case the
+        /// old reason described, and it is the only one left.
+        /// </para>
+        /// </summary>
+        private static void ApplyMelee(Ped ped, in RemotePedCommand command, PedDriveState state)
+        {
+            bool melee = (command.Flags & PlayerFlags.Melee) != 0 && command.MeleeTargetHandle != 0;
+
+            // Re-issued only when the target changes, for the reason every task here is:
+            // a melee task restarted every frame never lands a blow.
+            int target = melee ? command.MeleeTargetHandle : 0;
+            if (state.MeleeTarget == target)
+            {
+                return;
+            }
+
+            state.MeleeTarget = target;
+
+            try
+            {
+                if (target != 0)
+                {
+                    Function.Call(Hash.TASK_COMBAT_PED, ped.Handle, target, 0, 16);
+                }
+            }
+            catch (Exception)
+            {
+                // A script host without the native. The punch is not shown; the damage
+                // is a separate claim and reaches the server regardless.
+            }
+        }
+
+        /// <summary>
+        /// Puts a remote player into cover.
+        /// <para>
+        /// The reason recorded for not applying <see cref="PlayerFlags.InCover"/> was
+        /// that cover is a position in the world rather than a state of the ped, and
+        /// that a guessed cover point pins the ped to the wrong wall. The first half is
+        /// true and the second does not follow: the point does not have to be guessed.
+        /// A player in cover is standing at their cover, so their own replicated
+        /// position is the coordinate to search from, and it is already on the wire.
+        /// This corrects that entry rather than working around it.
+        /// </para>
+        /// <para>
+        /// What remains true is that the receiving client may find no cover there —
+        /// a prop this client does not have, or half a metre of drift onto the wrong
+        /// side of a wall. The native then does nothing, which is the same outcome as
+        /// before and not a worse one.
+        /// </para>
+        /// </summary>
+        private static void ApplyCover(Ped ped, in RemotePedCommand command, PedDriveState state)
+        {
+            bool inCover = (command.Flags & PlayerFlags.InCover) != 0;
+            if (state.InCover == inCover)
+            {
+                return;
+            }
+
+            state.InCover = inCover;
+
+            try
+            {
+                if (inCover)
+                {
+                    Function.Call(
+                        Hash.TASK_PUT_PED_DIRECTLY_INTO_COVER,
+                        ped.Handle,
+                        command.TargetPosition.X,
+                        command.TargetPosition.Y,
+                        command.TargetPosition.Z,
+                        CoverTimeoutMilliseconds,
+                        true,
+                        0f,
+                        false,
+                        false,
+                        0,
+                        false);
+                }
+                else
+                {
+                    Function.Call(Hash.CLEAR_PED_TASKS, ped.Handle);
+                    state.Reset();
+                }
+            }
+            catch (Exception)
+            {
+                // As above: not shown rather than shown wrongly.
+            }
         }
 
         /// <summary>
@@ -2143,6 +2291,12 @@ namespace Gtamp.Client.Shv.Bridge
             /// a task that restarts sixty times a second never plays.
             /// </summary>
             public PlayerFlags PostureFlags;
+
+            /// <summary>The ped this one was last told to fight, so the task is not restarted every frame.</summary>
+            public int MeleeTarget;
+
+            /// <summary>Whether this ped has been put into cover, written on change for the same reason.</summary>
+            public bool InCover;
 
             /// <summary>The vehicle and seat this ped was last put into, so it is not re-seated every frame.</summary>
             public int SeatedVehicle;

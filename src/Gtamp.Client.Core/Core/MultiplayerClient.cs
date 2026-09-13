@@ -612,6 +612,7 @@ namespace Gtamp.Client.Core
                 // Blips and names are drawn relative to where the local player is, so
                 // the viewer has to be refreshed before rendering rather than read
                 // from a snapshot that is a tenth of a second behind them.
+                RemotePlayers.LocalEntityId = LocalEntityId;
                 RemotePlayers.ShowBlips = Config.ShowPlayerBlips;
                 RemotePlayers.ShowNames = Config.ShowPlayerNames;
                 RemotePlayers.ViewerPosition = _hasReportedState ? _lastReportedPosition : RemotePlayers.ViewerPosition;
@@ -1363,6 +1364,7 @@ namespace Gtamp.Client.Core
                 InteriorId = sample.InteriorId,
                 WantedLevel = sample.WantedLevel,
                 AnimationHash = sample.AnimationHash,
+                MeleeTargetId = ResolveMeleeTarget(sample),
                 Ragdoll = sample.Ragdoll,
             };
 
@@ -1388,6 +1390,28 @@ namespace Gtamp.Client.Core
             _lastReportedWantedLevel = sample.WantedLevel;
             _lastReportedModelHash = sample.ModelHash;
             _hasReportedState = true;
+        }
+
+        /// <summary>
+        /// Turns the ped handle the game gave for a melee target into the replicated id
+        /// of whoever that ped stands for.
+        /// <para>
+        /// The same map a hit uses, and for the same reason: the bridge deals in game
+        /// handles and only this layer knows which handle belongs to which player. A
+        /// handle that resolves to nobody — an ambient ped, or a player who has left —
+        /// reports no target rather than a wrong one.
+        /// </para>
+        /// </summary>
+        private EntityId ResolveMeleeTarget(in LocalPlayerSample sample)
+        {
+            if ((sample.Flags & PlayerFlags.Melee) == 0 || sample.MeleeTargetPedHandle == 0)
+            {
+                return EntityId.None;
+            }
+
+            return RemotePlayers.TryGetByPedHandle(sample.MeleeTargetPedHandle, out RemotePlayer target)
+                ? target.EntityId
+                : EntityId.None;
         }
 
         private void SendPeriodicPing(double now)

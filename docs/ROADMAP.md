@@ -248,7 +248,7 @@ machine and real clients, and is not claimed here.
 | Step | What it guards |
 | --- | --- |
 | `dotnet build -c Release -warnaserror` | The zero-warning claim. Without `-warnaserror` it decays the first time a warning lands that nobody scrolls up far enough to see |
-| `dotnet test -c Release` | All 718 tests, with the `.trx` uploaded as an artifact so a failure is readable without re-running anything |
+| `dotnet test -c Release` | All 723 tests, with the `.trx` uploaded as an artifact so a failure is readable without re-running anything |
 | `python3 tools/check-docs.py` | Dead relative links, `#anchors` naming headings that no longer exist, any document that lost its counterpart in the other language, and the three things the documentation asserts about the code: the protocol version, the test count, and the `client.ini` example. All three had drifted before the checks existed |
 
 The whole solution compiles on `ubuntu-latest`, the `net48` client included,
@@ -386,12 +386,17 @@ the arithmetic does not support it (120 ms of interpolation against a jump close
 a second). What was actually wrong was issuing the task every frame the flag was
 set, which restarts a one-shot task so it never plays.
 
-⏸ falling, swimming, diving, melee, cover, animations, tasks, scenarios — each with
-its reason in `PlayerFlags` and in ENTITY_SYSTEM.md. Falling stays unapplied
-permanently: a ped with nothing under it falls by itself. Melee and cover each need
-a field that does not exist on the wire — the entity being struck, and the cover
-point — and inventing the missing half locally is how a replicated state ends up
-looking worse than an unreplicated one.
+✅ melee and cover. Melee needed the entity being struck, which now travels as
+`CharacterEntity.MeleeTargetId`, gated on the flag, validated by the server against
+its own world and resolved back to a local ped by the receiver. Cover needed
+correcting rather than building: the entry said the cover point would have to be
+guessed, and it does not — a player in cover is standing at their cover and their
+position is already on the wire.
+
+⏸ falling, swimming, diving, animations, tasks, scenarios — each with its reason in
+`PlayerFlags` and in ENTITY_SYSTEM.md. Falling stays unapplied permanently: a ped
+with nothing under it falls by itself, and forcing it would fight the game's own
+physics with a copy of that physics a hundred milliseconds behind.
 
 ❌ **stamina, injuries, gestures, interactions, police state, room.** Six named
 fields with nothing behind them. Stamina and injuries are readable from the engine

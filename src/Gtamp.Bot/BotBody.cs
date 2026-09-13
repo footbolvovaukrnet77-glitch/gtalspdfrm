@@ -27,6 +27,12 @@ namespace Gtamp.Bot
     /// </summary>
     public sealed class BotBody
     {
+        /// <summary>
+        /// The handle a simulated body answers with. Fixed and far above the handles
+        /// the bridge hands out for remote peds, so the two can never collide.
+        /// </summary>
+        public const int LocalPedHandle = 900_000;
+
         /// <summary>Michael's model, so the bot is a shape every install already has.</summary>
         public const uint DefaultModel = 0x0D7114C9u;
 

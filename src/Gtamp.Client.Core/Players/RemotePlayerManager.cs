@@ -187,10 +187,41 @@ namespace Gtamp.Client.Players
                     : frame.Position;
 
                 RemotePedCommand command = RemotePedController.Decide(
-                    in frame, pedPosition, VehicleHandleFor(in frame));
+                    in frame, pedPosition, VehicleHandleFor(in frame), PedHandleFor(frame.MeleeTargetId));
                 _bridge.ApplyRemotePedCommand(player.PedHandle, in command);
                 ApplyMarker(player);
             }
+        }
+
+        /// <summary>
+        /// The local ped standing in for a replicated character, or 0 when this client
+        /// has not built one — a player too far away to have been streamed, or an id
+        /// that names a networked NPC rather than a player.
+        /// <para>
+        /// A melee task with no target is not issued at all: a ped told to fight
+        /// nobody swings at the air in a direction nobody chose, which is worse than
+        /// the punch simply not appearing.
+        /// </para>
+        /// </summary>
+        private int PedHandleFor(EntityId id)
+        {
+            if (!id.IsValid)
+            {
+                return 0;
+            }
+
+            // The local player first, and this is not a micro-optimisation: the one
+            // player every client is certain to be asked about is the one it is not
+            // drawing. When somebody punches you, your client has to tell their ped to
+            // swing at your ped — and yours is in no remote-player list anywhere. A
+            // first version of this searched only the remote players and therefore
+            // returned nothing in exactly the most common case; a test caught it.
+            if (id == LocalEntityId)
+            {
+                return _bridge.GetLocalPlayerPedHandle();
+            }
+
+            return _players.TryGetValue(id, out RemotePlayer target) ? target.PedHandle : 0;
         }
 
         private int VehicleHandleFor(in RemotePedFrame frame)

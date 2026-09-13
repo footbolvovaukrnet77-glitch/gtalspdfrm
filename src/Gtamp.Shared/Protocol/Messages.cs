@@ -218,6 +218,17 @@ namespace Gtamp.Shared.Protocol
         public uint AnimationHash { get; set; }
 
         /// <summary>
+        /// The character this player is swinging at, or <see cref="EntityId.None"/>.
+        /// <para>
+        /// Written only when <see cref="PlayerFlags.Melee"/> is set, for the same
+        /// reason the ragdoll pose is gated: this message goes out in full twenty times
+        /// a second, and an unconditional field would cost every client a byte a second
+        /// to say "not punching anybody".
+        /// </para>
+        /// </summary>
+        public EntityId MeleeTargetId { get; set; }
+
+        /// <summary>
         /// Limb positions while ragdolling. Written only when
         /// <see cref="PlayerFlags.Ragdoll"/> is set, because this message is sent in
         /// full twenty times a second rather than as a delta: an unconditional pose
@@ -263,7 +274,12 @@ namespace Gtamp.Shared.Protocol
             writer.WriteByte(WantedLevel);
             writer.WriteUInt32(AnimationHash);
 
-            // Gated on the flag, which the reader has already decoded by this point.
+            // Gated on their flags, which the reader has already decoded by this point.
+            if ((Flags & PlayerFlags.Melee) != 0)
+            {
+                writer.WriteVarUInt(MeleeTargetId.Value);
+            }
+
             if ((Flags & PlayerFlags.Ragdoll) != 0)
             {
                 Ragdoll.Write(writer);
@@ -323,6 +339,11 @@ namespace Gtamp.Shared.Protocol
             };
 
             message.WeaponComponents.AddRange(components);
+
+            if ((message.Flags & PlayerFlags.Melee) != 0)
+            {
+                message.MeleeTargetId = new EntityId(reader.ReadVarUInt());
+            }
 
             if ((message.Flags & PlayerFlags.Ragdoll) != 0)
             {

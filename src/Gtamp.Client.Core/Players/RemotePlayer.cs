@@ -163,6 +163,7 @@ namespace Gtamp.Client.Players
             Ragdoll = RagdollPose.Lerp(from.Ragdoll, to.Ragdoll, t),
             VehicleId = to.VehicleId,
             VehicleSeat = to.VehicleSeat,
+            MeleeTargetId = to.MeleeTargetId,
         };
 
         /// <summary>Interpolates headings the short way round, so 359° -&gt; 1° does not spin the ped.</summary>

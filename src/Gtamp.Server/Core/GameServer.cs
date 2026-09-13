@@ -974,6 +974,21 @@ namespace Gtamp.Server.Core
             entity.WeaponComponents.Clear();
             entity.WeaponComponents.AddRange(update.WeaponComponents);
             entity.AimPosition = update.AimPosition;
+
+            // Validated rather than copied: a client naming a melee target is naming
+            // somebody else's entity, and the only ones it may name are ones that
+            // exist. An id for an entity the server has never heard of is dropped —
+            // it would replicate to every other client, each of which would look it
+            // up, find nothing and do nothing, which is a lie travelling at twenty
+            // times a second. This decides who is *animated* as being hit; the damage
+            // is a separate claim and goes through the arbiter.
+            entity.MeleeTargetId = (update.Flags & PlayerFlags.Melee) != 0
+                && update.MeleeTargetId.IsValid
+                && update.MeleeTargetId != entity.Id
+                && World.TryGet(update.MeleeTargetId, out _)
+                    ? update.MeleeTargetId
+                    : EntityId.None;
+
             entity.InteriorId = update.InteriorId;
 
             // Clamped, not trusted: the field is a byte on the wire and GTA V has six

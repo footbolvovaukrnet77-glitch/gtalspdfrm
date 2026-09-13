@@ -374,6 +374,11 @@ namespace Gtamp.Tests
 
         public int GetLocalPlayerVehicleHandle() => LocalVehicleHandle;
 
+        /// <summary>The local player's own ped. Anything a remote player does *to* this client aims at it.</summary>
+        public int LocalPedHandle { get; set; } = 1_000_000;
+
+        public int GetLocalPlayerPedHandle() => LocalPedHandle;
+
         /// <summary>Vehicle handles this client has drawn an explosion for, in order.</summary>
         public List<int> VehicleExplosions { get; } = new List<int>();
 

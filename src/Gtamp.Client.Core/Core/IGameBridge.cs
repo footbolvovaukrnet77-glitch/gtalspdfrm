@@ -186,6 +186,18 @@ namespace Gtamp.Client.Core
         /// </summary>
         int GetLocalPlayerVehicleHandle();
 
+        /// <summary>
+        /// The local player's own ped, as a game handle, or 0 when there is none.
+        /// <para>
+        /// Needed because the one player every client is certain to be asked about is
+        /// the one it is not drawing. When somebody punches you, your client has to
+        /// tell their ped to swing at *your* ped — and yours is the local player, which
+        /// is in no remote-player list anywhere. Resolving a replicated id to a handle
+        /// without this returns nothing in exactly the most common case.
+        /// </para>
+        /// </summary>
+        int GetLocalPlayerPedHandle();
+
         /// <summary>Model hash of a local vehicle handle, or 0 when the handle is not valid.</summary>
         uint GetVehicleModel(int handle);
 
@@ -256,6 +268,13 @@ namespace Gtamp.Client.Core
         /// <summary>Null when the bridge could not read them this frame.</summary>
         public List<uint>? WeaponComponents;
         public NetVector3 AimPosition;
+
+        /// <summary>
+        /// Game-side handle of the ped the local player is swinging at, or 0. Reported
+        /// as a handle for the same reason a hit is: the bridge knows handles and the
+        /// client owns the map from a handle back to a replicated id.
+        /// </summary>
+        public int MeleeTargetPedHandle;
         public int InteriorId;
 
         /// <summary>
@@ -340,5 +359,8 @@ namespace Gtamp.Client.Core
         public EntityId VehicleId;
 
         public sbyte VehicleSeat;
+
+        /// <summary>Who this character is swinging at, or <see cref="EntityId.None"/>.</summary>
+        public EntityId MeleeTargetId;
     }
 }

@@ -227,6 +227,9 @@ namespace Gtamp.Bot
 
         public int GetLocalPlayerVehicleHandle() => _body.VehicleHandle;
 
+        /// <summary>A simulated body still needs a handle of its own: it is what anybody punching it aims at.</summary>
+        public int GetLocalPlayerPedHandle() => BotBody.LocalPedHandle;
+
         public uint GetVehicleModel(int handle) =>
             handle != 0 && handle == _body.VehicleHandle ? _body.VehicleModel : 0u;
 
