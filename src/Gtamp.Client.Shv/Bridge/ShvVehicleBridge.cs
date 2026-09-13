@@ -126,7 +126,8 @@ namespace Gtamp.Client.Shv.Bridge
             }
         }
 
-        public void ApplyRemoteVehicle(int handle, in RemoteVehicleFrame frame, int trailerHandle)
+        public void ApplyRemoteVehicle(
+            int handle, in RemoteVehicleFrame frame, int trailerHandle, int attachedToHandle)
         {
             if (!_vehicles.TryGetValue(handle, out Vehicle vehicle) || !vehicle.Exists())
             {
@@ -168,6 +169,7 @@ namespace Gtamp.Client.Shv.Bridge
             }
 
             ApplyTrailer(vehicle, trailerHandle);
+            ApplyAttachment(vehicle, attachedToHandle);
             ApplyLights(vehicle, frame.Flags);
             ApplyHorn(vehicle, frame.Flags);
             VehicleDamageTracker.Change damage = _damage.Observe(handle, frame.Doors, frame.Windows, frame.Tires);
@@ -565,6 +567,15 @@ namespace Gtamp.Client.Shv.Bridge
         /// swinging behind the cab at all.
         /// </para>
         /// </summary>
+        /// <summary>
+        /// What each vehicle is currently hanging from, so it is not re-attached every
+        /// frame. Kept apart from the prop attachments above: GTA V handles are unique
+        /// across entity types so one map would work, but a vehicle on a Cargobob and a
+        /// prop glued to a door are not the same thing and reading them out of one
+        /// dictionary is how they end up being treated as though they were.
+        /// </summary>
+        private readonly Dictionary<int, int> _vehicleCarrier = new Dictionary<int, int>();
+
         private void ApplyTrailer(Vehicle vehicle, int trailerHandle)
         {
             _towing.TryGetValue(vehicle.Handle, out int towed);
@@ -587,6 +598,101 @@ namespace Gtamp.Client.Shv.Bridge
 
             Function.Call(Hash.ATTACH_VEHICLE_TO_TRAILER, vehicle.Handle, trailer.Handle, TrailerHitchRadius);
             _towing[vehicle.Handle] = trailerHandle;
+        }
+
+        /// <summary>
+        /// Hangs this vehicle off the one carrying it, or lets it go.
+        /// <para>
+        /// A trailer is not this: a trailer has a hitch, its own native, and a physical
+        /// joint the game simulates. This is the other kind of attachment — a car under
+        /// a Cargobob, on a tow truck's hook, strapped to a flatbed — where one vehicle
+        /// simply becomes part of another until it is released.
+        /// </para>
+        /// <para>
+        /// The attachment is recreated only when it changes, because
+        /// <c>ATTACH_ENTITY_TO_ENTITY</c> re-seats the offset every call and a vehicle
+        /// re-attached sixty times a second jitters against its carrier.
+        /// </para>
+        /// <para>
+        /// The offset is the one the two vehicles are already at, computed here rather
+        /// than replicated. That is a deliberate trade and worth naming: sending the
+        /// offset would be more faithful, but it is three floats and a quaternion per
+        /// attached vehicle on a wire that is already at its MTU ceiling, for a
+        /// difference visible only in the first frame after the hook takes. A wrong
+        /// guess self-corrects on the next position update; a full snapshot that does
+        /// not fit does not.
+        /// </para>
+        /// </summary>
+        private void ApplyAttachment(Vehicle vehicle, int attachedToHandle)
+        {
+            _vehicleCarrier.TryGetValue(vehicle.Handle, out int current);
+            if (current == attachedToHandle)
+            {
+                return;
+            }
+
+            try
+            {
+                if (attachedToHandle == 0)
+                {
+                    Function.Call(Hash.DETACH_ENTITY, vehicle.Handle, true, true);
+                    _vehicleCarrier.Remove(vehicle.Handle);
+                    return;
+                }
+
+                if (!_vehicles.TryGetValue(attachedToHandle, out Vehicle carrier) || !carrier.Exists())
+                {
+                    // The carrier has not been built on this client yet. Left alone
+                    // rather than attached to nothing, and retried on the next frame
+                    // because the state is compared, not consumed.
+                    return;
+                }
+
+                Vector3 offset = carrier.GetOffsetPosition(vehicle.Position);
+
+                Function.Call(
+                    Hash.ATTACH_ENTITY_TO_ENTITY,
+                    vehicle.Handle,
+                    carrier.Handle,
+                    0,
+                    offset.X, offset.Y, offset.Z,
+                    0f, 0f, 0f,
+                    false,
+                    false,
+                    true,
+                    false,
+                    0,
+                    true);
+
+                _vehicleCarrier[vehicle.Handle] = attachedToHandle;
+            }
+            catch (Exception exception)
+            {
+                _log.Error(LogCategory.Entity, "Could not attach a vehicle to its carrier.", exception);
+            }
+        }
+
+        public int GetVehicleAttachedTo(int handle)
+        {
+            try
+            {
+                Vehicle? vehicle = FindVehicle(handle);
+                if (vehicle == null)
+                {
+                    return 0;
+                }
+
+                int parent = Function.Call<int>(Hash.GET_ENTITY_ATTACHED_TO, vehicle.Handle);
+
+                // Only another vehicle counts. A car attached to a ped or a prop is
+                // something a mod did, and pretending it is a tow would replicate it as
+                // one to every client that has no idea what it is really hanging from.
+                return parent != 0 && Function.Call<bool>(Hash.IS_ENTITY_A_VEHICLE, parent) ? parent : 0;
+            }
+            catch (Exception)
+            {
+                return 0;
+            }
         }
 
         /// <summary>Reads a vehicle this client owns so its state can be reported to the server.</summary>

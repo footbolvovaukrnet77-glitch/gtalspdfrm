@@ -285,6 +285,17 @@ namespace Gtamp.Client.Entities
                 // would fight the server's own decisions.
                 state.OwnerId = entity.OwnerId;
 
+                // What this vehicle is hanging from, translated out of game handles.
+                // The bridge cannot do it: it knows handles and this layer owns the map
+                // from a handle back to a replicated id. A carrier that is not a
+                // replicated entity — an ambient tow truck nobody has adopted — resolves
+                // to nothing and is reported as unattached, which is true as far as the
+                // world is concerned.
+                int carrier = _bridge.GetVehicleAttachedTo(pair.Value);
+                state.AttachedToId = carrier != 0 && _handleToEntity.TryGetValue(carrier, out EntityId carrierId)
+                    ? carrierId
+                    : EntityId.None;
+
                 INetEntitySerializer serializer = _registry.Get((byte)EntityType.Vehicle);
                 var writer = new NetWriter(256);
                 uint baselineId = 0;

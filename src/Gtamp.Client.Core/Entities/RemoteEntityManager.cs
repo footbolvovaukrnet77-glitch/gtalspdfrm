@@ -278,7 +278,15 @@ namespace Gtamp.Client.Entities
                     ? trailer.VehicleHandle
                     : 0;
 
-                _bridge.ApplyRemoteVehicle(vehicle.VehicleHandle, in frame, trailerHandle);
+                // A carrier this client has not built yet resolves to 0, which leaves
+                // the vehicle where it is rather than attaching it to nothing. It is
+                // retried every frame because the attachment is compared, not consumed.
+                int carrierHandle = latestState != null && latestState.AttachedToId.IsValid
+                    && _vehicles.TryGetValue(latestState.AttachedToId, out RemoteVehicle? carrier)
+                    ? carrier.VehicleHandle
+                    : 0;
+
+                _bridge.ApplyRemoteVehicle(vehicle.VehicleHandle, in frame, trailerHandle, carrierHandle);
                 PlayDestructionIfJustDestroyed(vehicle, in frame);
             }
 

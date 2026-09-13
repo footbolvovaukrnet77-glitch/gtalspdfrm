@@ -248,7 +248,7 @@ machine and real clients, and is not claimed here.
 | Step | What it guards |
 | --- | --- |
 | `dotnet build -c Release -warnaserror` | The zero-warning claim. Without `-warnaserror` it decays the first time a warning lands that nobody scrolls up far enough to see |
-| `dotnet test -c Release` | All 734 tests, with the `.trx` uploaded as an artifact so a failure is readable without re-running anything |
+| `dotnet test -c Release` | All 737 tests, with the `.trx` uploaded as an artifact so a failure is readable without re-running anything |
 | `python3 tools/check-docs.py` | Dead relative links, `#anchors` naming headings that no longer exist, any document that lost its counterpart in the other language, and the three things the documentation asserts about the code: the protocol version, the test count, and the `client.ini` example. All three had drifted before the checks existed |
 
 The whole solution compiles on `ubuntu-latest`, the `net48` client included,
@@ -411,9 +411,21 @@ does not exist; room is part of the interior work below.
 ✅ everything in the list except the five below, including the ones that only
 arrived recently: indicators, horn, radio, neon, convertible roof, trailer.
 
-❌ **acceleration, suspension, wheel state, attached vehicles.** Throttle and brake
-are replicated, which is the input rather than the result; suspension and wheel
-state are not sampled at all.
+✅ **attached vehicles.** `AttachedToId` had been on the wire since Phase 3 — cloned,
+serialised, delta-compared and printed by the inspector — and read from nothing and
+applied to nothing, so a car on a tow hook or under a Cargobob was attached on the
+tower's screen and drifting free on everybody else's. Both directions travel now; a
+carrier the server does not know about is reported as no carrier rather than as an id
+nobody can resolve.
+
+❌ **acceleration, suspension, wheel state.** Acceleration is the derivative of a
+velocity that is already replicated, so a field for it would carry no information the
+receiver does not have — it is listed here as not done rather than quietly counted as
+done, because the specification names it. Suspension compression and per-wheel state
+are the engine wall: the natives set them and do not report them, and the members
+that do read them come from ScriptHookVDotNet's pattern-scanned memory offsets, which
+are exactly what stops working on a game build newer than the script host — the
+condition this user's own install is in.
 
 ❌ **deformation** — see "Deliberately not done": the engine does not hand the
 deformation buffer back in a form this layer can read.

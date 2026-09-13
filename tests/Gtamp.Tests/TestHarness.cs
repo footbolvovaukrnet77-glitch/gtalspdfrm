@@ -311,10 +311,21 @@ namespace Gtamp.Tests
         /// <summary>Attachment parent handle each object was last told to hang off, 0 for none.</summary>
         public Dictionary<int, int> AttachedTo { get; } = new Dictionary<int, int>();
 
-        public void ApplyRemoteVehicle(int handle, in RemoteVehicleFrame frame, int trailerHandle)
+        /// <summary>Carrier handle each vehicle was last told to hang off — a Cargobob, a tow truck — 0 for none.</summary>
+        public Dictionary<int, int> VehicleCarrier { get; } = new Dictionary<int, int>();
+
+        /// <summary>What the fake game reports each vehicle is attached to, as a handle. Tests set it.</summary>
+        public Dictionary<int, int> AttachedInGame { get; } = new Dictionary<int, int>();
+
+        public int GetVehicleAttachedTo(int handle) =>
+            AttachedInGame.TryGetValue(handle, out int parent) ? parent : 0;
+
+        public void ApplyRemoteVehicle(
+            int handle, in RemoteVehicleFrame frame, int trailerHandle, int attachedToHandle)
         {
             VehicleFrames[handle] = frame;
             Towing[handle] = trailerHandle;
+            VehicleCarrier[handle] = attachedToHandle;
             if (Vehicles.TryGetValue(handle, out VehicleEntity? vehicle))
             {
                 vehicle.Position = frame.Position;

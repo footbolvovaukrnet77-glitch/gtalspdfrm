@@ -2025,8 +2025,11 @@ namespace Gtamp.Client.Shv.Bridge
         public int CreateRemoteVehicle(uint modelHash, NetVector3 position, float heading) =>
             _vehicles.CreateRemoteVehicle(modelHash, position, heading);
 
-        public void ApplyRemoteVehicle(int handle, in RemoteVehicleFrame frame, int trailerHandle) =>
-            _vehicles.ApplyRemoteVehicle(handle, in frame, trailerHandle);
+        public void ApplyRemoteVehicle(
+            int handle, in RemoteVehicleFrame frame, int trailerHandle, int attachedToHandle) =>
+            _vehicles.ApplyRemoteVehicle(handle, in frame, trailerHandle, attachedToHandle);
+
+        public int GetVehicleAttachedTo(int handle) => _vehicles.GetVehicleAttachedTo(handle);
 
         public void ApplyRemoteVehicleAppearance(int handle, VehicleEntity state) =>
             _vehicles.ApplyRemoteVehicleAppearance(handle, state);

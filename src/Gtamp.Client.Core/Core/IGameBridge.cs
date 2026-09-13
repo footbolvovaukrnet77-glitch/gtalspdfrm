@@ -168,7 +168,19 @@ namespace Gtamp.Client.Core
         /// Drives one replicated vehicle for this frame. <paramref name="trailerHandle"/>
         /// is the local handle of the trailer it is towing, or 0.
         /// </summary>
-        void ApplyRemoteVehicle(int handle, in RemoteVehicleFrame frame, int trailerHandle);
+        void ApplyRemoteVehicle(int handle, in RemoteVehicleFrame frame, int trailerHandle, int attachedToHandle);
+
+        /// <summary>
+        /// The vehicle this one is physically attached to — lifted by a Cargobob, on a
+        /// tow truck's hook, strapped to a flatbed — as a game handle, or 0.
+        /// <para>
+        /// Distinct from a trailer, which has its own hitch and its own native.
+        /// <c>VehicleEntity.AttachedToId</c> has existed on the wire since Phase 3 and
+        /// was read from nothing and applied to nothing, so a car being towed was
+        /// attached on the tower's screen and drifting free on everybody else's.
+        /// </para>
+        /// </summary>
+        int GetVehicleAttachedTo(int handle);
 
         /// <summary>Applies paint, livery, mods and plate. Called only when they change.</summary>
         void ApplyRemoteVehicleAppearance(int handle, VehicleEntity state);

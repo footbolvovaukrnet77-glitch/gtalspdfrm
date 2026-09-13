@@ -191,7 +191,7 @@ namespace Gtamp.Bot
             return handle;
         }
 
-        public void ApplyRemoteVehicle(int handle, in RemoteVehicleFrame frame, int trailerHandle)
+        public void ApplyRemoteVehicle(int handle, in RemoteVehicleFrame frame, int trailerHandle, int attachedToHandle)
         {
             if (Seen.RemoteVehicles.ContainsKey(handle))
             {
@@ -229,6 +229,9 @@ namespace Gtamp.Bot
 
         /// <summary>A simulated body still needs a handle of its own: it is what anybody punching it aims at.</summary>
         public int GetLocalPlayerPedHandle() => BotBody.LocalPedHandle;
+
+        /// <summary>A simulated body never tows anything, so nothing is ever hanging off it.</summary>
+        public int GetVehicleAttachedTo(int handle) => 0;
 
         /// <summary>Counted rather than done: a simulated game has no ambient traffic to suppress.</summary>
         public int TrafficSuppressedFrames { get; private set; }
