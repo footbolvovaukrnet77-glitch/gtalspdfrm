@@ -31,6 +31,37 @@ The line is exactly where you would expect it: the bot decides everything the
 **server** decides, and nothing the **engine** decides. It does not replace a person
 looking at a screen; it removes the need for a second one.
 
+## The in-game menu (F7)
+
+From inside the game, without minimising it: **F7**. Arrows move between rows and
+between values, Enter acts, Escape or F7 closes.
+
+| Row | What |
+| --- | --- |
+| Ботов | how many to run, 1–8 |
+| Задачи | preset: every task in order, one task, or `stand,follow,shoot,die` |
+| Появиться | **next to me** or the server's spawn point |
+| Запустить | launches; press again to add another batch |
+| Остановить всех | kills every running bot process |
+
+Underneath is the bots' most recent output, `ok` in green and `FAIL` in red.
+
+"Next to me" is the reason this exists. Bots at the server's spawn point are two
+kilometres from wherever the player is standing, and a fight you have to drive to
+is a fight that does not get tested.
+
+The address comes from the live connection rather than from `client.ini`: a player
+who typed `connect 10.0.0.5` gets bots aimed at the same server.
+
+The menu runs `Gtamp.Bot` as a **child process** — the bot is .NET 8 and the client
+is .NET Framework 4.8 inside the game's process, so they cannot be one process.
+`tools\package-client.bat` installs the bot into `<GTA V>\Gtamp\bot\`; if it is
+not there the menu says so. `BotPath` in `client.ini` points at it anywhere else,
+and `BotMenuKey` (118 = F7) changes the key.
+
+Quitting the game kills every bot: one left running after the player has gone would
+stand in the server's world as a player whose console nobody can see.
+
 ## Running it
 
 ```

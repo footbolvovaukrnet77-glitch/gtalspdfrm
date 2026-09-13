@@ -55,6 +55,22 @@ namespace Gtamp.Client.Core
         /// <summary>Virtual key code that opens the developer console. 119 is F8.</summary>
         public int ConsoleKey { get; set; } = DefaultConsoleKey;
 
+        /// <summary>F7. See <see cref="DefaultConsoleKey"/> for why it is named.</summary>
+        public const int DefaultBotMenuKey = 118;
+
+        /// <summary>Virtual key code that opens the bot menu. 118 is F7.</summary>
+        public int BotMenuKey { get; set; } = DefaultBotMenuKey;
+
+        /// <summary>
+        /// Where Gtamp.Bot lives, when it is somewhere this client would not look.
+        /// <para>
+        /// Empty by default: the menu finds the copy that package-client installs
+        /// under <c>Gtamp\bot</c>. This is for a checkout, where the build output is
+        /// somewhere else entirely.
+        /// </para>
+        /// </summary>
+        public string BotPath { get; set; } = string.Empty;
+
         /// <summary>
         /// How far behind the newest snapshot remote players are rendered, in seconds.
         /// Two snapshot intervals plus a jitter margin; lowering it makes other players
@@ -194,6 +210,10 @@ namespace Gtamp.Client.Core
                 $"IdentitySecret={IdentitySecret}",
                 "; Virtual key code. 119 = F8, 192 = tilde.",
                 $"ConsoleKey={ConsoleKey.ToString(CultureInfo.InvariantCulture)}",
+                "; Opens the bot menu. 118 = F7.",
+                $"BotMenuKey={BotMenuKey.ToString(CultureInfo.InvariantCulture)}",
+                "; Full path to Gtamp.Bot.exe or Gtamp.Bot.dll. Empty means look in Gtamp\\bot.",
+                $"BotPath={BotPath}",
                 $"InterpolationDelay={InterpolationDelay.ToString("0.###", CultureInfo.InvariantCulture)}",
                 $"CorrectionThreshold={CorrectionThreshold.ToString("0.###", CultureInfo.InvariantCulture)}",
                 $"HealthCorrectionThreshold={HealthCorrectionThreshold.ToString(CultureInfo.InvariantCulture)}",
@@ -260,6 +280,16 @@ namespace Gtamp.Client.Core
                         ConsoleKey = consoleKey;
                     }
 
+                    break;
+                case "botmenukey":
+                    if (int.TryParse(value, NumberStyles.Integer, CultureInfo.InvariantCulture, out int botMenuKey))
+                    {
+                        BotMenuKey = botMenuKey;
+                    }
+
+                    break;
+                case "botpath":
+                    BotPath = value;
                     break;
                 case "interpolationdelay":
                     if (double.TryParse(value, NumberStyles.Float, CultureInfo.InvariantCulture, out double delay))

@@ -50,7 +50,7 @@ tools\build.bat Release
 ./tools/test.sh          # или tools\test.bat
 ```
 
-Ожидается: `Passed! - Failed: 0, Passed: 698`.
+Ожидается: `Passed! - Failed: 0, Passed: 707`.
 
 ### Проверка документации
 
@@ -265,6 +265,8 @@ ServerPassword=
 IdentityToken=<публичный ключ; безопасно показывать>
 IdentitySecret=<приватный ключ; никому не показывайте и не теряйте>
 ConsoleKey=119
+BotMenuKey=118
+BotPath=
 InterpolationDelay=0.12
 CorrectionThreshold=3
 HealthCorrectionThreshold=20

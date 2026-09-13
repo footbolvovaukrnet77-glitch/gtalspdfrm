@@ -35,6 +35,9 @@ namespace Gtamp.Client.Shv
         private ShvGameBridge? _bridge;
         private MultiplayerClient? _client;
         private ConsoleRenderer? _renderer;
+        private BotMenu? _botMenu;
+        private BotMenuRenderer? _botMenuRenderer;
+        private BotProcessHost? _botHost;
         private readonly OverlayRenderer _overlay = new OverlayRenderer();
         private ClientConfig? _config;
         private string _configPath = string.Empty;
@@ -116,6 +119,10 @@ namespace Gtamp.Client.Shv
 
             _renderer = new ConsoleRenderer(console);
 
+            _botHost = new BotProcessHost(_log, gameDirectory, _config.BotPath);
+            _botMenu = new BotMenu(_botHost);
+            _botMenuRenderer = new BotMenuRenderer(_botMenu);
+
             _log.Success(LogCategory.Client, $"GTAMP client {_client.ClientVersion} loaded. Press F8 for the console.");
 
             // On screen as well as in the log, and not only as a courtesy. It is drawn by
@@ -193,6 +200,19 @@ namespace Gtamp.Client.Shv
 
             _renderer.Draw();
 
+            if (_botMenu != null && _botMenuRenderer != null)
+            {
+                if (_botMenu.IsOpen)
+                {
+                    // Same reason the console does it: the game must not also act on
+                    // the arrow keys the menu is reading.
+                    Function.Call(Hash.DISABLE_ALL_CONTROL_ACTIONS, 0);
+                    FeedBotMenu();
+                }
+
+                _botMenuRenderer.Draw();
+            }
+
             // Drawn after the console so it is never on top of it, and only when the
             // player asked for it — an always-on readout is clutter for everybody who
             // is not debugging.
@@ -248,6 +268,34 @@ namespace Gtamp.Client.Shv
                 // A script host too old to know one of these. The death sequence is
                 // then the game's, which is the behaviour that existed before this.
             }
+        }
+
+        /// <summary>
+        /// Tells the menu where the player is and where the bots should connect, every
+        /// frame it is open.
+        /// <para>
+        /// The address comes from the live connection rather than from client.ini,
+        /// because a player who typed <c>connect 10.0.0.5</c> in the console would
+        /// otherwise get bots aimed at whatever the file still says — bots that connect
+        /// to a different server than the person launching them is the exact failure
+        /// this menu is supposed to remove.
+        /// </para>
+        /// </summary>
+        private void FeedBotMenu()
+        {
+            if (_botMenu == null || _client == null || _config == null)
+            {
+                return;
+            }
+
+            _botMenu.PlayerPosition = _bridge?.SampleLocalPlayer().Position ?? default;
+
+            System.Net.IPEndPoint? remote = _client.Connection.ServerEndPoint;
+            _botMenu.Server = remote != null
+                ? remote.Address + ":" + remote.Port.ToString(System.Globalization.CultureInfo.InvariantCulture)
+                : _config.ServerAddress + ":" + _config.ServerPort.ToString(System.Globalization.CultureInfo.InvariantCulture);
+
+            _botMenu.Password = _config.ServerPassword;
         }
 
         private string BuildStatusLine()
@@ -395,6 +443,34 @@ namespace Gtamp.Client.Shv
                 return;
             }
 
+            if ((int)e.KeyCode == _config.BotMenuKey && _botMenu != null)
+            {
+                // The console wins if both are open: it is the diagnostic surface, and
+                // two things reading the arrow keys at once is worse than either.
+                if (!console.IsOpen)
+                {
+                    _botMenu.Toggle();
+                    e.SuppressKeyPress = true;
+                }
+
+                return;
+            }
+
+            if (_botMenu != null && _botMenu.IsOpen && !console.IsOpen)
+            {
+                e.SuppressKeyPress = true;
+                switch (e.KeyCode)
+                {
+                    case Keys.Up: _botMenu.MoveUp(); return;
+                    case Keys.Down: _botMenu.MoveDown(); return;
+                    case Keys.Left: _botMenu.Left(); return;
+                    case Keys.Right: _botMenu.Right(); return;
+                    case Keys.Enter: _botMenu.Activate(); return;
+                    case Keys.Escape: _botMenu.Close(); return;
+                    default: return;
+                }
+            }
+
             if (!console.IsOpen)
             {
                 return;
@@ -465,6 +541,9 @@ namespace Gtamp.Client.Shv
         {
             try
             {
+                // Before the client, so a bot that is mid-handshake is killed rather
+                // than left connected to a server the player has just walked away from.
+                _botHost?.Dispose();
                 _client?.Dispose();
                 _bridge?.CleanUp();
                 _fileSink?.Dispose();
