@@ -1,0 +1,8 @@
+{
+  "//": "Without this the SDK floats: `dotnet build` picks the highest one installed, which is how a machine carrying the .NET 10 SDK compiled this repository as C# 14 and broke on a local variable named `field`. rollForward is latestFeature, so the build fails immediately and legibly on a machine without an 8.0.x SDK instead of building against a newer compiler and then aborting later at `dotnet test`, which needs the .NET 8 runtime that the 8.0.x SDK carries -- the tests target net8.0. Directory.Build.props pins the language version as well, so neither the toolchain nor the language can drift on their own.",
+  "sdk": {
+    "version": "8.0.100",
+    "rollForward": "latestFeature",
+    "allowPrerelease": false
+  }
+}

@@ -1,0 +1,10 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>netstandard2.0</TargetFramework>
+    <RootNamespace>Gtamp.Client</RootNamespace>
+    <AssemblyName>Gtamp.Client.Core</AssemblyName>
+  </PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="..\Gtamp.Shared\Gtamp.Shared.csproj" />
+  </ItemGroup>
+</Project>

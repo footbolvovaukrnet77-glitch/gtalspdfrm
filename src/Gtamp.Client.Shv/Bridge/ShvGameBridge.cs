@@ -1,0 +1,2947 @@
+using System;
+using System.Collections.Generic;
+using Gtamp.Client.Core;
+using Gtamp.Client.Entities;
+using Gtamp.Client.Players;
+using Gtamp.Shared.Core;
+using Gtamp.Shared.Diagnostics;
+using Gtamp.Shared.Entities;
+using Gtamp.Shared.World;
+using GTA;
+using GTA.Math;
+using GTA.Native;
+using GTA.NaturalMotion;
+using GtaWorld = GTA.World;
+
+namespace Gtamp.Client.Shv.Bridge
+{
+    /// <summary>
+    /// <see cref="IGameBridge"/> over ScriptHookVDotNet 3.
+    /// <para>
+    /// Remote peds are driven through the game's task system rather than by writing
+    /// coordinates, so they animate as they move. Coordinates are still written, but
+    /// only as a correction when the ped has drifted past
+    /// <see cref="RemotePedController.HardCorrectDistance"/> — tasking alone cannot
+    /// guarantee position, and correcting alone cannot produce animation, so both are
+    /// needed. The decision between them lives in <see cref="RemotePedController"/>;
+    /// this class only executes it.
+    /// </para>
+    /// </summary>
+    public sealed class ShvGameBridge : IGameBridge
+    {
+        /// <summary>ig_michael, used until a player's own model is known.</summary>
+        private const uint DefaultPedModel = 0xD7114C9;
+
+        /// <summary>Blip sprite 1 is the plain circle GTA V uses for other players.</summary>
+        private const int PlayerBlipSprite = 1;
+
+        /// <summary>How far above the head bone the name sits, in metres.</summary>
+        private const float NameTagHeight = 0.4f;
+
+        /// <summary>Re-task a walking ped only when its destination has moved this far.</summary>
+        private const float RetaskDistance = 0.75f;
+
+        /// <summary>
+        /// The health every remote ped is held at locally, so that no single frame of
+        /// damage can reach zero and kill it.
+        /// <para>
+        /// High enough to absorb the heaviest thing that is not already proofed
+        /// against — a tank round is roughly a thousand — and it is never displayed,
+        /// so its size costs nothing. See ApplyVitals for why a remote ped must not
+        /// carry the server's health.
+        /// </para>
+        /// </summary>
+        private const int LocalPedHealthHeadroom = 2500;
+
+        /// <summary>Length of the fade used to give a black screen back to the player.</summary>
+        private const int ScreenFadeMilliseconds = 500;
+
+        /// <summary>How long a living player may look at black before it counts as stuck.</summary>
+        private const double ScreenStuckSeconds = 2d;
+
+        /// <summary>Remote peds rebuilt per second before the client stops trying and reports instead.</summary>
+        private const int MaxPedRebuildsPerSecond = 4;
+
+        /// <summary>How often the rebuild report is allowed to say anything, in seconds.</summary>
+        private const double PedRebuildReportSeconds = 10d;
+
+        /// <summary>How long one shooting task runs. Short, because it is re-issued while the flag is set.</summary>
+        private const int ShootBurstMilliseconds = 250;
+
+        /// <summary>How long a cover task runs before expiring. Re-issued when the player leaves and re-enters cover.</summary>
+        private const int CoverTimeoutMilliseconds = 20000;
+
+        /// <summary>Rockstar's FIRING_PATTERN_FULL_AUTO. The pattern decides cadence; the flag decides whether to fire at all.</summary>
+        private const uint FiringPatternFullAuto = 0xC6EE6B4C;
+
+        /// <summary>Task timeout. Long enough to survive several missed snapshots, short enough to expire if we stop.</summary>
+        private const int TaskTimeoutMilliseconds = 4000;
+
+        /// <summary>How often the local player's clothing is read back. It changes rarely and each read is ~30 native calls.</summary>
+        private const int AppearanceSampleIntervalMilliseconds = 1000;
+
+        private readonly LogBus _log;
+
+        private double _screenDarkSince;
+        private double _pedRebuildSecondStart;
+        private int _pedRebuildsThisSecond;
+        private int _pedRebuildsSkipped;
+        private double _pedRebuildReportedAt;
+        private readonly ShvVehicleBridge _vehicles;
+        private readonly Dictionary<int, Ped> _remotePeds = new Dictionary<int, Ped>();
+
+        /// <summary>Counts the local player's rounds. See <see cref="ShotDetector"/> for why the clip is the signal.</summary>
+        private readonly ShotDetector _shots = new ShotDetector();
+
+        /// <summary>Map blip per remote ped, with the colour last written so it is set on change only.</summary>
+        private readonly Dictionary<int, BlipRecord> _blips = new Dictionary<int, BlipRecord>();
+
+        /// <summary>Rockstar's shared particle library. Holds the muzzle flashes.</summary>
+        private ParticleEffectAsset _muzzleAsset = new ParticleEffectAsset("core");
+
+        /// <summary>The weapon model the last remote shot was drawn with, kept so it is requested once.</summary>
+        private WeaponAsset? _shotAsset;
+        private readonly Dictionary<int, PedDriveState> _driveState = new Dictionary<int, PedDriveState>();
+        private readonly PedAppearance _localAppearance = new PedAppearance();
+
+        private int _lastAppearanceSampleTick;
+
+        /// <summary>Blackout as last written, so the native fires on a change rather than every frame.</summary>
+        private bool _blackout;
+
+        public ShvGameBridge(LogBus log)
+        {
+            _log = log ?? throw new ArgumentNullException(nameof(log));
+            _vehicles = new ShvVehicleBridge(_log);
+        }
+
+        /// <summary>
+        /// Whether remote players get jump, climb and parachute tasks. Set from
+        /// client.ini by the host; see <see cref="ApplyPostureTask"/> for why it has a
+        /// switch at all.
+        /// </summary>
+        public bool ApplyRemotePosture { get; set; } = true;
+
+        /// <summary>
+        /// The game build as ScriptHookVDotNet sees it — which on a build it does not
+        /// support is an exception rather than a number. <c>diagnostics</c> and
+        /// <c>bugreport</c> are exactly what a player runs when things are broken, so
+        /// neither may be the thing that breaks.
+        /// </summary>
+        public string GameVersion
+        {
+            get
+            {
+                try
+                {
+                    return Game.Version.ToString();
+                }
+                catch (Exception)
+                {
+                    return "unknown — ScriptHookVDotNet cannot read this build";
+                }
+            }
+        }
+
+        /// <summary>
+        /// Asks the streamer whether a hash names a model this installation has.
+        /// <para>
+        /// <c>Model.IsValid</c> answers whether the hash is in the game's model index
+        /// at all — which is exactly the question "is the mod that adds this car
+        /// installed?". A valid model that is not yet loaded is requested and will
+        /// resolve on a later frame, so the two cases are reported separately: one is
+        /// a missing asset, the other is normal streaming.
+        /// </para>
+        /// </summary>
+        public ModelAvailability GetModelAvailability(uint modelHash)
+        {
+            if (modelHash == 0)
+            {
+                return ModelAvailability.Unavailable;
+            }
+
+            try
+            {
+                var model = new Model(unchecked((int)modelHash));
+                if (!model.IsValid)
+                {
+                    return ModelAvailability.Unavailable;
+                }
+
+                if (model.IsLoaded)
+                {
+                    return ModelAvailability.Available;
+                }
+
+                model.Request();
+                return ModelAvailability.Loading;
+            }
+            catch (Exception exception)
+            {
+                // A throwing streamer query is not a reason to stop replicating.
+                // Treated as "loading" so the caller retries rather than recording a
+                // missing mod that may not be missing.
+                _log.Debug(LogCategory.Entity, $"Model query for 0x{modelHash:X8} threw: {exception.Message}");
+                return ModelAvailability.Loading;
+            }
+        }
+
+        public bool IsPlayerReady
+        {
+            get
+            {
+                if (Game.IsLoading || Game.IsPaused)
+                {
+                    return false;
+                }
+
+                Ped character = Game.Player.Character;
+                return character != null && character.Exists();
+            }
+        }
+
+        // ------------------------------------------------------------------
+        // Local player
+        // ------------------------------------------------------------------
+        public LocalPlayerSample SampleLocalPlayer()
+        {
+            Ped ped = Game.Player.Character;
+            var sample = new LocalPlayerSample
+            {
+                Position = ToNet(ped.Position),
+                Velocity = ToNet(ped.Velocity),
+                Heading = ped.Heading,
+                Health = ped.Health,
+                MaxHealth = ped.MaxHealth,
+                Armor = ped.Armor,
+                ModelHash = unchecked((uint)ped.Model.Hash),
+                Movement = SampleMovement(ped),
+                Flags = SampleFlags(ped),
+                InteriorId = Function.Call<int>(Hash.GET_INTERIOR_FROM_ENTITY, ped.Handle),
+                RoomKey = unchecked((uint)Function.Call<int>(Hash.GET_ROOM_KEY_FROM_ENTITY, ped.Handle)),
+                WantedLevel = (byte)Clamp(Game.Player.WantedLevel, 0, 5),
+                AnimationHash = 0,
+                AimPosition = SampleAimPosition(ped),
+                Appearance = SampleAppearance(ped),
+            };
+
+            Weapon weapon = ped.Weapons.Current;
+            if (weapon != null)
+            {
+                sample.CurrentWeaponHash = unchecked((uint)weapon.Hash);
+                sample.Ammo = weapon.Ammo;
+                sample.WeaponTint = (byte)weapon.Tint;
+                sample.WeaponComponents = ReadWeaponComponents(weapon);
+            }
+
+            sample.MeleeTargetPedHandle = SampleMeleeTarget(ped, sample.Flags);
+            sample.Ragdoll = SampleRagdollPose(ped, sample.Flags, sample.Position);
+            return sample;
+        }
+
+        /// <summary>
+        /// Who the local player is swinging at, as a game handle, or 0.
+        /// <para>
+        /// Read only while the melee flag is set, because the native costs a call and
+        /// nobody is in melee on almost every frame of a session. The handle means
+        /// nothing to anyone else; the client turns it into a replicated id before it
+        /// goes anywhere, and a handle that belongs to an ambient ped rather than a
+        /// player resolves to nothing and is dropped there.
+        /// </para>
+        /// </summary>
+        private static int SampleMeleeTarget(Ped ped, PlayerFlags flags)
+        {
+            if ((flags & PlayerFlags.Melee) == 0)
+            {
+                return 0;
+            }
+
+            try
+            {
+                return Function.Call<int>(Hash.GET_MELEE_TARGET_FOR_PED, ped.Handle);
+            }
+            catch (Exception)
+            {
+                return 0;
+            }
+        }
+
+        /// <summary>
+        /// The components actually fitted to a weapon: suppressor, scope, extended
+        /// clip, grip, flashlight.
+        /// <para>
+        /// Enumerating the collection asks the game which variants exist for this
+        /// weapon and which are active. Only the active ones travel — the full list of
+        /// what *could* be fitted is the same on every client that has the weapon, and
+        /// sending it would be a dozen hashes a player to say nothing.
+        /// </para>
+        /// </summary>
+        private static List<uint>? ReadWeaponComponents(Weapon weapon)
+        {
+            try
+            {
+                List<uint>? active = null;
+                foreach (WeaponComponent component in weapon.Components)
+                {
+                    if (!component.Active)
+                    {
+                        continue;
+                    }
+
+                    active ??= new List<uint>(4);
+                    if (active.Count >= CharacterEntity.MaxWeaponComponents)
+                    {
+                        break;
+                    }
+
+                    active.Add(unchecked((uint)component.ComponentHash));
+                }
+
+                // An empty list rather than null when the weapon is bare: null means
+                // "not read", and the difference decides whether a remote ped keeps
+                // the suppressor it had.
+                return active ?? new List<uint>();
+            }
+            catch (Exception)
+            {
+                return null;
+            }
+        }
+
+        /// <summary>
+        /// Head and both feet, as offsets from the ped's root, while it is
+        /// ragdolling.
+        /// <para>
+        /// Offsets rather than world positions for two reasons. On the wire they
+        /// quantise into a metre-scale range instead of a world-scale one, which is
+        /// four bytes a bone cheaper. On the receiving side they stay correct when
+        /// the remote copy's root has been interpolated or corrected — a world
+        /// position paired with a root that has moved describes a body pulled apart.
+        /// </para>
+        /// </summary>
+        private static RagdollPose SampleRagdollPose(Ped ped, PlayerFlags flags, NetVector3 root)
+        {
+            if ((flags & PlayerFlags.Ragdoll) == 0)
+            {
+                return RagdollPose.None;
+            }
+
+            try
+            {
+                return new RagdollPose(
+                    ToNet(ped.Bones[Bone.SkelHead].Position) - root,
+                    ToNet(ped.Bones[Bone.SkelRightFoot].Position) - root,
+                    ToNet(ped.Bones[Bone.SkelLeftFoot].Position) - root);
+            }
+            catch (Exception)
+            {
+                // A model whose skeleton lacks one of these bones. Reporting no pose
+                // leaves the remote copy on its own physics, which is what it had
+                // before any of this existed.
+                return RagdollPose.None;
+            }
+        }
+
+        /// <summary>
+        /// The point the player is aiming at, taken from the gameplay camera.
+        /// <para>
+        /// GTA V has no native for "where is this ped aiming"; the aim direction is a
+        /// property of the camera, not the ped. Projecting the camera ray 150 m gives
+        /// a target the remote side can aim its ped at, which is what the pose needs —
+        /// it is not a hit position and is not used as one.
+        /// </para>
+        /// </summary>
+        private static NetVector3 SampleAimPosition(Ped ped)
+        {
+            if (!Game.Player.IsAiming)
+            {
+                return ToNet(ped.Position + (ped.ForwardVector * 10f));
+            }
+
+            Vector3 origin = GameplayCamera.Position;
+            Vector3 direction = GameplayCamera.Direction;
+            return ToNet(origin + (direction * 150f));
+        }
+
+        private PedAppearance? SampleAppearance(Ped ped)
+        {
+            int now = Game.GameTime;
+            if (_lastAppearanceSampleTick != 0 && now - _lastAppearanceSampleTick < AppearanceSampleIntervalMilliseconds)
+            {
+                return _localAppearance;
+            }
+
+            _lastAppearanceSampleTick = now;
+
+            for (int slot = 0; slot < PedAppearance.ComponentSlots; slot++)
+            {
+                int drawable = Function.Call<int>(Hash.GET_PED_DRAWABLE_VARIATION, ped.Handle, slot);
+                int texture = Function.Call<int>(Hash.GET_PED_TEXTURE_VARIATION, ped.Handle, slot);
+                int palette = Function.Call<int>(Hash.GET_PED_PALETTE_VARIATION, ped.Handle, slot);
+
+                _localAppearance.SetComponent(
+                    slot,
+                    (ushort)Clamp(drawable, 0, ushort.MaxValue),
+                    (byte)Clamp(texture, 0, byte.MaxValue),
+                    (byte)Clamp(palette, 0, byte.MaxValue));
+            }
+
+            for (int slot = 0; slot < PedAppearance.PropSlots; slot++)
+            {
+                int drawable = Function.Call<int>(Hash.GET_PED_PROP_INDEX, ped.Handle, slot);
+                if (drawable < 0)
+                {
+                    _localAppearance.SetProp(slot, PedAppearance.NoProp, 0);
+                    continue;
+                }
+
+                int texture = Function.Call<int>(Hash.GET_PED_PROP_TEXTURE_INDEX, ped.Handle, slot);
+                _localAppearance.SetProp(
+                    slot, (short)Clamp(drawable, 0, short.MaxValue), (byte)Clamp(texture, 0, byte.MaxValue));
+            }
+
+            return _localAppearance;
+        }
+
+
+
+
+        /// <summary>
+        /// Applies the server's maximum health to the local player's ped.
+        /// <para>
+        /// <c>SET_PED_MAX_HEALTH</c> does not lower current health to fit, so a player
+        /// standing at 300 with a new ceiling of 200 would keep reporting 300 and be
+        /// rejected for exceeding a maximum they no longer have. The clamp is the whole
+        /// point of the call.
+        /// </para>
+        /// </summary>
+        public void SetLocalMaxHealth(int maxHealth)
+        {
+            if (maxHealth <= 0)
+            {
+                return;
+            }
+
+            Ped ped = Game.Player.Character;
+            if (ped == null || !ped.Exists())
+            {
+                return;
+            }
+
+            Function.Call(Hash.SET_PED_MAX_HEALTH, ped.Handle, maxHealth);
+            if (ped.Health > maxHealth)
+            {
+                ped.Health = maxHealth;
+            }
+        }
+
+        /// <summary>
+        /// Changes the local player's model.
+        /// <para>
+        /// <c>SET_PLAYER_MODEL</c> does not dress the existing ped — it builds a new
+        /// one and points the player at it. The old handle is stale afterwards, and
+        /// health, armour, place and clothing do not come across, so they are read
+        /// first and written back. Refused rather than forced while the player is in a
+        /// vehicle or dead: the game's own behaviour there is to eject or to leave a
+        /// corpse behind, and both are worse than waiting a frame.
+        /// </para>
+        /// </summary>
+        public bool TrySetLocalPlayerModel(uint modelHash)
+        {
+            if (modelHash == 0)
+            {
+                return false;
+            }
+
+            Ped player = Game.Player.Character;
+            if (player == null || !player.Exists() || player.IsDead || player.IsInVehicle())
+            {
+                return false;
+            }
+
+            if (unchecked((uint)player.Model.Hash) == modelHash)
+            {
+                return true;
+            }
+
+            var model = new Model(unchecked((int)modelHash));
+            if (!model.IsValid || !model.IsInCdImage)
+            {
+                // A model this client does not have. Reported as a failure so the
+                // caller stops asking, rather than retried until the session ends.
+                return false;
+            }
+
+            if (!model.IsLoaded)
+            {
+                model.Request();
+                return false;
+            }
+
+            int health = player.Health;
+            int armor = player.Armor;
+            float heading = player.Heading;
+            Vector3 position = player.Position;
+
+            Function.Call(Hash.SET_PLAYER_MODEL, Game.Player.Handle, model.Hash);
+            model.MarkAsNoLongerNeeded();
+
+            // A different ped from here on: the variable above no longer refers to the
+            // player's character.
+            Ped rebuilt = Game.Player.Character;
+            Function.Call(Hash.SET_PED_DEFAULT_COMPONENT_VARIATION, rebuilt.Handle);
+            rebuilt.Position = position;
+            rebuilt.Heading = heading;
+            rebuilt.Health = health;
+            rebuilt.Armor = armor;
+            return true;
+        }
+
+        /// <summary>
+        /// Fades the screen back in if anything has left it dark.
+        /// <para>
+        /// Guarded rather than unconditional: calling <c>DO_SCREEN_FADE_IN</c> on a
+        /// screen that is already visible restarts a fade the player can see, and a
+        /// correction arrives twenty times a second.
+        /// </para>
+        /// </summary>
+        private void RestoreTheScreen()
+        {
+            try
+            {
+                bool dark = Function.Call<bool>(Hash.IS_SCREEN_FADED_OUT)
+                            || Function.Call<bool>(Hash.IS_SCREEN_FADING_OUT);
+
+                if (dark)
+                {
+                    Function.Call(Hash.DO_SCREEN_FADE_IN, ScreenFadeMilliseconds);
+                }
+            }
+            catch (Exception)
+            {
+                // A script host too old to know these. The screen is then the game's
+                // problem, which is where it was before this.
+            }
+        }
+
+        /// <summary>
+        /// A living player must not be looking at a black screen. Called every frame.
+        /// <para>
+        /// The fade-in on resurrect closes the case this client caused. It does not
+        /// close every case: a fade can be started by the game, by a mission script,
+        /// or by another mod, and with GTA V's death-and-restart sequence paused there
+        /// is nothing left that reliably undoes one. A player stuck looking at black
+        /// cannot report what they are seeing, cannot open the console, and cannot tell
+        /// a hung game from a dark one -- so this is worth a native call a frame.
+        /// </para>
+        /// <para>
+        /// The delay is what keeps it out of the way of fades that are supposed to
+        /// happen: a cutscene, a mission fade, a legitimate transition. Those are over
+        /// in well under two seconds. One that is not is not a transition.
+        /// </para>
+        /// </summary>
+        public void KeepTheScreenAlive(double now)
+        {
+            try
+            {
+                Ped ped = Game.Player.Character;
+                if (ped == null || !ped.Exists() || ped.IsDead)
+                {
+                    _screenDarkSince = 0d;
+                    return;
+                }
+
+                if (!Function.Call<bool>(Hash.IS_SCREEN_FADED_OUT))
+                {
+                    _screenDarkSince = 0d;
+                    return;
+                }
+
+                if (_screenDarkSince <= 0d)
+                {
+                    _screenDarkSince = now;
+                    return;
+                }
+
+                if (now - _screenDarkSince < ScreenStuckSeconds)
+                {
+                    return;
+                }
+
+                _screenDarkSince = 0d;
+                Function.Call(Hash.DO_SCREEN_FADE_IN, ScreenFadeMilliseconds);
+                _log.Warning(
+                    LogCategory.Client,
+                    $"The screen had been black for {ScreenStuckSeconds:0.#} s with the player alive; "
+                    + "faded it back in. If this repeats, something is starting a fade that nothing ends.");
+            }
+            catch (Exception)
+            {
+                _screenDarkSince = 0d;
+            }
+        }
+
+        /// <summary>
+        /// Applies a wanted level the server decided.
+        /// <para>
+        /// <c>SET_PLAYER_WANTED_LEVEL</c> only stages the value; without
+        /// <c>SET_PLAYER_WANTED_LEVEL_NOW</c> it is applied on the game's own schedule,
+        /// which for a level being lowered can be never. Both natives, always.
+        /// </para>
+        /// </summary>
+        public void SetLocalWantedLevel(int level)
+        {
+            int clamped = Clamp(level, 0, 5);
+            Function.Call(Hash.SET_PLAYER_WANTED_LEVEL, Game.Player.Handle, clamped, false);
+            Function.Call(Hash.SET_PLAYER_WANTED_LEVEL_NOW, Game.Player.Handle, false);
+        }
+
+        public void ApplyLocalCorrection(NetVector3 position, float heading, int health, int armor)
+        {
+            Ped ped = Game.Player.Character;
+            if (ped == null || !ped.Exists())
+            {
+                return;
+            }
+
+            // A respawn arrives as a correction: the server has already moved the
+            // player and refilled their health, so the client must revive before
+            // placing them or the game leaves them dead at the new position.
+            if (ped.IsDead && health > 0)
+            {
+                Function.Call(
+                    Hash.NETWORK_RESURRECT_LOCAL_PLAYER,
+                    position.X, position.Y, position.Z, heading, false, false);
+
+                // And give the player their screen back.
+                //
+                // The client pauses GTA V's own death-and-restart sequence, because
+                // that sequence would otherwise respawn the player wherever single
+                // player felt like putting them, on its own schedule, ignoring the
+                // server. What it also does, when it is allowed to run, is fade the
+                // screen back in afterwards. Pausing it means nothing ever does.
+                //
+                // So a player who died with the screen faded out came back alive, in
+                // the right place, with full health, looking at black -- which is the
+                // "the game could not revive me, just a black screen" report, and it
+                // is not a revival failure at all. Resurrecting is half the job; the
+                // other half is undoing what the death sequence had already started.
+                RestoreTheScreen();
+            }
+
+            // Health and armour are the ped's wherever they are sitting.
+            ped.Health = health;
+            ped.Armor = armor;
+
+            // Position is not. When the player is driving, the vehicle holds the
+            // position and the ped is carried by it: moving the ped puts it back in the
+            // seat on the same frame and nothing has changed. That is not a theory —
+            // one real session logged "position off by 1042,04 m" a hundred times in a
+            // row, the same number to the centimetre, because the correction was applied
+            // to the ped every snapshot and the car it was sitting in never moved. From
+            // the player's side the car falls somewhere and the camera is left in the
+            // air.
+            Vehicle current = ped.CurrentVehicle;
+            if (current != null && current.Exists())
+            {
+                // Only the driver. Teleporting the car a passenger happens to be in
+                // would move somebody else's vehicle from this client, which is the
+                // opposite of what server authority over *this* player means.
+                Ped driver = current.Driver;
+                if (driver != null && driver.Exists() && driver.Handle == ped.Handle)
+                {
+                    current.PositionNoOffset = ToGame(position);
+                    current.Heading = heading;
+                }
+
+                return;
+            }
+
+            ped.PositionNoOffset = ToGame(position);
+            ped.Heading = heading;
+        }
+
+        // ------------------------------------------------------------------
+        // Remote peds
+        // ------------------------------------------------------------------
+        public int CreateRemotePed(uint modelHash, NetVector3 position, float heading)
+        {
+            try
+            {
+                var model = new Model(unchecked((int)(modelHash == 0 ? DefaultPedModel : modelHash)));
+                if (!model.IsValid)
+                {
+                    model = new Model(unchecked((int)DefaultPedModel));
+                }
+
+                // Request is asynchronous. Returning 0 makes the caller retry on a
+                // later frame, which is cheaper than blocking the game thread.
+                if (!model.IsLoaded)
+                {
+                    model.Request();
+                    return 0;
+                }
+
+                Ped? ped = GtaWorld.CreatePed(model, ToGame(position), heading);
+                model.MarkAsNoLongerNeeded();
+                if (ped == null || !ped.Exists())
+                {
+                    return 0;
+                }
+
+                // A replicated ped must not be simulated by the local game: no AI
+                // reactions, no ragdoll from local physics, no damage from local
+                // events. Its state comes from the server and nowhere else.
+                // Damageable on purpose, and never actually harmed.
+                //
+                // A remote ped's health comes from the server and is rewritten every
+                // frame, so leaving it invincible cost nothing visible — except that
+                // the engine then records no hit against it, and the engine's hit
+                // record is the only thing on this machine that knows the local player
+                // shot somebody. Letting damage land, reading it, and putting the
+                // health straight back is how the arbiter gets told about it at all.
+                // The safeguards below stop the local game acting on damage it is
+                // allowed to register: no critical hits, no death from injury.
+                ped.IsInvincible = false;
+                Function.Call(Hash.SET_PED_SUFFERS_CRITICAL_HITS, ped.Handle, false);
+                Function.Call(Hash.SET_PED_DIES_WHEN_INJURED, ped.Handle, false);
+
+                // SET_PED_DIES_WHEN_INJURED(false) stops a ped dying from an injury it
+                // survives; it does not stop one whose health a bullet took to zero.
+                // Nothing does, so the ped is given somewhere to fall from instead.
+                Function.Call(Hash.SET_PED_MAX_HEALTH, ped.Handle, LocalPedHealthHeadroom);
+                ped.Health = LocalPedHealthHeadroom;
+                ped.Armor = 0;
+
+                // Proof against everything that can take a ped from full health to
+                // zero inside one frame — fire, explosions, collisions, drowning —
+                // and deliberately *not* proof against bullets or melee, which are
+                // the two the hit sampler exists to notice. The health is rewritten
+                // from the server every frame either way; what these prevent is the
+                // local game killing a ped outright before that frame comes round,
+                // which GTA V will not let us undo in place.
+                Function.Call(
+                    Hash.SET_ENTITY_PROOFS, ped.Handle,
+                    false, true, true, true, false, true, 0, true);
+                ped.BlockPermanentEvents = true;
+                ped.CanRagdoll = false;
+                ped.RelationshipGroup = Game.Player.Character.RelationshipGroup;
+                Function.Call(Hash.SET_BLOCKING_OF_NON_TEMPORARY_EVENTS, ped.Handle, true);
+                Function.Call(Hash.SET_PED_CAN_RAGDOLL, ped.Handle, false);
+                Function.Call(Hash.SET_PED_KEEP_TASK, ped.Handle, true);
+                Function.Call(Hash.SET_PED_CAN_BE_TARGETTED, ped.Handle, true);
+
+                _remotePeds[ped.Handle] = ped;
+                _driveState[ped.Handle] = new PedDriveState();
+                return ped.Handle;
+            }
+            catch (Exception exception)
+            {
+                _log.Error(LogCategory.Client, "Could not create a remote ped.", exception);
+                return 0;
+            }
+        }
+
+        public int GetLocalPlayerPedHandle()
+        {
+            try
+            {
+                Ped ped = Game.Player.Character;
+                return ped != null && ped.Exists() ? ped.Handle : 0;
+            }
+            catch (Exception)
+            {
+                return 0;
+            }
+        }
+
+        public void SuppressAmbientTrafficThisFrame()
+        {
+            try
+            {
+                // All four, because GTA V counts them separately and leaving any one of
+                // them alone leaves that category of car spawning: moving traffic,
+                // random traffic, parked cars, and the multiplier that gates the rest.
+                Function.Call(Hash.SET_VEHICLE_DENSITY_MULTIPLIER_THIS_FRAME, 0f);
+                Function.Call(Hash.SET_RANDOM_VEHICLE_DENSITY_MULTIPLIER_THIS_FRAME, 0f);
+                Function.Call(Hash.SET_PARKED_VEHICLE_DENSITY_MULTIPLIER_THIS_FRAME, 0f);
+                Function.Call(Hash.SET_AMBIENT_VEHICLE_RANGE_MULTIPLIER_THIS_FRAME, 0f);
+            }
+            catch (Exception)
+            {
+                // A script host that does not know one of them. Traffic is then local,
+                // which is the behaviour that existed before this.
+            }
+        }
+
+        public void SampleAmbientVehicles(List<int> into, float radius)
+        {
+            into.Clear();
+
+            try
+            {
+                Ped player = Game.Player.Character;
+                if (!player.Exists())
+                {
+                    return;
+                }
+
+                Vector3 origin = player.Position;
+                Vehicle? own = player.CurrentVehicle;
+                float squared = radius * radius;
+
+                foreach (Vehicle vehicle in GtaWorld.GetAllVehicles())
+                {
+                    if (vehicle == null || !vehicle.Exists())
+                    {
+                        continue;
+                    }
+
+                    // Anything this client is already showing on the server's behalf.
+                    // Handing a replicated car back to the server would have it adopt
+                    // its own reflection, and the street would double every few seconds.
+                    if (_vehicles.IsRemoteVehicleValid(vehicle.Handle))
+                    {
+                        continue;
+                    }
+
+                    if (own != null && own.Exists() && vehicle.Handle == own.Handle)
+                    {
+                        continue;
+                    }
+
+                    if (vehicle.Position.DistanceToSquared(origin) > squared)
+                    {
+                        continue;
+                    }
+
+                    into.Add(vehicle.Handle);
+                }
+            }
+            catch (Exception exception)
+            {
+                _log.Error(LogCategory.Client, "Could not read the ambient vehicles.", exception);
+            }
+        }
+
+        /// <summary>
+        /// Hands a networked NPC over to GTA V's own AI with the server's instruction.
+        /// <para>
+        /// Every one of these is a task the engine already knows how to carry out on
+        /// its own pavements, around its own cover, through its own doors. The server
+        /// says what; the game says how. Anything else would need a navigation mesh the
+        /// server does not have.
+        /// </para>
+        /// <para>
+        /// <b>Not verified against a running game.</b> The native names are checked by
+        /// the compiler — Hash.X is an enum member — but nothing here can run GTA V, so
+        /// the arguments and the resulting behaviour are not. A ped that stands still
+        /// where it should flee is this method first.
+        /// </para>
+        /// </summary>
+        public void ApplyNpcIntent(int handle, NpcIntent intent, int targetHandle, uint scenarioHash)
+        {
+            if (!_remotePeds.TryGetValue(handle, out Ped ped) || !ped.Exists())
+            {
+                return;
+            }
+
+            try
+            {
+                // Every intent replaces the last one, so whatever was running has to
+                // stop first. Without it a ped told to surrender keeps fighting, because
+                // the combat task it already has outranks a new one.
+                if (intent != NpcIntent.None)
+                {
+                    Function.Call(Hash.CLEAR_PED_TASKS, ped.Handle);
+                }
+
+                switch (intent)
+                {
+                    case NpcIntent.Fight:
+                        Function.Call(Hash.TASK_COMBAT_PED, ped.Handle, targetHandle, 0, 16);
+                        break;
+
+                    case NpcIntent.Flee:
+                        Function.Call(
+                            Hash.TASK_SMART_FLEE_PED, ped.Handle, targetHandle, FleeDistance, -1, false, false);
+                        break;
+
+                    case NpcIntent.Surrender:
+                        Function.Call(Hash.TASK_HANDS_UP, ped.Handle, -1, 0, -1, false);
+                        break;
+
+                    case NpcIntent.Arrest:
+                        Function.Call(Hash.TASK_HANDS_UP, ped.Handle, -1, 0, -1, false);
+                        Function.Call(Hash.SET_ENABLE_HANDCUFFS, ped.Handle, true);
+                        break;
+
+                    case NpcIntent.Scenario:
+                        Function.Call(
+                            Hash.TASK_START_SCENARIO_IN_PLACE, ped.Handle, ScenarioName(scenarioHash), 0, true);
+                        break;
+                }
+
+                // Replicated peds have their permanent events blocked, which is what
+                // stops the local game inventing behaviour for them — and it also stops
+                // a task surviving on its own, so it is kept explicitly.
+                Function.Call(Hash.SET_PED_KEEP_TASK, ped.Handle, true);
+            }
+            catch (Exception exception)
+            {
+                _log.Error(LogCategory.Entity, "Could not apply an NPC's intent.", exception);
+            }
+        }
+
+        /// <summary>How far a fleeing ped is told to get. Far enough to leave, near enough to stay streamed.</summary>
+        private const float FleeDistance = 200f;
+
+        /// <summary>
+        /// The scenario name behind a replicated hash.
+        /// <para>
+        /// Scenarios are named strings in GTA V and the wire carries a hash, because a
+        /// hash is four bytes and a name is not. Turning it back needs a table, and the
+        /// table is the scenarios this framework knows: anything a mod invents comes
+        /// back as its own hash, does not match, and produces no scenario rather than
+        /// the wrong one. That is a real limit and it is stated here rather than
+        /// discovered from a ped smoking a cigarette it was never told to smoke.
+        /// </para>
+        /// </summary>
+        private static string ScenarioName(uint hash)
+        {
+            foreach (string name in KnownScenarios)
+            {
+                if (GameHash.Joaat(name) == hash)
+                {
+                    return name;
+                }
+            }
+
+            return string.Empty;
+        }
+
+        private static readonly string[] KnownScenarios =
+        {
+            "WORLD_HUMAN_SMOKING",
+            "WORLD_HUMAN_STAND_IMPATIENT",
+            "WORLD_HUMAN_STAND_MOBILE",
+            "WORLD_HUMAN_GUARD_STAND",
+            "WORLD_HUMAN_COP_IDLES",
+            "WORLD_HUMAN_LEANING",
+            "WORLD_HUMAN_CLIPBOARD",
+            "WORLD_HUMAN_HANG_OUT_STREET",
+            "WORLD_HUMAN_DRINKING",
+            "WORLD_HUMAN_AA_SMOKE",
+        };
+
+        /// <summary>Map files this client has switched on, so the difference is applied rather than the whole set.</summary>
+        private readonly HashSet<string> _activeIpls = new HashSet<string>(StringComparer.Ordinal);
+
+        public void SetActiveMapFiles(IReadOnlyList<string> ipls)
+        {
+            try
+            {
+                // The difference, not the set. REQUEST_IPL on something already loaded
+                // is not free and REMOVE_IPL on something already gone is not either,
+                // and this runs whenever the environment changes — which is whenever
+                // the weather does.
+                foreach (string ipl in ipls)
+                {
+                    if (_activeIpls.Add(ipl))
+                    {
+                        Function.Call(Hash.REQUEST_IPL, ipl);
+                    }
+                }
+
+                if (_activeIpls.Count == ipls.Count)
+                {
+                    return;
+                }
+
+                var wanted = new HashSet<string>(ipls, StringComparer.Ordinal);
+                var gone = new List<string>();
+                foreach (string ipl in _activeIpls)
+                {
+                    if (!wanted.Contains(ipl))
+                    {
+                        gone.Add(ipl);
+                    }
+                }
+
+                foreach (string ipl in gone)
+                {
+                    Function.Call(Hash.REMOVE_IPL, ipl);
+                    _activeIpls.Remove(ipl);
+                }
+            }
+            catch (Exception exception)
+            {
+                _log.Error(LogCategory.Client, "Could not switch the world's map files.", exception);
+            }
+        }
+
+        public void SetRemotePedRoom(int handle, uint roomKey, NetVector3 position)
+        {
+            if (!_remotePeds.TryGetValue(handle, out Ped ped) || !ped.Exists())
+            {
+                return;
+            }
+
+            try
+            {
+                if (roomKey == 0)
+                {
+                    Function.Call(Hash.CLEAR_ROOM_FOR_ENTITY, ped.Handle);
+                    return;
+                }
+
+                // Derived here, not replicated. An interior handle is whatever this
+                // machine's loaded map gave that building; the room key is a hash of a
+                // name and is the same everywhere.
+                int interior = Function.Call<int>(
+                    Hash.GET_INTERIOR_AT_COORDS, position.X, position.Y, position.Z);
+
+                if (interior == 0)
+                {
+                    // The world says this character is in a room and this machine has
+                    // no interior at that coordinate — usually because it has not
+                    // streamed in yet. Left alone rather than forced into nothing, and
+                    // retried whenever the room changes.
+                    return;
+                }
+
+                Function.Call(Hash.FORCE_ROOM_FOR_ENTITY, ped.Handle, interior, roomKey);
+            }
+            catch (Exception exception)
+            {
+                _log.Error(LogCategory.Client, "Could not set a remote ped's room.", exception);
+            }
+        }
+
+        public void ApplyEntityImpulse(int handle, NetVector3 impulse, bool isExplosion)
+        {
+            if (handle == 0)
+            {
+                return;
+            }
+
+            try
+            {
+                // Force type 1 is an impulse — an instantaneous change in momentum —
+                // rather than a force applied over time, which is what a collision and
+                // an explosion both are. Applied at the centre of mass, because the
+                // point of contact is not replicated and guessing one would spin a car
+                // in a direction nobody chose.
+                Function.Call(
+                    Hash.APPLY_FORCE_TO_ENTITY,
+                    handle,
+                    1,
+                    impulse.X, impulse.Y, impulse.Z,
+                    0f, 0f, 0f,
+                    0,
+                    false,
+                    true,
+                    true,
+                    false,
+                    true);
+            }
+            catch (Exception exception)
+            {
+                _log.Error(LogCategory.Entity, "Could not apply an impulse.", exception);
+            }
+        }
+
+        public void SuppressAmbientPedsThisFrame()
+        {
+            try
+            {
+                Function.Call(Hash.SET_PED_DENSITY_MULTIPLIER_THIS_FRAME, 0f);
+                Function.Call(Hash.SET_SCENARIO_PED_DENSITY_MULTIPLIER_THIS_FRAME, 0f, 0f);
+            }
+            catch (Exception)
+            {
+                // A script host without one of them. Pedestrians stay local, which is
+                // the behaviour that existed before this.
+            }
+        }
+
+        public void SampleAmbientPeds(List<int> into, float radius)
+        {
+            into.Clear();
+
+            try
+            {
+                Ped player = Game.Player.Character;
+                if (!player.Exists())
+                {
+                    return;
+                }
+
+                Vector3 origin = player.Position;
+                float squared = radius * radius;
+
+                foreach (Ped ped in GtaWorld.GetAllPeds())
+                {
+                    if (ped == null || !ped.Exists() || ped.Handle == player.Handle)
+                    {
+                        continue;
+                    }
+
+                    // Anything this client is already showing on the server's behalf.
+                    // Offering a replicated ped back would have the server adopt its own
+                    // reflection and the pavement would double every few seconds.
+                    if (_remotePeds.ContainsKey(ped.Handle))
+                    {
+                        continue;
+                    }
+
+                    // A ped in a vehicle belongs to that vehicle's replication, not to
+                    // the pavement: adopting it separately would have two owners moving
+                    // the same body.
+                    if (ped.IsInVehicle())
+                    {
+                        continue;
+                    }
+
+                    if (ped.Position.DistanceToSquared(origin) > squared)
+                    {
+                        continue;
+                    }
+
+                    into.Add(ped.Handle);
+                }
+            }
+            catch (Exception exception)
+            {
+                _log.Error(LogCategory.Client, "Could not read the ambient pedestrians.", exception);
+            }
+        }
+
+        public bool TryReadPed(int handle, PedEntity into)
+        {
+            try
+            {
+                Ped? ped = null;
+                foreach (Ped candidate in GtaWorld.GetAllPeds())
+                {
+                    if (candidate != null && candidate.Exists() && candidate.Handle == handle)
+                    {
+                        ped = candidate;
+                        break;
+                    }
+                }
+
+                if (ped == null)
+                {
+                    return false;
+                }
+
+                into.ModelHash = unchecked((uint)ped.Model.Hash);
+                into.Position = ToNet(ped.Position);
+                into.Velocity = ToNet(ped.Velocity);
+                into.Heading = ped.Heading;
+                into.Health = ped.Health;
+                into.Armor = ped.Armor;
+                into.Movement = SampleMovement(ped);
+                into.Flags = SampleFlags(ped);
+                into.RelationshipGroupHash = unchecked((uint)ped.RelationshipGroup.Hash);
+
+                Weapon weapon = ped.Weapons.Current;
+                into.CurrentWeaponHash = weapon != null && weapon.IsPresent
+                    ? unchecked((uint)weapon.Hash)
+                    : 0u;
+
+                return true;
+            }
+            catch (Exception)
+            {
+                return false;
+            }
+        }
+
+        public bool TryGetRemotePedPosition(int handle, out NetVector3 position)
+        {
+            if (_remotePeds.TryGetValue(handle, out Ped ped) && ped.Exists())
+            {
+                position = ToNet(ped.Position);
+                return true;
+            }
+
+            position = NetVector3.Zero;
+            return false;
+        }
+
+        public void ApplyRemotePedCommand(int handle, in RemotePedCommand command)
+        {
+            if (!_remotePeds.TryGetValue(handle, out Ped ped) || !ped.Exists())
+            {
+                _remotePeds.Remove(handle);
+                _driveState.Remove(handle);
+                return;
+            }
+
+            if (!_driveState.TryGetValue(handle, out PedDriveState state))
+            {
+                state = new PedDriveState();
+                _driveState[handle] = state;
+            }
+
+            ApplyVitals(ped, in command, state);
+            ApplyWeapon(ped, command.WeaponHash, state);
+            ApplyWeaponAttachments(ped, in command, state);
+            ApplyPosture(ped, in command, state);
+
+            if (command.Action != RemotePedAction.InVehicle)
+            {
+                LeaveVehicle(ped, state);
+            }
+
+            switch (command.Action)
+            {
+                case RemotePedAction.Dead:
+                    DriveDead(ped, in command, state);
+                    return;
+
+                case RemotePedAction.Ragdoll:
+                    DriveRagdoll(ped, in command, state);
+                    return;
+
+                case RemotePedAction.InVehicle:
+                    DriveSeated(ped, in command, state);
+                    return;
+
+
+                case RemotePedAction.Idle:
+                    DriveIdle(ped, in command, state);
+                    return;
+
+                default:
+                    DriveLocomotion(ped, in command, state);
+                    return;
+            }
+        }
+
+        /// <summary>
+        /// Puts the reported weapon in a remote player's hands.
+        /// <para>
+        /// Nothing did this before. The weapon was read from the local player, sent,
+        /// stored, replicated and printed by <c>players</c> and <c>diff</c> — and never
+        /// applied, so every remote player stood empty-handed whatever they were
+        /// carrying, while the damage arbiter on the server scored their rifle hits.
+        /// </para>
+        /// <para>
+        /// Only on a change, because <c>GiveWeaponToPed</c> every frame re-equips and
+        /// visibly interrupts the draw animation. And unarmed is applied explicitly
+        /// rather than skipped: holstering is a change like any other, and the version
+        /// of this bug that only forgets the unarmed case leaves a player permanently
+        /// holding the last thing they drew.
+        /// </para>
+        /// </summary>
+        private static void ApplyWeapon(Ped ped, uint weaponHash, PedDriveState state)
+        {
+            if (state.AppliedWeapon == weaponHash)
+            {
+                return;
+            }
+
+            try
+            {
+                if (weaponHash == 0)
+                {
+                    Function.Call(Hash.SET_CURRENT_PED_WEAPON, ped.Handle, (uint)WeaponHash.Unarmed, true);
+                }
+                else
+                {
+                    Function.Call(Hash.GIVE_WEAPON_TO_PED, ped.Handle, weaponHash, 250, false, true);
+                    Function.Call(Hash.SET_CURRENT_PED_WEAPON, ped.Handle, weaponHash, true);
+                }
+
+                state.AppliedWeapon = weaponHash;
+            }
+            catch (Exception)
+            {
+                // A weapon hash from a mod this client does not have. Left unapplied and
+                // retried on the next change rather than taking the frame down; the
+                // missing-content tracker is what reports an unresolvable hash.
+            }
+        }
+
+        private void ApplyVitals(Ped ped, in RemotePedCommand command, PedDriveState state)
+        {
+            if (command.Action == RemotePedAction.Dead)
+            {
+                return;
+            }
+
+            if (state.WasDead)
+            {
+                // Coming back from dead: the ped model has to be respawned, because a
+                // dead ped in GTA V cannot be revived in place.
+                state.WasDead = false;
+            }
+
+            if (ped.IsDead)
+            {
+                // The local game killed a ped the server says is alive. The proofs
+                // above make this unlikely rather than impossible, and a dead ped
+                // cannot be revived in place — so it is discarded and the player
+                // manager builds a new one next frame, which is the same recovery a
+                // model change uses.
+                //
+                // Rate limited, because this is a recovery and a recovery that fires
+                // thirty times a second is not recovering from anything. A real
+                // session logged it 2,230 times in one sitting, two per snapshot,
+                // continuously: every one of those is a DELETE_PED, a model request
+                // and a CREATE_PED, which is the "everything starts lagging" report,
+                // and a ped that vanishes and reappears thirty times a second is the
+                // "the bots still jump" one. Whatever kills the ped kills the
+                // replacement just as fast, so rebuilding harder does not help — it
+                // only makes the symptom cost more than the cause.
+                //
+                // Above the budget the ped is left where it is. A motionless body is
+                // wrong, and it is visibly, reportably wrong, which a ped flickering
+                // faster than the eye can follow is not.
+                RecordPedRebuild(ped);
+                if (_pedRebuildsThisSecond > MaxPedRebuildsPerSecond)
+                {
+                    return;
+                }
+
+                DestroyRemotePed(ped.Handle);
+                return;
+            }
+
+            // The ped is held at the headroom figure, NOT at the server's health, and
+            // that is the whole point of it.
+            //
+            // Writing the server's health onto the ped looked obviously right and was
+            // the single most destructive line in the client. A remote player the
+            // server had at 20 health carried a ped with 20 health, so the next bullet
+            // took it to zero and GTA V killed it — and a dead ped cannot be revived in
+            // place, so the client destroyed it and built a new one. One real session
+            // logged that rebuild 1,835 times in thirteen minutes. Every rebuild is a
+            // ped vanishing and reappearing, which is exactly what "the running
+            // animation looks like teleporting" was; and a ped that is destroyed the
+            // instant it is shot can never play a death, so a player the server had
+            // killed simply blinked and carried on.
+            //
+            // Local health here is a measuring instrument, not a display. Nothing reads
+            // it: the health bar over a remote player comes from the replicated entity,
+            // death comes from the server through RemotePedAction.Dead, and every local
+            // reaction to injury is already blocked. So the ped is parked at a figure
+            // no single frame of damage can cross, the hit sampler reports the drop,
+            // and the number is put straight back.
+            //
+            // Armour is held at zero for the same reason in reverse: local armour would
+            // absorb part of the hit before it could be measured, and the server
+            // applies the victim's real armour itself when it arbitrates.
+            if (ped.MaxHealth != LocalPedHealthHeadroom)
+            {
+                Function.Call(Hash.SET_PED_MAX_HEALTH, ped.Handle, LocalPedHealthHeadroom);
+            }
+
+            int health = LocalPedHealthHeadroom;
+            if (ped.Health != health)
+            {
+                ped.Health = health;
+            }
+
+            if (ped.Armor != 0)
+            {
+                ped.Armor = 0;
+            }
+
+            // The baseline the hit sampler measures against. Without it a hit can be
+            // detected but not sized, and a damage report with no number in it is not
+            // a report.
+            state.AppliedHealth = health;
+            state.AppliedArmor = 0;
+        }
+
+        /// <summary>
+        /// Counts a rebuild, and says something useful about it at most once every ten
+        /// seconds.
+        /// <para>
+        /// The old warning carried no numbers, so 2,230 identical lines established
+        /// that there was a loop and nothing whatever about its cause. These are the
+        /// two numbers that decide it: if <c>MaxHealth</c> is not the headroom figure
+        /// then <c>SET_PED_MAX_HEALTH</c> did not take and the ped is dying to a normal
+        /// amount of damage on a normal amount of health, which is a different bug in a
+        /// different place than a ped being killed by something the proofs do not
+        /// cover.
+        /// </para>
+        /// </summary>
+        private void RecordPedRebuild(Ped ped)
+        {
+            double now = Environment.TickCount / 1000d;
+
+            if (_pedRebuildSecondStart <= 0d || now - _pedRebuildSecondStart >= 1d)
+            {
+                _pedRebuildSecondStart = now;
+                _pedRebuildsThisSecond = 0;
+            }
+
+            _pedRebuildsThisSecond++;
+            if (_pedRebuildsThisSecond > MaxPedRebuildsPerSecond)
+            {
+                _pedRebuildsSkipped++;
+            }
+
+            if (_pedRebuildReportedAt > 0d && now - _pedRebuildReportedAt < PedRebuildReportSeconds)
+            {
+                return;
+            }
+
+            _pedRebuildReportedAt = now;
+
+            int health;
+            int maxHealth;
+            try
+            {
+                health = ped.Health;
+                maxHealth = ped.MaxHealth;
+            }
+            catch (Exception)
+            {
+                health = -1;
+                maxHealth = -1;
+            }
+
+            string skipped = _pedRebuildsSkipped > 0
+                ? $" {_pedRebuildsSkipped} rebuild(s) skipped since the last report to keep the frame rate."
+                : string.Empty;
+
+            _log.Warning(
+                LogCategory.Client,
+                $"A remote ped died locally while the server had it alive (health {health}, max {maxHealth}, "
+                + $"headroom {LocalPedHealthHeadroom}); rebuilding it.{skipped} "
+                + "A max below the headroom means SET_PED_MAX_HEALTH did not take on this build.");
+
+            _pedRebuildsSkipped = 0;
+        }
+
+        private void DriveDead(Ped ped, in RemotePedCommand command, PedDriveState state)
+        {
+            if (!state.WasDead)
+            {
+                state.WasDead = true;
+                state.Reset();
+                Function.Call(Hash.CLEAR_PED_TASKS_IMMEDIATELY, ped.Handle);
+                ped.IsInvincible = false;
+                ped.Health = 0;
+                ped.IsInvincible = true;
+                return;
+            }
+
+            // Corpses drift. Nudge, do not re-place, or the body twitches.
+            if (NetVector3.Distance(ToNet(ped.Position), command.TargetPosition) > RemotePedController.HardCorrectDistance)
+            {
+                Place(ped, command.TargetPosition, command.Heading);
+            }
+        }
+
+        /// <summary>
+        /// Starts the ragdoll on the first frame, then keeps the local body in step
+        /// with the owner's by pulling on three limbs.
+        /// <para>
+        /// Before this, the ragdoll was started and then left alone: each machine ran
+        /// its own solver from that moment on, and where a fallen player ended up had
+        /// nothing to do with where they had fallen on their own screen. The position
+        /// kept arriving and was deliberately not applied, because writing
+        /// coordinates into a running solver is what makes replicated ragdolls
+        /// twitch — so the state was correct, replicated, and visible to nobody.
+        /// </para>
+        /// </summary>
+        private void DriveRagdoll(Ped ped, in RemotePedCommand command, PedDriveState state)
+        {
+            if (!state.Ragdolling)
+            {
+                state.Ragdolling = true;
+                state.RagdollFrames = 0;
+                state.Reset();
+                Function.Call(Hash.SET_PED_CAN_RAGDOLL, ped.Handle, true);
+                Function.Call(Hash.SET_PED_TO_RAGDOLL, ped.Handle, 2000, 3000, 0, true, true, false);
+                return;
+            }
+
+            state.RagdollFrames++;
+
+            if (command.HardCorrect)
+            {
+                // Two different falls. Impulses cannot close that gap; the body is put
+                // where it belongs and the solver carries on from there.
+                Place(ped, command.TargetPosition, command.Heading);
+                state.RagdollFrames = 0;
+                return;
+            }
+
+            if (!RagdollDriver.ShouldCorrect(state.RagdollFrames))
+            {
+                return;
+            }
+
+            RagdollCorrection correction;
+            try
+            {
+                correction = RagdollDriver.Compute(
+                    command.Ragdoll,
+                    command.TargetPosition,
+                    ToNet(ped.Bones[Bone.SkelHead].Position),
+                    ToNet(ped.Bones[Bone.SkelRightFoot].Position),
+                    ToNet(ped.Bones[Bone.SkelLeftFoot].Position));
+            }
+            catch (Exception)
+            {
+                return;
+            }
+
+            if (correction.IsEmpty)
+            {
+                return;
+            }
+
+            var helper = new ApplyImpulseHelper(ped);
+            ApplyImpulse(helper, correction, RagdollBones.Head, RagdollDriver.HeadPart);
+            ApplyImpulse(helper, correction, RagdollBones.RightFoot, RagdollDriver.RightFootPart);
+            ApplyImpulse(helper, correction, RagdollBones.LeftFoot, RagdollDriver.LeftFootPart);
+        }
+
+        private static void ApplyImpulse(
+            ApplyImpulseHelper helper, in RagdollCorrection correction, RagdollBones bone, int partIndex)
+        {
+            if (!correction.Has(bone))
+            {
+                return;
+            }
+
+            NetVector3 impulse = bone switch
+            {
+                RagdollBones.Head => correction.Head,
+                RagdollBones.RightFoot => correction.RightFoot,
+                _ => correction.LeftFoot,
+            };
+
+            helper.EqualizeAmount = 1f;
+            helper.PartIndex = partIndex;
+            helper.Impulse = ToGame(impulse);
+            helper.Start();
+            helper.Stop();
+        }
+
+        /// <summary>
+        /// Puts a riding ped in its seat, once.
+        /// <para>
+        /// Before this, <c>SeatRemotePedInVehicle</c> was on the bridge interface,
+        /// implemented, and called by nothing: a passing car was drawn empty while its
+        /// driver stood at the car's coordinates, sliding along the road with it.
+        /// </para>
+        /// <para>
+        /// Once, because seating is a task: re-issuing it every frame restarts the
+        /// entry animation and the ped climbs into the same seat forever. The seat is
+        /// re-asserted only when the vehicle or the seat index actually changes, or
+        /// when the game has taken the ped out of the car on its own.
+        /// </para>
+        /// </summary>
+        private void DriveSeated(Ped ped, in RemotePedCommand command, PedDriveState state)
+        {
+            LeaveRagdoll(ped, state);
+
+            if (command.VehicleHandle == 0)
+            {
+                // No vehicle to sit in on this client — it has not been created yet, or
+                // its model is missing. Holding the ped at the reported position is
+                // wrong-looking; leaving it where it was is worse.
+                Place(ped, command.TargetPosition, command.Heading);
+                state.Reset();
+                state.SeatedVehicle = 0;
+                return;
+            }
+
+            bool alreadySeated = state.SeatedVehicle == command.VehicleHandle
+                && state.SeatedIndex == command.VehicleSeat
+                && ped.IsInVehicle();
+
+            if (alreadySeated)
+            {
+                return;
+            }
+
+            _vehicles.SeatRemotePedInVehicle(ped.Handle, command.VehicleHandle, command.VehicleSeat);
+            state.Reset();
+            state.SeatedVehicle = command.VehicleHandle;
+            state.SeatedIndex = command.VehicleSeat;
+        }
+
+        /// <summary>
+        /// Takes a ped back out of a car once the server says it is on foot.
+        /// <para>
+        /// Placing a ped that is still sitting in a vehicle moves the seat, not the
+        /// ped — so without this a player who got out stayed in the car on every other
+        /// screen, being driven around by a driver who had also left.
+        /// <c>CLEAR_PED_TASKS_IMMEDIATELY</c> ejects rather than tasking an exit,
+        /// because an exit animation takes about a second and the next frame is going
+        /// to place this ped somewhere else anyway.
+        /// </para>
+        /// </summary>
+        private static void LeaveVehicle(Ped ped, PedDriveState state)
+        {
+            if (state.SeatedVehicle == 0)
+            {
+                return;
+            }
+
+            state.SeatedVehicle = 0;
+            state.SeatedIndex = -2;
+
+            if (ped.IsInVehicle())
+            {
+                Function.Call(Hash.CLEAR_PED_TASKS_IMMEDIATELY, ped.Handle);
+                state.Reset();
+            }
+        }
+
+        private void DriveIdle(Ped ped, in RemotePedCommand command, PedDriveState state)
+        {
+            LeaveRagdoll(ped, state);
+
+            if (state.Tasked)
+            {
+                Function.Call(Hash.CLEAR_PED_TASKS, ped.Handle);
+                state.Reset();
+            }
+
+            if (command.HardCorrect
+                || NetVector3.Distance(ToNet(ped.Position), command.TargetPosition) > RemotePedController.ArrivalDistance)
+            {
+                Place(ped, command.TargetPosition, command.Heading);
+            }
+            else
+            {
+                ped.Heading = command.Heading;
+            }
+
+            ApplyAim(ped, in command);
+        }
+
+        private void DriveLocomotion(Ped ped, in RemotePedCommand command, PedDriveState state)
+        {
+            LeaveRagdoll(ped, state);
+
+            if (command.HardCorrect)
+            {
+                // Too far behind to walk it off without the ped visibly running through
+                // scenery for several seconds.
+                Place(ped, command.TargetPosition, command.Heading);
+                state.Reset();
+            }
+
+            bool destinationMoved =
+                NetVector3.Distance(state.TaskTarget, command.TargetPosition) > RetaskDistance;
+
+            // Re-issuing the task every frame restarts the animation and produces a
+            // ped that jitters in place, so it is only re-issued when the destination
+            // has actually moved or the gait changed.
+            if (!state.Tasked || destinationMoved || state.TaskBlend != command.MoveBlendRatio)
+            {
+                Function.Call(
+                    Hash.TASK_GO_STRAIGHT_TO_COORD,
+                    ped.Handle,
+                    command.TargetPosition.X,
+                    command.TargetPosition.Y,
+                    command.TargetPosition.Z,
+                    command.MoveBlendRatio,
+                    TaskTimeoutMilliseconds,
+                    command.Heading,
+                    0f);
+
+                state.Tasked = true;
+                state.TaskTarget = command.TargetPosition;
+                state.TaskBlend = command.MoveBlendRatio;
+            }
+
+            Function.Call(Hash.SET_PED_DESIRED_MOVE_BLEND_RATIO, ped.Handle, command.MoveBlendRatio);
+            ApplyAim(ped, in command);
+        }
+
+        /// <summary>
+        /// The two posture flags this layer can act on: crouching and reloading.
+        /// <para>
+        /// GTA V has no "crouch" for a ped — what a player sees as crouching is
+        /// stealth movement, which is a mode rather than a task, so it is set on
+        /// change and left alone. Reloading is a task and has to be issued once per
+        /// reload; re-issuing it every frame restarts the animation and the ped
+        /// fumbles the magazine forever.
+        /// </para>
+        /// <para>
+        /// The other posture flags are replicated and **not** applied here. They are
+        /// listed, with the reason for each, in docs/ENTITY_SYSTEM.md — a flag that
+        /// travels to no effect is worth naming rather than leaving to be discovered.
+        /// </para>
+        /// </summary>
+        /// <summary>
+        /// Fits the components and tint the owner has on the weapon this ped is
+        /// holding.
+        /// <para>
+        /// Without this a remote player's silenced, scoped rifle appears as a bare
+        /// one: the weapon hash names the weapon, not what is bolted to it. Applied
+        /// on change, because <c>GIVE_WEAPON_COMPONENT_TO_PED</c> re-equips the weapon
+        /// and calling it every frame keeps a ped permanently mid-draw.
+        /// </para>
+        /// <para>
+        /// A null list means the reporting client could not read them, and the safe
+        /// answer there is to leave the weapon alone rather than strip it.
+        /// </para>
+        /// </summary>
+        private static void ApplyWeaponAttachments(Ped ped, in RemotePedCommand command, PedDriveState state)
+        {
+            if (command.WeaponComponents == null || command.WeaponHash == 0)
+            {
+                return;
+            }
+
+            if (state.AppliedTint == command.WeaponTint
+                && state.AppliedComponentsWeapon == command.WeaponHash
+                && SameComponents(state.AppliedComponents, command.WeaponComponents))
+            {
+                return;
+            }
+
+            try
+            {
+                foreach (uint previous in state.AppliedComponents)
+                {
+                    if (!command.WeaponComponents.Contains(previous))
+                    {
+                        Function.Call(
+                            Hash.REMOVE_WEAPON_COMPONENT_FROM_PED, ped.Handle, command.WeaponHash, previous);
+                    }
+                }
+
+                foreach (uint component in command.WeaponComponents)
+                {
+                    Function.Call(Hash.GIVE_WEAPON_COMPONENT_TO_PED, ped.Handle, command.WeaponHash, component);
+                }
+
+                Function.Call(
+                    Hash.SET_PED_WEAPON_TINT_INDEX, ped.Handle, command.WeaponHash, (int)command.WeaponTint);
+
+                state.AppliedTint = command.WeaponTint;
+                state.AppliedComponentsWeapon = command.WeaponHash;
+                state.AppliedComponents.Clear();
+                state.AppliedComponents.AddRange(command.WeaponComponents);
+            }
+            catch (Exception)
+            {
+                // A component from a weapon mod this client does not have. The weapon
+                // stays as it is rather than half-fitted.
+            }
+        }
+
+        private static bool SameComponents(List<uint> applied, List<uint> wanted)
+        {
+            if (applied.Count != wanted.Count)
+            {
+                return false;
+            }
+
+            for (int i = 0; i < applied.Count; i++)
+            {
+                if (applied[i] != wanted[i])
+                {
+                    return false;
+                }
+            }
+
+            return true;
+        }
+
+        private void ApplyPosture(Ped ped, in RemotePedCommand command, PedDriveState state)
+        {
+            bool crouching = (command.Flags & PlayerFlags.Crouching) != 0;
+            if (state.Crouching != crouching)
+            {
+                state.Crouching = crouching;
+                Function.Call(Hash.SET_PED_STEALTH_MOVEMENT, ped.Handle, crouching, 0);
+            }
+
+            // Fire is a mode, not a frame: START_ENTITY_FIRE on a ped that is already
+            // alight restarts the effect, so a burning player would flicker rather than
+            // burn. Both directions are applied — a player who puts themselves out has
+            // to stop burning on every other screen too, and there is no other signal
+            // that says so.
+            //
+            // A replicated ped is created fire-proof, so this is the flame and nothing
+            // else. Any health it costs is reported by the victim's own client and
+            // arbitrated by the server, exactly as a bullet is.
+            bool onFire = (command.Flags & PlayerFlags.OnFire) != 0;
+            if (state.OnFire != onFire)
+            {
+                state.OnFire = onFire;
+                Function.Call(
+                    onFire ? Hash.START_ENTITY_FIRE : Hash.STOP_ENTITY_FIRE,
+                    ped.Handle);
+            }
+
+            bool reloading = (command.Flags & PlayerFlags.Reloading) != 0;
+            if (reloading && !state.Reloading)
+            {
+                Function.Call(Hash.TASK_RELOAD_WEAPON, ped.Handle, true);
+            }
+
+            state.Reloading = reloading;
+
+            ApplyMelee(ped, in command, state);
+            ApplyCover(ped, in command, state);
+            ApplyPostureTask(ped, in command, state);
+        }
+
+        /// <summary>
+        /// Swings a remote player's fists at whoever they are actually swinging at.
+        /// <para>
+        /// <see cref="PlayerFlags.Melee"/> travelled from the first commit and was
+        /// applied by nothing, with a reason that was correct as far as it went: a
+        /// melee task needs an entity to strike, only the flag was replicated, and a
+        /// ped told to fight nobody swings at the air in a direction nobody chose.
+        /// The missing half now travels — <c>CharacterEntity.MeleeTargetId</c>, resolved
+        /// back to a local ped by the manager — so the refusal no longer applies.
+        /// </para>
+        /// <para>
+        /// Still refused when the target resolves to nothing: a player too far away to
+        /// have been built on this client, or one who has left. That is the case the
+        /// old reason described, and it is the only one left.
+        /// </para>
+        /// </summary>
+        private static void ApplyMelee(Ped ped, in RemotePedCommand command, PedDriveState state)
+        {
+            bool melee = (command.Flags & PlayerFlags.Melee) != 0 && command.MeleeTargetHandle != 0;
+
+            // Re-issued only when the target changes, for the reason every task here is:
+            // a melee task restarted every frame never lands a blow.
+            int target = melee ? command.MeleeTargetHandle : 0;
+            if (state.MeleeTarget == target)
+            {
+                return;
+            }
+
+            state.MeleeTarget = target;
+
+            try
+            {
+                if (target != 0)
+                {
+                    Function.Call(Hash.TASK_COMBAT_PED, ped.Handle, target, 0, 16);
+                }
+            }
+            catch (Exception)
+            {
+                // A script host without the native. The punch is not shown; the damage
+                // is a separate claim and reaches the server regardless.
+            }
+        }
+
+        /// <summary>
+        /// Puts a remote player into cover.
+        /// <para>
+        /// The reason recorded for not applying <see cref="PlayerFlags.InCover"/> was
+        /// that cover is a position in the world rather than a state of the ped, and
+        /// that a guessed cover point pins the ped to the wrong wall. The first half is
+        /// true and the second does not follow: the point does not have to be guessed.
+        /// A player in cover is standing at their cover, so their own replicated
+        /// position is the coordinate to search from, and it is already on the wire.
+        /// This corrects that entry rather than working around it.
+        /// </para>
+        /// <para>
+        /// What remains true is that the receiving client may find no cover there —
+        /// a prop this client does not have, or half a metre of drift onto the wrong
+        /// side of a wall. The native then does nothing, which is the same outcome as
+        /// before and not a worse one.
+        /// </para>
+        /// </summary>
+        private static void ApplyCover(Ped ped, in RemotePedCommand command, PedDriveState state)
+        {
+            bool inCover = (command.Flags & PlayerFlags.InCover) != 0;
+            if (state.InCover == inCover)
+            {
+                return;
+            }
+
+            state.InCover = inCover;
+
+            try
+            {
+                if (inCover)
+                {
+                    Function.Call(
+                        Hash.TASK_PUT_PED_DIRECTLY_INTO_COVER,
+                        ped.Handle,
+                        command.TargetPosition.X,
+                        command.TargetPosition.Y,
+                        command.TargetPosition.Z,
+                        CoverTimeoutMilliseconds,
+                        true,
+                        0f,
+                        false,
+                        false,
+                        0,
+                        false);
+                }
+                else
+                {
+                    Function.Call(Hash.CLEAR_PED_TASKS, ped.Handle);
+                    state.Reset();
+                }
+            }
+            catch (Exception)
+            {
+                // As above: not shown rather than shown wrongly.
+            }
+        }
+
+        /// <summary>
+        /// Issues the one-shot posture task <see cref="PostureDirector"/> asks for.
+        /// <para>
+        /// Jump, climb and parachute have travelled on the wire since the first commit
+        /// and were applied by nothing. The decision about *when* to issue one is in
+        /// <see cref="PostureDirector"/> where it is unit-tested; what is here is three
+        /// native calls and the fact that they can throw on a script host that does not
+        /// know one of them.
+        /// </para>
+        /// <para>
+        /// <b>Not verified against a running game.</b> No test here can run GTA V, so
+        /// these are the natives the tasks are documented to use and nothing more. If a
+        /// remote player starts hopping or hanging in mid-air, this is the block to
+        /// turn off — see ApplyRemotePosture in client.ini — and the flag table in
+        /// docs/ENTITY_SYSTEM.md records which flags are applied and which are not.
+        /// </para>
+        /// </summary>
+        private void ApplyPostureTask(Ped ped, in RemotePedCommand command, PedDriveState state)
+        {
+            if (!ApplyRemotePosture)
+            {
+                return;
+            }
+
+            PostureTask task = PostureDirector.Decide(
+                state.PostureFlags, command.Flags, settled: !command.HardCorrect);
+
+            state.PostureFlags = command.Flags;
+
+            if (task == PostureTask.None)
+            {
+                return;
+            }
+
+            try
+            {
+                switch (task)
+                {
+                    case PostureTask.Jump:
+                        Function.Call(Hash.TASK_JUMP, ped.Handle, true, false, false);
+                        break;
+
+                    case PostureTask.Climb:
+                        Function.Call(Hash.TASK_CLIMB, ped.Handle, true);
+                        break;
+
+                    case PostureTask.OpenParachute:
+                        Function.Call(Hash.TASK_PARACHUTE, ped.Handle, true, false);
+                        break;
+
+                    case PostureTask.EndParachute:
+                        // The canopy is a task, so ending it is clearing the task. The
+                        // locomotion task is re-issued on the next frame by the normal
+                        // path, which is why this does not have to restore anything.
+                        Function.Call(Hash.CLEAR_PED_TASKS, ped.Handle);
+                        state.Reset();
+                        break;
+                }
+            }
+            catch (Exception)
+            {
+                // A script host that does not know this native. The posture is then not
+                // applied, which is the behaviour that existed before this.
+            }
+        }
+
+        /// <summary>
+        /// Points a remote player's gun, and pulls the trigger when they are pulling
+        /// theirs.
+        /// <para>
+        /// Only the aim half existed. <see cref="PlayerFlags.Shooting"/> was sampled,
+        /// replicated, stored and arbitrated, and on the way out it was folded into
+        /// one boolean with <see cref="PlayerFlags.Aiming"/> — so a remote player who
+        /// was firing was tasked to aim, exactly like one who was only aiming. There
+        /// was no recoil, no fire animation and no report, because nothing ever told
+        /// the ped to shoot; the bullet was drawn past it by
+        /// <see cref="PlayRemoteShot"/> while the shooter stood still holding a gun.
+        /// </para>
+        /// <para>
+        /// The shooting task is re-issued while the flag is set, because it is a task
+        /// with a duration and a burst is many frames long. Aiming is left as it was.
+        /// </para>
+        /// </summary>
+        private static void ApplyAim(Ped ped, in RemotePedCommand command)
+        {
+            if (!command.Aiming)
+            {
+                return;
+            }
+
+            if ((command.Flags & PlayerFlags.Shooting) != 0)
+            {
+                Function.Call(
+                    Hash.TASK_SHOOT_AT_COORD,
+                    ped.Handle,
+                    command.AimPosition.X,
+                    command.AimPosition.Y,
+                    command.AimPosition.Z,
+                    ShootBurstMilliseconds,
+                    FiringPatternFullAuto);
+                return;
+            }
+
+            Function.Call(
+                Hash.TASK_AIM_GUN_AT_COORD,
+                ped.Handle,
+                command.AimPosition.X,
+                command.AimPosition.Y,
+                command.AimPosition.Z,
+                200,
+                false,
+                false);
+        }
+
+        private static void LeaveRagdoll(Ped ped, PedDriveState state)
+        {
+            if (!state.Ragdolling)
+            {
+                return;
+            }
+
+            state.Ragdolling = false;
+            Function.Call(Hash.SET_PED_CAN_RAGDOLL, ped.Handle, false);
+        }
+
+        private static void Place(Ped ped, NetVector3 position, float heading)
+        {
+            Function.Call(
+                Hash.SET_ENTITY_COORDS_NO_OFFSET, ped.Handle, position.X, position.Y, position.Z, false, false, false);
+            ped.Heading = heading;
+        }
+
+        /// <summary>
+        /// Reads the rounds the local player fired since the previous frame.
+        /// <para>
+        /// The counting lives in <see cref="ShotDetector"/>, which is unit-tested;
+        /// what is here is the two things only the game can answer — how full the clip
+        /// is, and where the round started and ended.
+        /// </para>
+        /// </summary>
+        public LocalShotSample SampleLocalShots()
+        {
+            var sample = default(LocalShotSample);
+
+            try
+            {
+                Ped ped = Game.Player.Character;
+                if (!ped.Exists() || ped.IsDead)
+                {
+                    _shots.Reset();
+                    return sample;
+                }
+
+                Weapon weapon = ped.Weapons.Current;
+                if (weapon == null || !weapon.IsPresent || !ShotDetector.IsHitscan(Classify(weapon.Group)))
+                {
+                    // A thrown grenade or a rocket is an entity that flies; drawing it
+                    // as an instant line from muzzle to impact would show everyone an
+                    // explosion arriving at the speed of light. Resetting rather than
+                    // returning zero keeps the next hitscan weapon from inheriting this
+                    // one's clip count.
+                    _shots.Reset();
+                    return sample;
+                }
+
+                uint weaponHash = unchecked((uint)weapon.Hash);
+                int rounds = _shots.Observe(weaponHash, weapon.AmmoInClip, ped.IsShooting);
+                if (rounds <= 0)
+                {
+                    return sample;
+                }
+
+                sample.Rounds = rounds;
+                sample.WeaponHash = weaponHash;
+                sample.Origin = ToNet(MuzzlePosition(ped));
+
+                // The impact is where the game's own trace landed. It is zero when the
+                // round hit nothing within range, and the aim point is then the honest
+                // answer — a tracer to the horizon rather than one to the origin.
+                Vector3 impact = ped.LastWeaponImpactPosition;
+                sample.Impact = impact == Vector3.Zero ? SampleAimPosition(ped) : ToNet(impact);
+                return sample;
+            }
+            catch (Exception)
+            {
+                return default;
+            }
+        }
+
+        /// <summary>
+        /// Reads the hits the local player landed on other players since the previous
+        /// frame, and restores every ped it touched.
+        /// <para>
+        /// <b>The damage number comes from the game, not from us.</b> It is the drop
+        /// in health plus armour that the engine itself computed, so range falloff,
+        /// body armour, weapon components and mod weapons are all already in it. The
+        /// server clamps it against its own envelope regardless — this is a claim,
+        /// and it is treated as one.
+        /// </para>
+        /// <para>
+        /// A hit the engine recorded but did not size — the damage landed on
+        /// something this bridge does not measure — is dropped rather than reported
+        /// with an invented number.
+        /// </para>
+        /// </summary>
+        public void SampleLocalHits(List<LocalHitSample> into)
+        {
+            if (_remotePeds.Count == 0)
+            {
+                return;
+            }
+
+            try
+            {
+                Ped player = Game.Player.Character;
+                if (!player.Exists())
+                {
+                    return;
+                }
+
+                uint weaponHash = 0;
+                bool melee = false;
+                Weapon weapon = player.Weapons.Current;
+                if (weapon != null && weapon.IsPresent)
+                {
+                    weaponHash = unchecked((uint)weapon.Hash);
+                    melee = weapon.Group == WeaponGroup.Melee || weapon.Group == WeaponGroup.Unarmed;
+                }
+
+                foreach (KeyValuePair<int, Ped> entry in _remotePeds)
+                {
+                    Ped ped = entry.Value;
+                    if (!ped.Exists()
+                        || !Function.Call<bool>(
+                            Hash.HAS_ENTITY_BEEN_DAMAGED_BY_ENTITY, ped.Handle, player.Handle, true))
+                    {
+                        continue;
+                    }
+
+                    Function.Call(Hash.CLEAR_ENTITY_LAST_DAMAGE_ENTITY, ped.Handle);
+
+                    if (!_driveState.TryGetValue(entry.Key, out PedDriveState state) || state.AppliedHealth < 0)
+                    {
+                        continue;
+                    }
+
+                    int damage = (state.AppliedHealth + state.AppliedArmor) - (ped.Health + ped.Armor);
+
+                    // Put it back before the local game can act on it. The server owns
+                    // this ped's health; what happened here was a measurement.
+                    ped.Health = state.AppliedHealth;
+                    ped.Armor = state.AppliedArmor;
+
+                    if (damage <= 0)
+                    {
+                        continue;
+                    }
+
+                    into.Add(new LocalHitSample
+                    {
+                        PedHandle = entry.Key,
+                        WeaponHash = weaponHash,
+                        Damage = damage,
+                        HitPosition = ToNet(ped.Position),
+                        HitBone = LastDamagedBone(ped),
+                        IsMelee = melee,
+                    });
+                }
+            }
+            catch (Exception exception)
+            {
+                _log.Error(LogCategory.Client, "Could not read local hits.", exception);
+            }
+        }
+
+        /// <summary>
+        /// Which bone the game recorded as last damaged, or -1 when it recorded none.
+        /// The server uses it for hit-location logic; an invented value would be worse
+        /// than an absent one.
+        /// </summary>
+        private static short LastDamagedBone(Ped ped)
+        {
+            try
+            {
+                PedBone bone = ped.Bones.LastDamaged;
+                return bone.IsValid ? unchecked((short)bone.Index) : (short)-1;
+            }
+            catch (Exception)
+            {
+                return -1;
+            }
+        }
+
+        public void PlayRemoteShot(int pedHandle, uint weaponHash, NetVector3 origin, NetVector3 impact)
+        {
+            if (!_remotePeds.TryGetValue(pedHandle, out Ped ped) || !ped.Exists())
+            {
+                return;
+            }
+
+            try
+            {
+                if (_shotAsset?.Hash != unchecked((int)weaponHash))
+                {
+                    _shotAsset?.MarkAsNoLongerNeeded();
+                    _shotAsset = new WeaponAsset(weaponHash);
+                }
+
+                // Request is asynchronous; the first shot with a newly seen weapon is
+                // dropped rather than drawn with the wrong model.
+                if (!_shotAsset.Value.IsLoaded)
+                {
+                    _shotAsset.Value.Request();
+                    return;
+                }
+
+                // Damage zero, deliberately and permanently. The hit is arbitrated by
+                // the server from the shooter's own damage report; a rendered bullet
+                // that also wounded would count one trigger pull once per client that
+                // drew it.
+                // The origin on the wire is a world coordinate read from the shooter's
+                // muzzle on the shooter's machine. On this machine that player's ped is
+                // an interpolation delay behind and somewhere slightly else, so drawing
+                // from the transmitted point puts the round beside the ped that fired
+                // it — which is what "the shot appears above his head" was. The
+                // direction is the shooter's; the muzzle is ours.
+                NetVector3 muzzle = ToNet(MuzzlePosition(ped));
+                GtaWorld.ShootBullet(ToGame(muzzle), ToGame(impact), ped, _shotAsset.Value, 0, -1f);
+                PlayMuzzleFlash(ped, muzzle);
+            }
+            catch (Exception)
+            {
+                // A weapon model this client does not have. The shot is silently not
+                // drawn, which is what a missing mod costs here.
+            }
+        }
+
+        /// <summary>
+        /// The muzzle flash. Drawn separately because <c>ShootBullet</c> renders the
+        /// round and its impact but nothing at the barrel.
+        /// <para>
+        /// The effect names are Rockstar's own, taken from the weapon groups. They are
+        /// **not verified against a running game** — an unknown name produces no
+        /// effect rather than an error, so a wrong one here costs a flash and nothing
+        /// else.
+        /// </para>
+        /// </summary>
+        private void PlayMuzzleFlash(Ped ped, NetVector3 origin)
+        {
+            if (!_muzzleAsset.IsLoaded)
+            {
+                _muzzleAsset.Request();
+                return;
+            }
+
+            Prop weaponObject = ped.Weapons.CurrentWeaponObject;
+            Vector3 rotation = weaponObject != null && weaponObject.Exists() ? weaponObject.Rotation : ped.Rotation;
+
+            GtaWorld.CreateParticleEffectNonLooped(
+                _muzzleAsset, MuzzleEffect(ped.Weapons.Current?.Group ?? WeaponGroup.Unarmed),
+                ToGame(origin), rotation, 1f);
+        }
+
+        private static string MuzzleEffect(WeaponGroup group) => group switch
+        {
+            WeaponGroup.Pistol => "muz_pistol",
+            WeaponGroup.SMG => "muz_smg",
+            WeaponGroup.Shotgun => "muz_shotgun",
+            WeaponGroup.Sniper => "muz_sniper_rifle",
+            WeaponGroup.MG => "muz_minigun",
+            _ => "muz_assault_rifle",
+        };
+
+        /// <summary>
+        /// Where the round leaves the weapon. The weapon model carries a
+        /// <c>gun_muzzle</c> bone; a weapon whose model has not streamed in yet does
+        /// not, and the firing hand is close enough that the difference is a few
+        /// centimetres over a shot that may be a hundred metres long.
+        /// </summary>
+        private static Vector3 MuzzlePosition(Ped ped)
+        {
+            Prop weaponObject = ped.Weapons.CurrentWeaponObject;
+            if (weaponObject != null && weaponObject.Exists() && weaponObject.Bones.Contains("gun_muzzle"))
+            {
+                return weaponObject.Bones["gun_muzzle"].Position;
+            }
+
+            return ped.Bones[Bone.SkelRightHand].Position + (ped.ForwardVector * 0.4f);
+        }
+
+        /// <summary>
+        /// What a weapon sends downrange, from its group.
+        /// <para>
+        /// Groups rather than a hash list because a hash list cannot classify a
+        /// weapon added by a mod. `Heavy` is excluded even though a railgun in it is
+        /// hitscan: the same group holds the rocket and grenade launchers, and
+        /// drawing a rocket as an instant line is a worse error than not drawing a
+        /// railgun at all.
+        /// </para>
+        /// </summary>
+        private static WeaponClass Classify(WeaponGroup group) => group switch
+        {
+            WeaponGroup.Pistol => WeaponClass.Hitscan,
+            WeaponGroup.SMG => WeaponClass.Hitscan,
+            WeaponGroup.AssaultRifle => WeaponClass.Hitscan,
+            WeaponGroup.MG => WeaponClass.Hitscan,
+            WeaponGroup.Shotgun => WeaponClass.Hitscan,
+            WeaponGroup.Sniper => WeaponClass.Hitscan,
+            WeaponGroup.Thrown => WeaponClass.Projectile,
+            WeaponGroup.Heavy => WeaponClass.Projectile,
+            _ => WeaponClass.None,
+        };
+
+        /// <summary>
+        /// Applies a networked NPC's relationship group.
+        /// <para>
+        /// Every remote ped is created in the local player's own relationship group,
+        /// which is right for another player and wrong for an NPC: a callout's suspect
+        /// arrived over the network flagged hostile and every client quietly made it an
+        /// ally of the person it was sent to threaten. The hash travelled in
+        /// <c>PedEntity.RelationshipGroupHash</c> from the first version of the entity
+        /// and reached nothing.
+        /// </para>
+        /// <para>
+        /// This changes only how <i>others</i> treat the ped. What it does itself still
+        /// comes from the server: <c>BlockPermanentEvents</c> and the blocking of
+        /// non-temporary events stay on, so a hostile group does not hand the local
+        /// game the ped's decisions back.
+        /// </para>
+        /// </summary>
+        public void SetRemotePedRelationshipGroup(int handle, uint relationshipGroupHash)
+        {
+            if (!_remotePeds.TryGetValue(handle, out Ped ped) || !ped.Exists())
+            {
+                return;
+            }
+
+            // RelationshipGroup converts implicitly from the raw hash; there is no
+            // conversion back to an integer, so this goes through the typed property
+            // rather than the native.
+            ped.RelationshipGroup = relationshipGroupHash == 0
+                ? Game.Player.Character.RelationshipGroup
+                : relationshipGroupHash;
+        }
+
+        public void ApplyRemotePedAppearance(int handle, PedAppearance appearance)
+        {
+            if (!_remotePeds.TryGetValue(handle, out Ped ped) || !ped.Exists())
+            {
+                return;
+            }
+
+            for (int slot = 0; slot < PedAppearance.ComponentSlots; slot++)
+            {
+                PedAppearance.ComponentVariation component = appearance.GetComponent(slot);
+                Function.Call(
+                    Hash.SET_PED_COMPONENT_VARIATION,
+                    ped.Handle,
+                    slot,
+                    (int)component.Drawable,
+                    (int)component.Texture,
+                    (int)component.Palette);
+            }
+
+            for (int slot = 0; slot < PedAppearance.PropSlots; slot++)
+            {
+                PedAppearance.PropVariation prop = appearance.GetProp(slot);
+                if (prop.IsEmpty)
+                {
+                    Function.Call(Hash.CLEAR_PED_PROP, ped.Handle, slot);
+                    continue;
+                }
+
+                Function.Call(Hash.SET_PED_PROP_INDEX, ped.Handle, slot, (int)prop.Drawable, (int)prop.Texture, true);
+            }
+        }
+
+        /// <summary>
+        /// Draws a remote player's map blip and the name over their head.
+        /// <para>
+        /// The blip is attached to the ped, so the game moves it; only its colour is
+        /// written, and only when it changes. The name is immediate-mode — drawn from
+        /// scratch every frame between <c>SET_DRAW_ORIGIN</c> and
+        /// <c>CLEAR_DRAW_ORIGIN</c>, which is what projects a screen-space string onto
+        /// a world position.
+        /// </para>
+        /// </summary>
+        public void ApplyPlayerMarker(int pedHandle, in PlayerMarker marker)
+        {
+            if (!_remotePeds.TryGetValue(pedHandle, out Ped ped) || !ped.Exists())
+            {
+                RemovePlayerBlip(pedHandle);
+                return;
+            }
+
+            try
+            {
+                ApplyBlip(pedHandle, ped, in marker);
+
+                if (marker.ShowName && !string.IsNullOrEmpty(marker.Name))
+                {
+                    DrawNameTag(ped, marker.Name, PlayerMarkers.NameOpacity(marker.Distance));
+                }
+            }
+            catch (Exception)
+            {
+                // A blip or a text command that failed this frame. It is redrawn on the
+                // next one, and a marker is never worth an exception reaching the game.
+            }
+        }
+
+        private void ApplyBlip(int pedHandle, Ped ped, in PlayerMarker marker)
+        {
+            _blips.TryGetValue(pedHandle, out BlipRecord record);
+
+            if (!marker.ShowBlip)
+            {
+                RemovePlayerBlip(pedHandle);
+                return;
+            }
+
+            if (record.Handle == 0 || !Function.Call<bool>(Hash.DOES_BLIP_EXIST, record.Handle))
+            {
+                int blip = Function.Call<int>(Hash.ADD_BLIP_FOR_ENTITY, ped.Handle);
+                if (blip == 0)
+                {
+                    return;
+                }
+
+                Function.Call(Hash.SET_BLIP_SPRITE, blip, PlayerBlipSprite);
+                Function.Call(Hash.SET_BLIP_SCALE, blip, 0.85f);
+                Function.Call(Hash.SHOW_HEADING_INDICATOR_ON_BLIP, blip, true);
+                // Through NativeDraw's pinning, not by handing SHVDN a string: its
+                // string marshalling is part of the layer that dies on an unsupported
+                // game build. See NativeDraw for the whole story.
+                try
+                {
+                    Function.Call(Hash.BEGIN_TEXT_COMMAND_SET_BLIP_NAME, Interop.NativeString.Arg("STRING"));
+                    foreach (InputArgument component in Interop.NativeString.Components(marker.Name ?? string.Empty))
+                    {
+                        Function.Call(Hash.ADD_TEXT_COMPONENT_SUBSTRING_PLAYER_NAME, component);
+                    }
+
+                    Function.Call(Hash.END_TEXT_COMMAND_SET_BLIP_NAME, blip);
+                }
+                finally
+                {
+                    Interop.NativeString.Release();
+                }
+
+                record = new BlipRecord(blip, -1);
+            }
+
+            // Colour on change only. Rewriting it every frame is a native call per
+            // player per frame that says nothing new.
+            if (record.Colour != marker.BlipColour)
+            {
+                Function.Call(Hash.SET_BLIP_COLOUR, record.Handle, marker.BlipColour);
+                record = new BlipRecord(record.Handle, marker.BlipColour);
+            }
+
+            _blips[pedHandle] = record;
+        }
+
+        private void RemovePlayerBlip(int pedHandle)
+        {
+            if (!_blips.TryGetValue(pedHandle, out BlipRecord record))
+            {
+                return;
+            }
+
+            _blips.Remove(pedHandle);
+            if (record.Handle == 0)
+            {
+                return;
+            }
+
+            // Through the wrapper rather than the native: REMOVE_BLIP takes the handle
+            // by pointer, which would make this the only unsafe block in the project.
+            var blip = new Blip(record.Handle);
+            if (blip.Exists())
+            {
+                blip.Delete();
+            }
+        }
+
+        /// <summary>
+        /// The floating name. Drawn a little above the ped's head so it does not sit
+        /// inside the model, and faded with distance so it thins out rather than
+        /// vanishing at a threshold.
+        /// </summary>
+        private static void DrawNameTag(Ped ped, string name, float opacity)
+        {
+            if (opacity <= 0f)
+            {
+                return;
+            }
+
+            Vector3 head = ped.Bones[Bone.SkelHead].Position;
+            Function.Call(Hash.SET_DRAW_ORIGIN, head.X, head.Y, head.Z + NameTagHeight, 0);
+            Function.Call(Hash.SET_TEXT_FONT, 4);
+            Function.Call(Hash.SET_TEXT_SCALE, 0.3f, 0.3f);
+            Function.Call(Hash.SET_TEXT_CENTRE, true);
+            Function.Call(Hash.SET_TEXT_OUTLINE);
+            Function.Call(Hash.SET_TEXT_COLOUR, 255, 255, 255, (int)(opacity * 255f));
+
+            // Strings pinned here rather than converted by ScriptHookVDotNet: a name in
+            // Cyrillic is also why the split is counted in bytes and not characters.
+            try
+            {
+                Function.Call(Hash.BEGIN_TEXT_COMMAND_DISPLAY_TEXT, Interop.NativeString.Arg("STRING"));
+                foreach (InputArgument component in Interop.NativeString.Components(name))
+                {
+                    Function.Call(Hash.ADD_TEXT_COMPONENT_SUBSTRING_PLAYER_NAME, component);
+                }
+
+                Function.Call(Hash.END_TEXT_COMMAND_DISPLAY_TEXT, 0f, 0f);
+            }
+            finally
+            {
+                Interop.NativeString.Release();
+            }
+
+            Function.Call(Hash.CLEAR_DRAW_ORIGIN);
+        }
+
+        public void DestroyRemotePed(int handle)
+        {
+            RemovePlayerBlip(handle);
+
+            _driveState.Remove(handle);
+            if (!_remotePeds.TryGetValue(handle, out Ped ped))
+            {
+                return;
+            }
+
+            _remotePeds.Remove(handle);
+            try
+            {
+                if (ped.Exists())
+                {
+                    ped.MarkAsNoLongerNeeded();
+                    ped.Delete();
+                }
+            }
+            catch (Exception exception)
+            {
+                _log.Warning(LogCategory.Client, $"Could not delete remote ped {handle}: {exception.Message}");
+            }
+        }
+
+        public bool IsRemotePedValid(int handle) =>
+            handle != 0 && _remotePeds.TryGetValue(handle, out Ped ped) && ped.Exists();
+
+        // ------------------------------------------------------------------
+        // Vehicles and objects — delegated so this file stays about peds
+        // ------------------------------------------------------------------
+        public int CreateRemoteVehicle(uint modelHash, NetVector3 position, float heading) =>
+            _vehicles.CreateRemoteVehicle(modelHash, position, heading);
+
+        public void ApplyRemoteVehicle(
+            int handle, in RemoteVehicleFrame frame, int trailerHandle, int attachedToHandle) =>
+            _vehicles.ApplyRemoteVehicle(handle, in frame, trailerHandle, attachedToHandle);
+
+        public int GetVehicleAttachedTo(int handle) => _vehicles.GetVehicleAttachedTo(handle);
+
+        public void ApplyRemoteVehicleAppearance(int handle, VehicleEntity state) =>
+            _vehicles.ApplyRemoteVehicleAppearance(handle, state);
+
+        public bool TryReadVehicle(int handle, VehicleEntity into) => _vehicles.TryReadVehicle(handle, into);
+
+        public void DestroyRemoteVehicle(int handle) => _vehicles.DestroyRemoteVehicle(handle);
+
+        public bool IsRemoteVehicleValid(int handle) => _vehicles.IsRemoteVehicleValid(handle);
+
+        public int GetLocalPlayerVehicleHandle() => _vehicles.GetLocalPlayerVehicleHandle();
+
+        public uint GetVehicleModel(int handle) => _vehicles.GetVehicleModel(handle);
+
+        public void PlayVehicleExplosion(int vehicleHandle) => _vehicles.PlayVehicleExplosion(vehicleHandle);
+
+        public int CreateRemoteObject(uint modelHash, NetVector3 position, float heading) =>
+            _vehicles.CreateRemoteObject(modelHash, position, heading);
+
+        public void ApplyRemoteObject(int handle, ObjectEntity state, int attachParentHandle) =>
+            _vehicles.ApplyRemoteObject(handle, state, attachParentHandle);
+
+        public void DestroyRemoteObject(int handle) => _vehicles.DestroyRemoteObject(handle);
+
+        public bool IsRemoteObjectValid(int handle) => _vehicles.IsRemoteObjectValid(handle);
+
+        // ------------------------------------------------------------------
+        // World
+        // ------------------------------------------------------------------
+        public void SetWeather(uint weatherHash, uint nextWeatherHash, float transition)
+        {
+            if (!WeatherCatalog.TryGetName(weatherHash, out string name))
+            {
+                // A weather type from a mod this client does not have. Leaving the
+                // local weather alone is better than snapping it to a wrong value.
+                return;
+            }
+
+            if (!TryParseWeather(name, out Weather weather))
+            {
+                return;
+            }
+
+            if (nextWeatherHash != 0
+                && WeatherCatalog.TryGetName(nextWeatherHash, out string nextName)
+                && TryParseWeather(nextName, out Weather next)
+                && transition > 0f)
+            {
+                if (GtaWorld.Weather != weather)
+                {
+                    GtaWorld.Weather = weather;
+                }
+
+                GtaWorld.TransitionToWeather(next, transition);
+                return;
+            }
+
+            if (GtaWorld.Weather != weather)
+            {
+                GtaWorld.Weather = weather;
+            }
+        }
+
+        public void SetClock(int hours, int minutes, int seconds)
+        {
+            TimeSpan target = new TimeSpan(hours, minutes, seconds);
+            TimeSpan current = GtaWorld.CurrentTimeOfDay;
+
+            // Writing the clock every frame makes the sky flicker; only correct when
+            // the local clock has drifted more than a few in-game seconds.
+            if (Math.Abs((target - current).TotalSeconds) > 20d)
+            {
+                GtaWorld.CurrentTimeOfDay = target;
+            }
+        }
+
+        /// <summary>
+        /// Wind, written on change only.
+        /// <para>
+        /// Both were replicated from the first version of <c>WorldEnvironment</c> and
+        /// neither was ever applied: every client ran whatever wind its own game had
+        /// picked, so the same storm blew different ways for different players.
+        /// </para>
+        /// <para>
+        /// The comparison is against what the game currently reports rather than
+        /// against what was last written, because a script or a weather change can
+        /// move the wind behind us and the next equal value would then be skipped.
+        /// </para>
+        /// </summary>
+        public void SetWind(float speed, float directionDegrees)
+        {
+            try
+            {
+                if (Math.Abs(Function.Call<float>(Hash.GET_WIND_SPEED) - speed) > 0.05f)
+                {
+                    Function.Call(Hash.SET_WIND_SPEED, speed);
+                }
+
+                float wanted = WrapDegrees(directionDegrees);
+                float current = WrapDegrees(Function.Call<float>(Hash.GET_WIND_DIRECTION));
+                if (Math.Abs(AngleDifference(wanted, current)) > 1f)
+                {
+                    Function.Call(Hash.SET_WIND_DIRECTION, wanted);
+                }
+            }
+            catch (Exception exception)
+            {
+                _log.Error(LogCategory.Client, "Could not apply the replicated wind.", exception);
+            }
+        }
+
+        public void SetBlackout(bool blackout)
+        {
+            if (_blackout == blackout)
+            {
+                return;
+            }
+
+            _blackout = blackout;
+            Function.Call(Hash.SET_ARTIFICIAL_LIGHTS_STATE, blackout);
+        }
+
+        private static float WrapDegrees(float degrees)
+        {
+            float wrapped = degrees % 360f;
+            return wrapped < 0f ? wrapped + 360f : wrapped;
+        }
+
+        /// <summary>Signed difference between two headings, taking the short way round.</summary>
+        private static float AngleDifference(float a, float b) => ((a - b) % 360f + 540f) % 360f - 180f;
+
+        public void ShowNotification(string text) => Ui.NativeDraw.Notify(text);
+
+        public void ShowSubtitle(string text, int durationMilliseconds) =>
+            Ui.NativeDraw.Subtitle(text, durationMilliseconds);
+
+        /// <summary>Removes every replicated ped. Called when the session ends or the script aborts.</summary>
+        public void CleanUp()
+        {
+            foreach (Ped ped in _remotePeds.Values)
+            {
+                try
+                {
+                    if (ped.Exists())
+                    {
+                        ped.MarkAsNoLongerNeeded();
+                        ped.Delete();
+                    }
+                }
+                catch (Exception)
+                {
+                    // Best effort during teardown.
+                }
+            }
+
+            _remotePeds.Clear();
+            _driveState.Clear();
+            _vehicles.CleanUp();
+        }
+
+        // ------------------------------------------------------------------
+        private static MovementState SampleMovement(Ped ped)
+        {
+            if (ped.IsSprinting)
+            {
+                return MovementState.Sprint;
+            }
+
+            if (ped.IsRunning)
+            {
+                return MovementState.Run;
+            }
+
+            return ped.IsWalking ? MovementState.Walk : MovementState.Idle;
+        }
+
+        private static PlayerFlags SampleFlags(Ped ped)
+        {
+            PlayerFlags flags = PlayerFlags.None;
+
+            if (ped.IsDucking)
+            {
+                flags |= PlayerFlags.Crouching;
+            }
+
+            if (ped.IsSprinting)
+            {
+                flags |= PlayerFlags.Sprinting;
+            }
+
+            if (ped.IsJumping)
+            {
+                flags |= PlayerFlags.Jumping;
+            }
+
+            if (ped.IsFalling)
+            {
+                flags |= PlayerFlags.Falling;
+            }
+
+            if (ped.IsSwimming)
+            {
+                flags |= PlayerFlags.Swimming;
+            }
+
+            if (ped.IsSwimmingUnderWater)
+            {
+                flags |= PlayerFlags.Diving;
+            }
+
+            if (ped.IsClimbing || ped.IsVaulting)
+            {
+                flags |= PlayerFlags.Climbing;
+            }
+
+            if (ped.IsRagdoll)
+            {
+                flags |= PlayerFlags.Ragdoll;
+            }
+
+            if (ped.IsDead)
+            {
+                flags |= PlayerFlags.Dead;
+            }
+
+            if (Game.Player.IsAiming)
+            {
+                flags |= PlayerFlags.Aiming;
+            }
+
+            if (ped.IsShooting)
+            {
+                flags |= PlayerFlags.Shooting;
+            }
+
+            if (ped.IsReloading)
+            {
+                flags |= PlayerFlags.Reloading;
+            }
+
+            if (ped.IsInVehicle())
+            {
+                flags |= PlayerFlags.InVehicle;
+            }
+
+            if (ped.IsGettingIntoVehicle)
+            {
+                flags |= PlayerFlags.EnteringVehicle;
+            }
+
+            if (ped.IsInCover)
+            {
+                flags |= PlayerFlags.InCover;
+            }
+
+            if (ped.IsInvincible)
+            {
+                flags |= PlayerFlags.Invincible;
+            }
+
+            if (ped.IsOnFire)
+            {
+                flags |= PlayerFlags.OnFire;
+            }
+
+            return flags;
+        }
+
+        private static bool TryParseWeather(string name, out Weather weather)
+        {
+            switch (name)
+            {
+                case "EXTRASUNNY": weather = Weather.ExtraSunny; return true;
+                case "CLEAR": weather = Weather.Clear; return true;
+                case "CLOUDS": weather = Weather.Clouds; return true;
+                case "SMOG": weather = Weather.Smog; return true;
+                case "FOGGY": weather = Weather.Foggy; return true;
+                case "OVERCAST": weather = Weather.Overcast; return true;
+                case "RAIN": weather = Weather.Raining; return true;
+                case "THUNDER": weather = Weather.ThunderStorm; return true;
+                case "CLEARING": weather = Weather.Clearing; return true;
+                case "NEUTRAL": weather = Weather.Neutral; return true;
+                case "SNOW": weather = Weather.Snowing; return true;
+                case "BLIZZARD": weather = Weather.Blizzard; return true;
+                case "SNOWLIGHT": weather = Weather.Snowlight; return true;
+                case "XMAS": weather = Weather.Christmas; return true;
+                case "HALLOWEEN": weather = Weather.Halloween; return true;
+                default: weather = Weather.Clear; return false;
+            }
+        }
+
+        private static int Clamp(int value, int min, int max) => value < min ? min : (value > max ? max : value);
+
+        private static NetVector3 ToNet(Vector3 value) => new NetVector3(value.X, value.Y, value.Z);
+
+        private static Vector3 ToGame(NetVector3 value) => new Vector3(value.X, value.Y, value.Z);
+
+        /// <summary>A blip handle and the colour last written to it.</summary>
+        private readonly struct BlipRecord
+        {
+            public BlipRecord(int handle, int colour)
+            {
+                Handle = handle;
+                Colour = colour;
+            }
+
+            public int Handle { get; }
+
+            public int Colour { get; }
+        }
+
+        /// <summary>Per-ped bookkeeping so tasks are issued on change rather than every frame.</summary>
+        private sealed class PedDriveState
+        {
+            public bool Tasked;
+            public NetVector3 TaskTarget;
+            public float TaskBlend;
+            /// <summary>Stealth movement is a mode, so it is written on change rather than every frame.</summary>
+            public bool Crouching;
+
+            /// <summary>Alight or not, written on change for the same reason.</summary>
+            public bool OnFire;
+
+            /// <summary>Whether the reload task has already been issued for the reload in progress.</summary>
+            public bool Reloading;
+
+            /// <summary>
+            /// The posture flags this ped was last driven with, so a jump, a climb or
+            /// a parachute is issued on the transition into it and not every frame
+            /// while it lasts. Re-issuing a one-shot task every frame restarts it, and
+            /// a task that restarts sixty times a second never plays.
+            /// </summary>
+            public PlayerFlags PostureFlags;
+
+            /// <summary>The ped this one was last told to fight, so the task is not restarted every frame.</summary>
+            public int MeleeTarget;
+
+            /// <summary>Whether this ped has been put into cover, written on change for the same reason.</summary>
+            public bool InCover;
+
+            /// <summary>The vehicle and seat this ped was last put into, so it is not re-seated every frame.</summary>
+            public int SeatedVehicle;
+
+            public sbyte SeatedIndex = -2;
+
+            public bool Ragdolling;
+
+            /// <summary>
+            /// Frames since this ped started ragdolling. The first few are left to the
+            /// local solver — see <see cref="RagdollDriver.SettleFrames"/>.
+            /// </summary>
+            public int RagdollFrames;
+            public bool WasDead;
+
+            /// <summary>Health and armour as last written from the server, so a hit can be measured as a drop from them.</summary>
+            public int AppliedHealth = -1;
+
+            public int AppliedArmor;
+
+            /// <summary>
+            /// The weapon last actually given to this ped, so the natives are called on
+            /// a change and not on every frame. Unset until the first apply, which is
+            /// why it is nullable rather than 0: 0 is unarmed, a real value that must be
+            /// applied once like any other.
+            /// </summary>
+            public uint? AppliedWeapon;
+
+            /// <summary>Tint and components last actually fitted, so the natives fire on a change.</summary>
+            public byte AppliedTint;
+
+            public uint AppliedComponentsWeapon;
+
+            public List<uint> AppliedComponents { get; } = new List<uint>();
+
+            public void Reset()
+            {
+                Tasked = false;
+                TaskTarget = NetVector3.Zero;
+                TaskBlend = -1f;
+            }
+        }
+    }
+}

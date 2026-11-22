@@ -1,0 +1,13 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <!-- net48 is what ships; netstandard2.0 exists so the net8.0 test project can
+         reference the adapter and exercise it without a Windows game process. -->
+    <TargetFrameworks>net48;netstandard2.0</TargetFrameworks>
+    <RootNamespace>Gtamp.Adapters.Rph</RootNamespace>
+    <AssemblyName>Gtamp.Adapters.Rph</AssemblyName>
+  </PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="..\Gtamp.Shared\Gtamp.Shared.csproj" />
+    <ProjectReference Include="..\Gtamp.Client.Core\Gtamp.Client.Core.csproj" />
+  </ItemGroup>
+</Project>

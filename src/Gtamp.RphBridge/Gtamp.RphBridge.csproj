@@ -1,0 +1,17 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>net48</TargetFramework>
+    <RootNamespace>Gtamp.RphBridge</RootNamespace>
+    <AssemblyName>Gtamp.RphBridge</AssemblyName>
+    <PlatformTarget>x64</PlatformTarget>
+  </PropertyGroup>
+  <ItemGroup>
+    <!-- This assembly is loaded by RAGE Plugin Hook and by nothing else, so a
+         compile-time reference to it is correct here. The multiplayer client never
+         references this project; it talks to it over the in-process channel. -->
+    <PackageReference Include="RagePluginHook" Version="1.124.0" />
+  </ItemGroup>
+  <ItemGroup>
+    <ProjectReference Include="..\Gtamp.Shared\Gtamp.Shared.csproj" />
+  </ItemGroup>
+</Project>

@@ -1,0 +1,67 @@
+# The whole solution builds and the whole suite runs on Linux, the net48 GTA V
+# client included -- Microsoft.NETFramework.ReferenceAssemblies supplies the
+# reference assemblies, so no Windows runner is needed to compile against .NET
+# Framework 4.8. What still cannot run anywhere but a real machine with GTA V is
+# named in docs/ROADMAP.md; CI does not pretend to cover it.
+name: CI
+
+# push is limited to main so a branch with an open pull request is not built
+# twice for the same commit -- the pull_request trigger already covers it.
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  DOTNET_CLI_TELEMETRY_OPTOUT: 1
+  DOTNET_NOLOGO: 1
+  DOTNET_SKIP_FIRST_TIME_EXPERIENCE: 1
+
+jobs:
+  build-and-test:
+    name: Build and test
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install the .NET SDK
+        uses: actions/setup-dotnet@v4
+        with:
+          # global.json pins the 8.0 band, so this must supply an 8.0.x SDK: the
+          # runner image also carries a newer one, and without the pin the build
+          # silently used it and compiled the code as a newer C#.
+          dotnet-version: '8.0.x'
+
+      - name: Restore
+        run: dotnet restore Gtamp.sln
+
+      # -warnaserror is the point of this step. The README claims a zero-warning
+      # build; without this the claim decays the first time someone lands a
+      # warning nobody scrolls up far enough to see.
+      - name: Build (warnings are errors)
+        run: dotnet build Gtamp.sln -c Release --no-restore -warnaserror
+
+      - name: Test
+        run: >
+          dotnet test tests/Gtamp.Tests/Gtamp.Tests.csproj
+          -c Release --no-build
+          --logger "console;verbosity=normal"
+          --logger "trx;LogFileName=results.trx"
+          --results-directory artifacts/test-results
+
+      - name: Check the documentation against the code
+        run: python3 tools/check-docs.py
+
+      - name: Upload test results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-results
+          path: artifacts/test-results
+          if-no-files-found: warn

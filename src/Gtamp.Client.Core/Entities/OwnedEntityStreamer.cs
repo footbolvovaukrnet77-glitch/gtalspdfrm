@@ -1,0 +1,495 @@
+using System;
+using System.Collections.Generic;
+using Gtamp.Client.Core;
+using Gtamp.Shared.Diagnostics;
+using Gtamp.Shared.Entities;
+using Gtamp.Shared.Net;
+using Gtamp.Shared.Protocol;
+using Gtamp.Shared.World;
+
+namespace Gtamp.Client.Entities
+{
+    /// <summary>
+    /// Registers the things this client creates with the server, and streams the
+    /// state of the ones it owns.
+    /// <para>
+    /// A client cannot invent an entity id — ids belong to the server, and a client
+    /// choosing its own could collide with another player's. So it describes what it
+    /// made, correlates the answer by tag, and only then starts reporting state.
+    /// </para>
+    /// </summary>
+    public sealed class OwnedEntityStreamer
+    {
+        /// <summary>Give up on a spawn request that has not been answered in this long, and ask again.</summary>
+        public const double SpawnRequestTimeout = 3.0;
+
+        /// <summary>
+        /// How long a handle the server refused is left alone before being offered again.
+        /// <para>
+        /// A refusal was removed from the pending list and otherwise forgotten, so the
+        /// next offer tick asked again, and the tick after that. A real session shows
+        /// "you already own 32 entities, which is the per-player limit" arriving from
+        /// one client twenty times a second for fifteen seconds -- several hundred
+        /// reliable messages, each one answered, none of which could ever succeed,
+        /// because the condition that caused the refusal does not change on its own in
+        /// fifty milliseconds.
+        /// </para>
+        /// <para>
+        /// Ten seconds is long enough that the storm is gone and short enough that a
+        /// player who drops a car and frees up room gets it back without reconnecting.
+        /// </para>
+        /// </summary>
+        public const double SpawnRefusalCooldown = 10.0;
+
+        private readonly IGameBridge _bridge;
+        private readonly LogBus _log;
+        private readonly EntityRegistry _registry;
+
+        /// <summary>
+        /// How long an owned entity may be missing from the replicated view before the
+        /// client gives up on it.
+        /// <para>
+        /// The server's acceptance is reliable and its snapshots are not, so the id
+        /// routinely arrives before the entity does. Forgetting on the first miss would
+        /// make the client re-request a spawn it already has — and the server, having
+        /// no way to tell the retry from a new vehicle, would create a duplicate.
+        /// </para>
+        /// </summary>
+        public const double MissingEntityGrace = 5.0;
+
+        private readonly Dictionary<EntityId, int> _ownedHandles = new Dictionary<EntityId, int>();
+        private readonly Dictionary<EntityId, double> _lastSeenInView = new Dictionary<EntityId, double>();
+        private readonly Dictionary<uint, PendingSpawn> _pending = new Dictionary<uint, PendingSpawn>();
+        private readonly Dictionary<int, EntityId> _handleToEntity = new Dictionary<int, EntityId>();
+        private readonly Dictionary<int, double> _refusedUntil = new Dictionary<int, double>();
+        private double _now;
+        private readonly List<EntityId> _removalBuffer = new List<EntityId>();
+
+        private uint _nextRequestTag = 1;
+        private double _lastStreamTime;
+
+        public OwnedEntityStreamer(IGameBridge bridge, EntityRegistry registry, LogBus log)
+        {
+            _bridge = bridge ?? throw new ArgumentNullException(nameof(bridge));
+            _registry = registry ?? throw new ArgumentNullException(nameof(registry));
+            _log = log ?? throw new ArgumentNullException(nameof(log));
+        }
+
+        public uint LocalPlayerId { get; set; }
+
+        /// <summary>Sends a message to the server. Injected so this class does not know about the connection.</summary>
+        public Action<NetMessageType, byte[], DeliveryMethod>? Send { get; set; }
+
+        public int OwnedCount => _ownedHandles.Count;
+
+        public int PendingSpawnCount => _pending.Count;
+
+        public int SpawnsRequested { get; private set; }
+
+        public int SpawnsRejected { get; private set; }
+
+        /// <summary>Updates sent as a delta rather than as full state.</summary>
+        public int DeltaUpdatesSent { get; private set; }
+
+        public int FullUpdatesSent { get; private set; }
+
+        /// <summary>Game handle of the entity this client owns, or 0.</summary>
+        public bool TryGetHandle(EntityId id, out int handle) => _ownedHandles.TryGetValue(id, out handle);
+
+        /// <summary>Whether this client already holds a game handle on the server's behalf.</summary>
+        public bool OwnsHandle(int handle) => _handleToEntity.ContainsKey(handle);
+
+        /// <summary>
+        /// Notices the local player has got into a vehicle the server does not know
+        /// about, and asks the server to adopt it.
+        /// </summary>
+        public void RegisterLocalVehicleIfNeeded(EntitySnapshotView view, double now)
+        {
+            int handle = _bridge.GetLocalPlayerVehicleHandle();
+            if (handle == 0)
+            {
+                return;
+            }
+
+            RegisterVehicle(handle, view, now);
+        }
+
+        /// <summary>
+        /// Offers one vehicle this client's game created to the server, if it has not
+        /// been offered already.
+        /// <para>
+        /// Split out of <see cref="RegisterLocalVehicleIfNeeded"/> when ambient traffic
+        /// began being shared: the car the player is sitting in and the car parked
+        /// behind them reach the server the same way, and the only difference is what
+        /// decides to offer them.
+        /// </para>
+        /// </summary>
+        public void RegisterVehicle(int handle, EntitySnapshotView view, double now, bool ambient = false)
+        {
+            if (handle == 0)
+            {
+                return;
+            }
+
+            if (_handleToEntity.ContainsKey(handle))
+            {
+                return;
+            }
+
+            foreach (PendingSpawn pending in _pending.Values)
+            {
+                if (pending.GameHandle == handle && now - pending.SentAt < SpawnRequestTimeout)
+                {
+                    return;
+                }
+            }
+
+            uint model = _bridge.GetVehicleModel(handle);
+            if (model == 0)
+            {
+                return;
+            }
+
+            var state = new VehicleEntity(EntityId.None);
+            if (!_bridge.TryReadVehicle(handle, state))
+            {
+                return;
+            }
+
+            Offer(EntityType.Vehicle, handle, model, state, now, "vehicle", ambient);
+        }
+
+        /// <summary>
+        /// Offers one pedestrian this client's game created to the server.
+        /// <para>
+        /// The same shape as a vehicle and deliberately so: a ped that the game spawned
+        /// on the pavement and one that a player is sitting in reach the server by the
+        /// same route, and the only thing that differs is what decided to offer them.
+        /// </para>
+        /// </summary>
+        public void RegisterPed(int handle, EntitySnapshotView view, double now, bool ambient = false)
+        {
+            if (handle == 0 || _handleToEntity.ContainsKey(handle))
+            {
+                return;
+            }
+
+            foreach (PendingSpawn pending in _pending.Values)
+            {
+                if (pending.GameHandle == handle && now - pending.SentAt < SpawnRequestTimeout)
+                {
+                    return;
+                }
+            }
+
+            var state = new PedEntity(EntityId.None);
+            if (!_bridge.TryReadPed(handle, state) || state.ModelHash == 0)
+            {
+                return;
+            }
+
+            Offer(EntityType.Ped, handle, state.ModelHash, state, now, "pedestrian", ambient);
+        }
+
+        /// <summary>
+        /// Describes a local entity to the server and asks it to take ownership of one
+        /// like it. A client cannot invent an id, so it sends a tag and waits.
+        /// </summary>
+        private void Offer(
+            EntityType type, int handle, uint model, NetEntity state, double now, string what, bool ambient)
+        {
+            if (_refusedUntil.TryGetValue(handle, out double until))
+            {
+                if (now < until)
+                {
+                    return;
+                }
+
+                _refusedUntil.Remove(handle);
+            }
+
+            var writer = new NetWriter(256);
+            _registry.Get((byte)type).WriteFull(writer, state);
+
+            uint tag = _nextRequestTag++;
+            var request = new EntitySpawnRequestMessage
+            {
+                Type = type,
+                ModelHash = model,
+                Position = state.Position,
+                Heading = state.Heading,
+                Dimension = state.Dimension,
+                RequestTag = tag,
+                State = writer.ToArray(),
+                Ambient = ambient,
+            };
+
+            _pending[tag] = new PendingSpawn(handle, now);
+            SpawnsRequested++;
+            Send?.Invoke(NetMessageType.EntitySpawnRequest, request.Serialize(), DeliveryMethod.ReliableOrdered);
+
+            _log.Debug(
+                LogCategory.Entity,
+                $"Asked the server to adopt local {what} handle {handle} (model 0x{model:X8}).");
+        }
+
+        /// <summary>Applies the server's answer to a spawn request, or an ownership change.</summary>
+        public void HandleEntityEvent(EntityEventMessage message)
+        {
+            switch (message.Kind)
+            {
+                case EntityEventKind.SpawnAccepted:
+                    if (_pending.TryGetValue(message.RequestTag, out PendingSpawn accepted))
+                    {
+                        _pending.Remove(message.RequestTag);
+                        _ownedHandles[message.EntityId] = accepted.GameHandle;
+                        _handleToEntity[accepted.GameHandle] = message.EntityId;
+
+                        // Deliberately NOT seeded here. This used to store 0, meaning
+                        // "not seen in a snapshot yet" — but Stream reads it as "last
+                        // seen at time zero", which is older than the grace period from
+                        // the first frame onwards. So every vehicle the server had just
+                        // accepted was forgotten on the very next stream tick, before
+                        // the snapshot carrying it could arrive; the handle went back to
+                        // being unknown, and the client asked the server to adopt the
+                        // same car again. One real session produced twenty-four
+                        // replicated vehicles from about a dozen, in pairs thirty
+                        // milliseconds apart. Leaving the entry absent is what Stream
+                        // already handles correctly: the first miss stamps it with now.
+                        _log.Info(
+                            LogCategory.Entity,
+                            $"The server adopted our vehicle as {message.EntityId}.",
+                            $"entity:{message.EntityId.Value}");
+                    }
+
+                    break;
+
+                case EntityEventKind.SpawnRejected:
+                    if (_pending.TryGetValue(message.RequestTag, out PendingSpawn refused))
+                    {
+                        _pending.Remove(message.RequestTag);
+
+                        // And do not ask again straight away. Whatever the server
+                        // refused it for -- the per-player limit, a model it will not
+                        // take -- is not a condition that changes in the fifty
+                        // milliseconds before the next offer tick.
+                        _refusedUntil[refused.GameHandle] = _now + SpawnRefusalCooldown;
+                    }
+
+                    SpawnsRejected++;
+                    _log.Warning(LogCategory.Entity, "The server refused our spawn: " + message.Detail);
+                    break;
+
+                case EntityEventKind.OwnershipRevoked:
+                case EntityEventKind.Destroyed:
+                    Forget(message.EntityId);
+                    break;
+
+                case EntityEventKind.OwnershipGranted:
+                    // The entity is ours to simulate now, but we do not have a game
+                    // handle for it: it was created by whoever owned it before. The
+                    // handle arrives when the local game entity is matched up, which is
+                    // Phase 4 work — until then, ownership of somebody else's vehicle is
+                    // accepted and simply not streamed.
+                    _log.Debug(LogCategory.Entity, $"We now own {message.EntityId}, but have no local handle for it yet.");
+                    break;
+            }
+        }
+
+        /// <summary>Reports the state of everything this client owns.</summary>
+        public void Stream(EntitySnapshotView view, double now, double interval)
+        {
+            // The entity events that carry a refusal arrive between streams and have no
+            // clock of their own; this is the only one there is.
+            _now = now;
+
+            if (now - _lastStreamTime < interval)
+            {
+                return;
+            }
+
+            _lastStreamTime = now;
+
+            _removalBuffer.Clear();
+            foreach (KeyValuePair<EntityId, int> pair in _ownedHandles)
+            {
+                if (!view.TryGet(pair.Key, out NetEntity entity))
+                {
+                    if (!view.IsComplete)
+                    {
+                        // The snapshot did not claim to hold the whole world, so this
+                        // says nothing about the entity. Not even the grace timer may
+                        // run on it: on a busy server the budget can leave the same
+                        // vehicle out for longer than the grace, and we would hand back
+                        // a car the player is still driving.
+                        continue;
+                    }
+
+                    // Not in the view yet — usually just a snapshot that has not caught
+                    // up with the reliable acceptance. Give it a moment before deciding
+                    // the entity is really gone.
+                    if (!_lastSeenInView.TryGetValue(pair.Key, out double lastSeen))
+                    {
+                        _lastSeenInView[pair.Key] = now;
+                    }
+                    else if (now - lastSeen > MissingEntityGrace)
+                    {
+                        _removalBuffer.Add(pair.Key);
+                    }
+
+                    continue;
+                }
+
+                _lastSeenInView[pair.Key] = now;
+
+                if (entity.OwnerId != LocalPlayerId)
+                {
+                    // Ownership moved away while we were driving; stop reporting.
+                    _removalBuffer.Add(pair.Key);
+                    continue;
+                }
+
+                if (entity is not VehicleEntity && entity is not PedEntity)
+                {
+                    continue;
+                }
+
+                // Gone from the game: the model is unreadable and it is not one we are
+                // drawing on the server's behalf either. Forgotten rather than reported
+                // as frozen at its last position for ever.
+                if (entity is VehicleEntity
+                    && !_bridge.IsRemoteVehicleValid(pair.Value)
+                    && _bridge.GetVehicleModel(pair.Value) == 0)
+                {
+                    _removalBuffer.Add(pair.Key);
+                    continue;
+                }
+
+                // Read as whatever the server says it is. Until ambient pedestrians
+                // were shared this was always a vehicle, and reading a ped as one would
+                // have produced an empty state reported twenty times a second as though
+                // it were true.
+                NetEntity state;
+                if (entity.Type == EntityType.Ped)
+                {
+                    var ped = new PedEntity(pair.Key);
+                    if (!_bridge.TryReadPed(pair.Value, ped))
+                    {
+                        continue;
+                    }
+
+                    state = ped;
+                }
+                else
+                {
+                    var vehicle = new VehicleEntity(pair.Key);
+                    if (!_bridge.TryReadVehicle(pair.Value, vehicle))
+                    {
+                        continue;
+                    }
+
+                    // What this vehicle is hanging from, translated out of game handles.
+                    // The bridge cannot do it: it knows handles and this layer owns the
+                    // map from a handle back to a replicated id. A carrier that is not a
+                    // replicated entity — an ambient tow truck nobody has adopted —
+                    // resolves to nothing and is reported as unattached, which is true
+                    // as far as the world is concerned.
+                    int carrier = _bridge.GetVehicleAttachedTo(pair.Value);
+                    vehicle.AttachedToId =
+                        carrier != 0 && _handleToEntity.TryGetValue(carrier, out EntityId carrierId)
+                            ? carrierId
+                            : EntityId.None;
+
+                    state = vehicle;
+                }
+
+                // Preserve the fields the server owns; reporting our stale copy of them
+                // would fight the server's own decisions.
+                state.OwnerId = entity.OwnerId;
+
+                INetEntitySerializer serializer = _registry.Get((byte)entity.Type);
+                var writer = new NetWriter(256);
+                uint baselineId = 0;
+
+                // The baseline is the view the server sent and still holds for us, so
+                // both sides name the same starting point.
+                if (view.SnapshotId != 0)
+                {
+                    baselineId = view.SnapshotId;
+                    serializer.WriteDelta(writer, entity, state);
+                    DeltaUpdatesSent++;
+                }
+                else
+                {
+                    serializer.WriteFull(writer, state);
+                    FullUpdatesSent++;
+                }
+
+                var update = new OwnedEntityUpdateMessage
+                {
+                    EntityId = pair.Key,
+                    BaselineSnapshotId = baselineId,
+                    State = writer.ToArray(),
+                };
+
+                Send?.Invoke(NetMessageType.OwnedEntityUpdate, update.Serialize(), DeliveryMethod.Unreliable);
+            }
+
+            foreach (EntityId id in _removalBuffer)
+            {
+                Forget(id);
+            }
+        }
+
+        /// <summary>Drops timed-out spawn requests so a lost reply does not wedge the vehicle forever.</summary>
+        public void ExpirePendingSpawns(double now)
+        {
+            _removalBuffer.Clear();
+            var expired = new List<uint>();
+            foreach (KeyValuePair<uint, PendingSpawn> pair in _pending)
+            {
+                if (now - pair.Value.SentAt > SpawnRequestTimeout)
+                {
+                    expired.Add(pair.Key);
+                }
+            }
+
+            foreach (uint tag in expired)
+            {
+                _pending.Remove(tag);
+            }
+        }
+
+        public void Forget(EntityId id)
+        {
+            if (_ownedHandles.TryGetValue(id, out int handle))
+            {
+                _handleToEntity.Remove(handle);
+                _ownedHandles.Remove(id);
+            }
+
+            _lastSeenInView.Remove(id);
+        }
+
+        public void Clear()
+        {
+            _ownedHandles.Clear();
+            _handleToEntity.Clear();
+            _lastSeenInView.Clear();
+            _pending.Clear();
+        }
+
+        private readonly struct PendingSpawn
+        {
+            public PendingSpawn(int gameHandle, double sentAt)
+            {
+                GameHandle = gameHandle;
+                SentAt = sentAt;
+            }
+
+            public int GameHandle { get; }
+
+            public double SentAt { get; }
+        }
+    }
+}
